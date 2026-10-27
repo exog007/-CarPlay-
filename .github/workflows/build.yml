@@ -26,13 +26,11 @@ jobs:
           xcodegen --version
 
       - name: 生成 Xcode 工程
-        working-directory: ios-app
         run: |
           xcodegen generate
           ls -la
 
       - name: 编译（不签名）
-        working-directory: ios-app
         run: |
           set -o pipefail
           xcodebuild build \
@@ -48,7 +46,6 @@ jobs:
             -quiet
 
       - name: 打包成 ipa
-        working-directory: ios-app
         run: |
           APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           echo "找到 App: $APP_PATH"
@@ -61,5 +58,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FarDriver-ipa
-          path: ios-app/FarDriver-unsigned.ipa
+          path: FarDriver-unsigned.ipa
           retention-days: 30

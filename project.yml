@@ -49,6 +49,7 @@ targets:
       - path: FarDriverWidget
       - path: FarDriver/FarDriverProtocol.swift
       - path: FarDriver/SharedStore.swift
+      - path: FarDriver/FarDriverAttributes.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.exog007.fardriver.widget

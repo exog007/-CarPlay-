@@ -12,27 +12,6 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
-// MARK: - 动态数据
-
-struct FarDriverAttributes: ActivityAttributes {
-
-    public struct ContentState: Codable, Hashable {
-        var voltage: Double = 0
-        var current: Double = 0
-        var power: Double = 0
-        var rpm: Double = 0
-        var speed: Double = 0
-        var gear: Int = 0
-        var mosTemp: Int = 0
-        var motorTemp: Int = 0
-        var soc: Int = 0
-        var isRegen: Bool = false
-    }
-
-    /// 静态数据：车名
-    var deviceName: String
-}
-
 // MARK: - 工具
 
 private func tempColor(_ t: Int, warnAt: Int) -> Color {
