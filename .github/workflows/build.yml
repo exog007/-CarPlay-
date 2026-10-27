@@ -28,11 +28,16 @@ jobs:
       - name: 生成 Xcode 工程
         run: |
           xcodegen generate
+          echo "=== 生成的文件 ==="
           ls -la
+          echo "=== scheme 列表 ==="
+          xcodebuild -list -project FarDriver.xcodeproj || true
 
       - name: 编译（不签名）
+        continue-on-error: true
+        id: build
         run: |
-          set -o pipefail
+          set +e
           xcodebuild build \
             -project FarDriver.xcodeproj \
             -scheme FarDriver \
@@ -43,9 +48,33 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_ENTITLEMENTS="" \
-            -quiet
+            > build.log 2>&1
+          echo "退出码: $?"
+          echo "=== 错误汇总 ==="
+          grep -E "error:|Error:|failed|FAILED" build.log | head -50 || echo "没有 error 行"
+          echo ""
+          echo "=== 最后 80 行 ==="
+          tail -80 build.log
+          exit 0
+
+      - name: 保存编译日志
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - name: 检查是否成功
+        run: |
+          if [ ! -d "build/Build/Products/Release-iphoneos/FarDriver.app" ]; then
+            echo "❌ 编译失败，没生成 app"
+            exit 1
+          fi
+          echo "✅ 编译成功"
 
       - name: 打包成 ipa
+        if: success()
         run: |
           APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
           echo "找到 App: $APP_PATH"
@@ -55,6 +84,7 @@ jobs:
           ls -lh FarDriver-unsigned.ipa
 
       - name: 上传 ipa
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: FarDriver-ipa
