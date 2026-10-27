@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var mgr = ControllerManager.shared
@@ -358,14 +359,15 @@ struct SettingsView: View {
 
     private func testServer() {
         guard let u = URL(string: url.trimmingCharacters(in: .whitespaces) + "/health") else { return }
+        let manager = mgr
         URLSession.shared.dataTask(with: u) { _, resp, _ in
             DispatchQueue.main.async {
                 if let http = resp as? HTTPURLResponse, http.statusCode == 200 {
-                    mgr.uploadError = nil
+                    manager.setUploadError(nil)
                     UIAlertController(title: "连接成功", message: "服务器正常", preferredStyle: .alert)
                         .presentingShow()
                 } else {
-                    mgr.uploadError = "连不上服务器"
+                    manager.setUploadError("连不上服务器")
                 }
             }
         }.resume()

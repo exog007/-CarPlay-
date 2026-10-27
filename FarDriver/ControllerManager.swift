@@ -74,6 +74,11 @@ final class ControllerManager: NSObject, ObservableObject {
         startUploadTimer()
     }
 
+    /// 设置错误信息（给设置界面用）
+    func setUploadError(_ msg: String?) {
+        uploadError = msg
+    }
+
     // MARK: - Live Activity（CarPlay 显示）
 
     /// 启动 Live Activity —— 启动后会自动出现在 CarPlay

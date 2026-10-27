@@ -28,15 +28,13 @@ jobs:
       - name: 生成 Xcode 工程
         run: |
           xcodegen generate
-          echo "=== 生成内容 ==="
           ls -la
-          echo "=== scheme 列表 ==="
           xcodebuild -list -project FarDriver.xcodeproj || true
 
       - name: 编译（不签名）
         id: build
         run: |
-          set -o pipefail
+          set +e
           xcodebuild build \
             -project FarDriver.xcodeproj \
             -scheme FarDriver \
@@ -47,65 +45,62 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_ENTITLEMENTS="" \
-            2>&1 | tee build.log | tail -100
+            > build.log 2>&1
+          RC=$?
+          echo "退出码: $RC"
 
-      - name: 列出编译产物
-        if: always()
-        run: |
-          echo "=== build 目录结构 ==="
-          find build -name "*.app" -maxdepth 6 2>/dev/null || echo "没找到 .app"
-          echo ""
-          echo "=== Release-iphoneos 目录 ==="
-          ls -la build/Build/Products/ 2>/dev/null || echo "Products 目录不存在"
-          echo ""
-          ls -la build/Build/Products/Release-iphoneos/ 2>/dev/null || echo "Release-iphoneos 不存在"
+          # 提取错误，写进 artifact 名字（方便通过 API 读取）
+          ERRS=$(grep -E "error:" build.log | sed 's/^[^:]*:[0-9]*:[0-9]*: //' | sed 's/[^a-zA-Z0-9 ]//g' | head -3 | tr ' ' '_' | tr '\n' '-')
+          if [ -z "$ERRS" ]; then ERRS="no-error-lines"; fi
+          # artifact 名字限制 256 字符，截断
+          ERRS=$(echo "$ERRS" | cut -c1-120)
+          echo "ERROR_SUMMARY=$ERRS" >> $GITHUB_ENV
 
-      - name: 保存编译日志
+          # 也把前 20 条错误打到日志（肯定能看到的部分）
+          echo "=== 前 20 条错误 ==="
+          grep -E "error:" build.log | head -20 || echo "(没有 error: 行)"
+          echo ""
+          echo "=== 日志最后 120 行 ==="
+          tail -120 build.log
+
+          if [ $RC -ne 0 ]; then
+            echo "编译失败"
+            exit 1
+          fi
+
+      - name: 保存日志-失败
+        if: failure()
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: build-log
+          name: err-${{ env.ERROR_SUMMARY }}
           path: build.log
           retention-days: 7
 
       - name: 打包成 ipa
+        if: success()
         run: |
           set -e
           APP_PATH=$(find build -type d -name "FarDriver.app" | head -1)
           if [ -z "$APP_PATH" ]; then
-            echo "❌ 找不到 FarDriver.app"
-            echo "=== 搜索所有 .app ==="
+            echo "找不到 FarDriver.app"
             find build -type d -name "*.app" || true
             exit 1
           fi
-          echo "✅ 找到 App: $APP_PATH"
-          echo "=== App 内容 ==="
+          echo "找到: $APP_PATH"
           ls -la "$APP_PATH"
-          du -sh "$APP_PATH"
-
-          rm -rf Payload
-          mkdir -p Payload
+          rm -rf Payload; mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          echo "=== Payload 内容 ==="
-          ls -la Payload/
-          du -sh Payload/
-
           rm -f FarDriver-unsigned.ipa
           zip -r FarDriver-unsigned.ipa Payload
-          echo "=== ipa 大小 ==="
           ls -lh FarDriver-unsigned.ipa
-
           SIZE=$(stat -f%z FarDriver-unsigned.ipa)
-          echo "ipa 字节数: $SIZE"
-          if [ "$SIZE" -lt 100000 ]; then
-            echo "❌ ipa 太小了（$SIZE 字节），打包失败"
-            exit 1
-          fi
-          echo "✅ ipa 正常"
+          echo "ipa: $SIZE bytes"
+          [ "$SIZE" -gt 100000 ] || { echo "ipa 太小"; exit 1; }
 
       - name: 上传 ipa
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: FarDriver-ipa
+          name: FarDriver-ipa-OK
           path: FarDriver-unsigned.ipa
           retention-days: 30
