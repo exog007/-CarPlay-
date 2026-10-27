@@ -14,8 +14,8 @@ import SwiftUI
 
 // MARK: - 工具
 
-private func tempColor(_ t: Int, warnAt: Int) -> Color {
-    t >= warnAt ? .red : .orange
+func tempColor(_ t: Int, warnAt: Int) -> Color {
+    return t >= warnAt ? Color.red : Color.orange
 }
 
 // MARK: - 锁屏完整卡片（CarPlay 也用这个）
@@ -27,19 +27,13 @@ struct LockScreenLiveActivityView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            // 左：转速大圆环
+            // 左：转速圆环
             ZStack {
                 Circle()
                     .stroke(Color.white.opacity(0.12), lineWidth: 7)
                 Circle()
                     .trim(from: 0, to: min(max(s.rpm / 8000, 0), 1))
-                    .stroke(
-                        AngularGradient(
-                            colors: [.cyan, .blue, .cyan],
-                            center: .center
-                        ),
-                        style: StrokeStyle(lineWidth: 7, lineCap: .round)
-                    )
+                    .stroke(Color.cyan, style: StrokeStyle(lineWidth: 7, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 1) {
                     Text("\(Int(s.rpm))")
@@ -56,24 +50,33 @@ struct LockScreenLiveActivityView: View {
             // 右：数据网格
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
-                    dataCell(icon: "bolt.fill", value: "\(Int(s.power))", unit: "W", color: .orange)
-                    dataCell(icon: "gauge.with.needle", value: "\(Int(s.speed))", unit: "km/h", color: .purple)
+                    CellView(icon: "bolt.fill", value: "\(Int(s.power))", unit: "W", color: .orange)
+                    CellView(icon: "gauge.with.needle", value: "\(Int(s.speed))", unit: "km/h", color: .purple)
                 }
                 HStack(spacing: 12) {
-                    dataCell(icon: "thermometer.medium", value: "\(s.mosTemp)°", unit: "", color: tempColor(s.mosTemp, warnAt: 75))
-                    dataCell(icon: "engine.combustion", value: "\(s.motorTemp)°", unit: "", color: tempColor(s.motorTemp, warnAt: 110))
+                    CellView(icon: "thermometer.medium", value: "\(s.mosTemp)°", unit: "", color: tempColor(s.mosTemp, warnAt: 75))
+                    CellView(icon: "engine.combustion", value: "\(s.motorTemp)°", unit: "", color: tempColor(s.motorTemp, warnAt: 110))
                 }
                 HStack(spacing: 12) {
-                    dataCell(icon: "battery.75", value: String(format: "%.0f", s.voltage), unit: "V", color: .yellow)
-                    dataCell(icon: "waveform.path", value: String(format: "%.0f", s.current), unit: "A", color: s.isRegen ? .green : .mint)
+                    CellView(icon: "battery.75", value: String(format: "%.0f", s.voltage), unit: "V", color: .yellow)
+                    CellView(icon: "waveform.path", value: String(format: "%.0f", s.current), unit: "A", color: s.isRegen ? .green : .mint)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
     }
+}
 
-    private func dataCell(icon: String, value: String, unit: String, color: Color) -> some View {
+// MARK: - 小数据单元
+
+struct CellView: View {
+    let icon: String
+    let value: String
+    let unit: String
+    let color: Color
+
+    var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 10))
@@ -100,7 +103,6 @@ struct DynamicIslandView: View {
 
     var body: some View {
         DynamicIsland {
-            // 展开状态
             DynamicIslandExpandedRegion(.leading) {
                 VStack(spacing: 1) {
                     Text("\(Int(s.rpm))")
@@ -134,15 +136,12 @@ struct DynamicIslandView: View {
                 }
             }
             DynamicIslandExpandedRegion(.bottom) {
-                HStack(spacing: 20) {
-                    tempBadge("MOS", s.mosTemp, warnAt: 75)
-                    tempBadge("电机", s.motorTemp, warnAt: 110)
-                    batteryBadge(s.voltage, s.current, s.isRegen)
-                }
-                .padding(.top, 4)
+                ExpandedBottomRow(mosTemp: s.mosTemp,
+                                  motorTemp: s.motorTemp,
+                                  voltage: s.voltage,
+                                  regen: s.isRegen)
             }
         } compactLeading: {
-            // 紧凑：转速
             HStack(spacing: 2) {
                 Image(systemName: "gauge.with.needle")
                     .font(.system(size: 10))
@@ -152,7 +151,6 @@ struct DynamicIslandView: View {
                     .monospacedDigit()
             }
         } compactTrailing: {
-            // 紧凑：温度
             Text("\(s.mosTemp)°")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .monospacedDigit()
@@ -162,39 +160,55 @@ struct DynamicIslandView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.cyan)
         }
-        .widgetURL(URL(string: "fardriver://open"))
     }
+}
 
-    private func tempBadge(_ label: String, _ value: Int, warnAt: Int) -> some View {
-        HStack(spacing: 3) {
-            Text(label)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-            Text("\(value)°")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(tempColor(value, warnAt: warnAt))
-        }
-    }
+// 灵动岛展开底栏（独立结构体，避免类型推导问题）
+struct ExpandedBottomRow: View {
+    let mosTemp: Int
+    let motorTemp: Int
+    let voltage: Double
+    let regen: Bool
 
-    private func batteryBadge(_ v: Double, _ a: Double, _ regen: Bool) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "battery.75")
-                .font(.system(size: 9))
-                .foregroundStyle(.yellow.opacity(0.8))
-            Text(String(format: "%.0f", v))
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.yellow)
-            Text("V")
-                .font(.system(size: 8))
-                .foregroundStyle(.secondary)
-            if regen {
-                Image(systemName: "arrow.down.circle.fill")
+    var body: some View {
+        HStack(spacing: 20) {
+            HStack(spacing: 3) {
+                Text("MOS")
                     .font(.system(size: 9))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.secondary)
+                Text("\(mosTemp)°")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(tempColor(mosTemp, warnAt: 75))
+            }
+            HStack(spacing: 3) {
+                Text("电机")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text("\(motorTemp)°")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(tempColor(motorTemp, warnAt: 110))
+            }
+            HStack(spacing: 3) {
+                Image(systemName: "battery.75")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.yellow.opacity(0.8))
+                Text(String(format: "%.0f", voltage))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.yellow)
+                Text("V")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.secondary)
+                if regen {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.green)
+                }
             }
         }
+        .padding(.top, 4)
     }
 }
 
@@ -203,7 +217,6 @@ struct DynamicIslandView: View {
 struct FarDriverLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: FarDriverAttributes.self) { context in
-            // 锁屏 / CarPlay 用这个
             LockScreenLiveActivityView(context: context)
                 .activityBackgroundTint(Color(red: 0.06, green: 0.08, blue: 0.12))
                 .activitySystemActionForegroundColor(.cyan)
@@ -232,14 +245,14 @@ struct SimpleWidgetEntry: TimelineEntry {
 
 struct SimpleProvider: TimelineProvider {
     func placeholder(in context: Context) -> SimpleWidgetEntry {
-        SimpleWidgetEntry(date: Date(), data: .empty)
+        SimpleWidgetEntry(date: Date(), data: nil)
     }
     func getSnapshot(in context: Context, completion: @escaping (SimpleWidgetEntry) -> Void) {
         completion(SimpleWidgetEntry(date: Date(), data: SharedStore.load()))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleWidgetEntry>) -> Void) {
         let e = SimpleWidgetEntry(date: Date(), data: SharedStore.load())
-        let next = Calendar.current.date(byAdding: .second, value: 60, to: Date())!
+        let next = Calendar.current.date(byAdding: .second, value: 60, to: Date()) ?? Date()
         completion(Timeline(entries: [e], policy: .after(next)))
     }
 }
