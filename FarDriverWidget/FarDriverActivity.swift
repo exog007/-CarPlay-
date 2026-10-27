@@ -91,75 +91,7 @@ struct CellView: View {
     }
 }
 
-// MARK: - 灵动岛
-
-struct DynamicIslandView: View {
-    let context: ActivityViewContext<FarDriverAttributes>
-
-    var body: some View {
-        let s = context.state
-        return DynamicIsland {
-            DynamicIslandExpandedRegion(.leading) {
-                VStack(spacing: 1) {
-                    Text("\(Int(s.rpm))")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                    Text("RPM")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.secondary)
-                }
-            }
-            DynamicIslandExpandedRegion(.trailing) {
-                VStack(spacing: 1) {
-                    Text("\(Int(s.speed))")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Color.purple)
-                    Text("KM/H")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.secondary)
-                }
-            }
-            DynamicIslandExpandedRegion(.center) {
-                VStack(spacing: 2) {
-                    Text("\(Int(s.power))W")
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Color.orange)
-                    Text("档位 \(s.gear)")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.secondary)
-                }
-            }
-            DynamicIslandExpandedRegion(.bottom) {
-                ExpandedBottomRow(
-                    mosTemp: s.mosTemp,
-                    motorTemp: s.motorTemp,
-                    voltage: s.voltage,
-                    regen: s.isRegen
-                )
-            }
-        } compactLeading: {
-            HStack(spacing: 2) {
-                Image(systemName: "gauge.with.needle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.cyan)
-                Text("\(Int(s.rpm))")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-            }
-        } compactTrailing: {
-            Text("\(s.mosTemp)°")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(tempColor(s.mosTemp, warnAt: 75))
-        } minimal: {
-            Image(systemName: "bolt.car.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.cyan)
-        }
-    }
-}
+// MARK: - 灵动岛（直接写在 ActivityConfiguration 里，不包装成 View）
 
 // MARK: - 灵动岛展开底栏
 
@@ -213,7 +145,66 @@ struct FarDriverLiveActivity: Widget {
         ActivityConfiguration(for: FarDriverAttributes.self) { context in
             LockScreenLiveActivityView(context: context)
         } dynamicIsland: { context in
-            DynamicIslandView(context: context)
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    VStack(spacing: 1) {
+                        Text("\(Int(context.state.rpm))")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                        Text("RPM")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.secondary)
+                    }
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    VStack(spacing: 1) {
+                        Text("\(Int(context.state.speed))")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.purple)
+                        Text("KM/H")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.secondary)
+                    }
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    VStack(spacing: 2) {
+                        Text("\(Int(context.state.power))W")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.orange)
+                        Text("档位 \(context.state.gear)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.secondary)
+                    }
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    ExpandedBottomRow(
+                        mosTemp: context.state.mosTemp,
+                        motorTemp: context.state.motorTemp,
+                        voltage: context.state.voltage,
+                        regen: context.state.isRegen
+                    )
+                }
+            } compactLeading: {
+                HStack(spacing: 2) {
+                    Image(systemName: "gauge.with.needle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.cyan)
+                    Text("\(Int(context.state.rpm))")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                }
+            } compactTrailing: {
+                Text("\(context.state.mosTemp)°")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+            } minimal: {
+                Image(systemName: "bolt.car.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.cyan)
+            }
         }
     }
 }
