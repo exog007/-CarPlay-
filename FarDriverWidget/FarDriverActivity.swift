@@ -1,11 +1,8 @@
 //
 //  FarDriverActivity.swift
-//  Live Activity —— CarPlay 显示的核心
+//  Live Activity —— CarPlay 显示
 //
-//  苹果官方文档：Live Activities display on the Lock Screen, in the Dynamic Island,
-//  **in CarPlay**, and on a paired Mac or Apple Watch.
-//
-//  关键：Live Activity 不需要 CarPlay entitlement，iOS 会自动推到 CarPlay
+//  先做最简版本，确保能编译，再逐步加回细节
 //
 
 import ActivityKit
@@ -15,19 +12,20 @@ import SwiftUI
 // MARK: - 工具
 
 func tempColor(_ t: Int, warnAt: Int) -> Color {
-    return t >= warnAt ? Color.red : Color.orange
+    if t >= warnAt {
+        return Color.red
+    }
+    return Color.orange
 }
 
-// MARK: - 锁屏完整卡片（CarPlay 也用这个）
+// MARK: - 锁屏 / CarPlay 卡片
 
 struct LockScreenLiveActivityView: View {
     let context: ActivityViewContext<FarDriverAttributes>
 
-    private var s: FarDriverAttributes.ContentState { context.state }
-
     var body: some View {
-        HStack(spacing: 14) {
-            // 左：转速圆环
+        let s = context.state
+        return HStack(spacing: 14) {
             ZStack {
                 Circle()
                     .stroke(Color.white.opacity(0.12), lineWidth: 7)
@@ -39,27 +37,26 @@ struct LockScreenLiveActivityView: View {
                     Text("\(Int(s.rpm))")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.white)
                     Text("rpm")
                         .font(.system(size: 8))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(Color.white.opacity(0.5))
                 }
             }
             .frame(width: 84, height: 84)
 
-            // 右：数据网格
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
-                    CellView(icon: "bolt.fill", value: "\(Int(s.power))", unit: "W", color: .orange)
-                    CellView(icon: "gauge.with.needle", value: "\(Int(s.speed))", unit: "km/h", color: .purple)
+                    CellView(icon: "bolt.fill", value: "\(Int(s.power))", unit: "W", color: Color.orange)
+                    CellView(icon: "gauge.with.needle", value: "\(Int(s.speed))", unit: "km/h", color: Color.purple)
                 }
                 HStack(spacing: 12) {
                     CellView(icon: "thermometer.medium", value: "\(s.mosTemp)°", unit: "", color: tempColor(s.mosTemp, warnAt: 75))
                     CellView(icon: "engine.combustion", value: "\(s.motorTemp)°", unit: "", color: tempColor(s.motorTemp, warnAt: 110))
                 }
                 HStack(spacing: 12) {
-                    CellView(icon: "battery.75", value: String(format: "%.0f", s.voltage), unit: "V", color: .yellow)
-                    CellView(icon: "waveform.path", value: String(format: "%.0f", s.current), unit: "A", color: s.isRegen ? .green : .mint)
+                    CellView(icon: "battery.75", value: String(format: "%.0f", s.voltage), unit: "V", color: Color.yellow)
+                    CellView(icon: "waveform.path", value: String(format: "%.0f", s.current), unit: "A", color: Color.mint)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,7 +85,7 @@ struct CellView: View {
             if !unit.isEmpty {
                 Text(unit)
                     .font(.system(size: 8))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(Color.white.opacity(0.4))
             }
         }
     }
@@ -99,10 +96,9 @@ struct CellView: View {
 struct DynamicIslandView: View {
     let context: ActivityViewContext<FarDriverAttributes>
 
-    private var s: FarDriverAttributes.ContentState { context.state }
-
     var body: some View {
-        DynamicIsland {
+        let s = context.state
+        return DynamicIsland {
             DynamicIslandExpandedRegion(.leading) {
                 VStack(spacing: 1) {
                     Text("\(Int(s.rpm))")
@@ -110,7 +106,7 @@ struct DynamicIslandView: View {
                         .monospacedDigit()
                     Text("RPM")
                         .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             DynamicIslandExpandedRegion(.trailing) {
@@ -118,10 +114,10 @@ struct DynamicIslandView: View {
                     Text("\(Int(s.speed))")
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(Color.purple)
                     Text("KM/H")
                         .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             DynamicIslandExpandedRegion(.center) {
@@ -129,23 +125,25 @@ struct DynamicIslandView: View {
                     Text("\(Int(s.power))W")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.orange)
                     Text("档位 \(s.gear)")
                         .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
             }
             DynamicIslandExpandedRegion(.bottom) {
-                ExpandedBottomRow(mosTemp: s.mosTemp,
-                                  motorTemp: s.motorTemp,
-                                  voltage: s.voltage,
-                                  regen: s.isRegen)
+                ExpandedBottomRow(
+                    mosTemp: s.mosTemp,
+                    motorTemp: s.motorTemp,
+                    voltage: s.voltage,
+                    regen: s.isRegen
+                )
             }
         } compactLeading: {
             HStack(spacing: 2) {
                 Image(systemName: "gauge.with.needle")
                     .font(.system(size: 10))
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(Color.cyan)
                 Text("\(Int(s.rpm))")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
@@ -158,12 +156,13 @@ struct DynamicIslandView: View {
         } minimal: {
             Image(systemName: "bolt.car.fill")
                 .font(.system(size: 12))
-                .foregroundStyle(.cyan)
+                .foregroundStyle(Color.cyan)
         }
     }
 }
 
-// 灵动岛展开底栏（独立结构体，避免类型推导问题）
+// MARK: - 灵动岛展开底栏
+
 struct ExpandedBottomRow: View {
     let mosTemp: Int
     let motorTemp: Int
@@ -175,7 +174,7 @@ struct ExpandedBottomRow: View {
             HStack(spacing: 3) {
                 Text("MOS")
                     .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                 Text("\(mosTemp)°")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
@@ -184,7 +183,7 @@ struct ExpandedBottomRow: View {
             HStack(spacing: 3) {
                 Text("电机")
                     .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                 Text("\(motorTemp)°")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
@@ -193,19 +192,14 @@ struct ExpandedBottomRow: View {
             HStack(spacing: 3) {
                 Image(systemName: "battery.75")
                     .font(.system(size: 9))
-                    .foregroundStyle(.yellow.opacity(0.8))
+                    .foregroundStyle(Color.yellow.opacity(0.8))
                 Text(String(format: "%.0f", voltage))
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Color.yellow)
                 Text("V")
                     .font(.system(size: 8))
-                    .foregroundStyle(.secondary)
-                if regen {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.green)
-                }
+                    .foregroundStyle(Color.secondary)
             }
         }
         .padding(.top, 4)
@@ -218,8 +212,6 @@ struct FarDriverLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: FarDriverAttributes.self) { context in
             LockScreenLiveActivityView(context: context)
-                .activityBackgroundTint(Color(red: 0.06, green: 0.08, blue: 0.12))
-                .activitySystemActionForegroundColor(.cyan)
         } dynamicIsland: { context in
             DynamicIslandView(context: context)
         }
@@ -236,7 +228,7 @@ struct FarDriverWidgetBundle: WidgetBundle {
     }
 }
 
-// MARK: - 普通小组件（备选，iPhone 桌面用）
+// MARK: - 普通小组件
 
 struct SimpleWidgetEntry: TimelineEntry {
     let date: Date
@@ -260,39 +252,49 @@ struct SimpleProvider: TimelineProvider {
 struct FarDriverSimpleWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "FarDriverSimpleWidget", provider: SimpleProvider()) { entry in
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Image(systemName: "bolt.car.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.cyan)
-                    Text("远驱")
-                        .font(.system(size: 11, weight: .semibold))
-                    Spacer()
-                }
-                if let d = entry.data {
-                    Text("\(Int(d.rpm))")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.cyan)
-                    HStack(spacing: 6) {
-                        Text("\(Int(d.power))W")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.orange)
-                        Text("\(d.mosTemp)°")
-                            .font(.system(size: 10))
-                            .foregroundStyle(d.mosTemp > 75 ? .red : .orange)
-                    }
-                } else {
-                    Text("未连接")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(10)
-            .containerBackground(for: .widget) { Color(white: 0.08) }
+            SimpleWidgetView(data: entry.data)
         }
         .configurationDisplayName("远驱控制器")
         .description("显示转速、功率、温度")
         .supportedFamilies([.systemSmall])
+    }
+}
+
+struct SimpleWidgetView: View {
+    let data: ControllerData?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "bolt.car.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.cyan)
+                Text("远驱")
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer()
+            }
+            if let d = data {
+                Text("\(Int(d.rpm))")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.cyan)
+                HStack(spacing: 6) {
+                    Text("\(Int(d.power))W")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.orange)
+                    Text("\(d.mosTemp)°")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.orange)
+                }
+            } else {
+                Text("未连接")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.secondary)
+            }
+        }
+        .padding(10)
+        .containerBackground(for: .widget) {
+            Color(white: 0.08)
+        }
     }
 }
