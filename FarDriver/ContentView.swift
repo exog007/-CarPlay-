@@ -269,34 +269,43 @@ struct ContentView: View {
     // MARK: - 故障码
 
     private var faultRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: mgr.data.hasFault ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(mgr.data.hasFault ? Color.red : Color.green)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: mgr.data.hasFault ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(mgr.data.hasFault ? Color.red : Color.green)
 
-            Text("故障码")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text("故障码")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            if mgr.data.hasFault {
-                Text(mgr.data.faultText.isEmpty
-                     ? "0x\(String(mgr.data.faultCode, radix: 16, uppercase: true))"
-                     : mgr.data.faultText)
-                    .font(.caption.bold())
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("无")
-                    .font(.caption.bold())
-                    .foregroundStyle(.green)
+                if mgr.data.hasFault {
+                    Text(mgr.data.faultText)
+                        .font(.caption.bold())
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(mgr.data.faultFrameSeen ? "系统正常" : "没收到故障帧")
+                        .font(.caption.bold())
+                        .foregroundStyle(mgr.data.faultFrameSeen ? Color.green : Color.secondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if mgr.data.faultFrameSeen {
+                    Text("0x\(String(format: "%04X", mgr.data.faultCode))")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            Spacer(minLength: 0)
-
-            Text("P\(String(format: "%04X", mgr.data.faultCode))")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
+            // 调试行：原始字节（方便和官方 App 对照）
+            if mgr.data.faultFrameSeen && !mgr.data.faultRaw.isEmpty {
+                Text(mgr.data.faultRaw)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                    .lineLimit(2)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

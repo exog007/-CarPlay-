@@ -25,11 +25,13 @@ struct ControllerData: Codable, Equatable {
     var soc: Int = 0                 // 电量 %
     var isRegen: Bool = false        // 动能回收中
     var faultCode: Int = 0           // 故障码原始值（0 = 无故障）
-    var faultText: String = ""       // 故障描述（多故障用英文逗号分隔）
+    var faultText: String = ""       // 故障描述（多故障用「、」分隔）
+    var faultRaw: String = ""        // 原始字节，调试用，例如 "A4 08 00 00"
+    var faultFrameSeen: Bool = false // 有没有真的收到过故障帧
     var updatedAt: Date = Date()
 
-    /// 有没有故障
-    var hasFault: Bool { faultCode != 0 || !faultText.isEmpty }
+    /// 有没有故障：只有解析出明确故障位才算
+    var hasFault: Bool { !faultText.isEmpty }
 
     /// 能算功率就自动算
     mutating func recomputePower() {
@@ -106,11 +108,19 @@ final class FarDriverDecoder {
             data.soc = Int(p[3])
 
         case 0xC4:
-            // 故障码（远驱协议里 0xC4 段的 bit 位）
-            // 具体位定义未公开，先原样保留原始值
-            let code = UInt16(p[0]) | (UInt16(p[1]) << 8)
+            // 故障码帧
+            // 官方故障表来自 MotorNet6.dll：第 0 项「系统正常」，1...18 是各故障
+            // 位定义：bit N == 1 表示「故障 N」（bit 0 不算故障）
+            let lo = UInt16(p[0])
+            let hi = UInt16(p[1])
+            let code = lo | (hi << 8)
             data.faultCode = Int(code)
+            data.faultFrameSeen = true
             data.faultText = FarDriverFaultCodes.describe(bits: code)
+            // 保留原始字节，方便对照官方 App 排查
+            data.faultRaw = String(format: "%02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X",
+                                   p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
+                                   p[8], p[9], p[10], p[11], p[12], p[13])
 
         default:
             break
