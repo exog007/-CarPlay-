@@ -70,22 +70,24 @@ final class GpsSpeed: NSObject, ObservableObject {
 
     /// 融合车速：控制器轮速和 GPS 取大值
     ///
+    /// 但 GPS 只用来把速度**往高拉**，且必须足够可信：
+    /// GPS 静止时会报几 km/h 的噪声，如果无条件取大值，
+    /// 停下也会显示 9 km/h。
+    ///
     /// - Parameters:
     ///   - wheel: 控制器按轮径算出来的速度
-    ///   - maxGap: 两者差多少以内算「一致」
+    ///   - minGap: GPS 要比轮速高出这么多才采信
     /// - Returns: 用于显示的速度
-    func fused(with wheel: Double, maxGap: Double = 15) -> Double {
-        guard enabled, hasFix, accuracy >= 0, accuracy < 50 else { return wheel }
-        // GPS 比控制器快很多，说明轮径设小了，信 GPS
-        if speedKmh > wheel { return speedKmh }
-        // GPS 明显比控制器慢，可能刚进隧道/刚起步，控制器的值更及时
-        if wheel - speedKmh > maxGap { return wheel }
+    func fused(with wheel: Double, minGap: Double = 4) -> Double {
+        guard enabled, hasFix, accuracy >= 0, accuracy < 25 else { return wheel }
+        // GPS 明显更快才信它（轮径设小了的情况）
+        if speedKmh > wheel + minGap { return speedKmh }
         return wheel
     }
 
     /// GPS 是否真的在参与（用于决定要不要在界面标 GPS）
     var isContributing: Bool {
-        enabled && hasFix && accuracy >= 0 && accuracy < 50
+        enabled && hasFix && accuracy >= 0 && accuracy < 25
     }
 }
 
@@ -110,17 +112,21 @@ extension GpsSpeed: CLLocationManagerDelegate {
         guard loc.speed >= 0 else { return }
         // 太旧的定位不要
         guard abs(loc.timestamp.timeIntervalSinceNow) < 5 else { return }
+        // 精度太差的定位不要：>25 米时速度基本是噪声，静止也会读出 3~10 km/h
+        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy < 25 else { return }
 
         accuracy = loc.horizontalAccuracy
         hasFix = true
 
         let kmh = loc.speed * 3.6
-        if kmh > 1.0 {
+        // 低于 3 km/h 一律当静止：GPS 在静止时的速度噪声通常就是这个量级，
+        // 不走这条会永远停在几公里每小时下不来。
+        if kmh > 3.0 {
             lastMovingAt = Date()
             speedKmh = kmh
         } else {
-            // 停下超过 3 秒才归零，避免 GPS 抖动让数字跳 0
-            if Date().timeIntervalSince(lastMovingAt) > 3.0 {
+            // 停下超过 2 秒才归零，避免正常抖动让数字跳 0
+            if Date().timeIntervalSince(lastMovingAt) > 2.0 {
                 speedKmh = 0
             }
         }
