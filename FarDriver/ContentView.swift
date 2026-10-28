@@ -9,6 +9,7 @@ import UIKit
 struct ContentView: View {
     @StateObject private var mgr = ControllerManager.shared
     @State private var showSettings = false
+    @State private var showParams = false
     @State private var landscapeRequested = false
 
     var body: some View {
@@ -46,7 +47,7 @@ struct ContentView: View {
                     .animation(.easeInOut(duration: 0.2), value: landscape)
                 }
                 .background(Color(white: 0.06).ignoresSafeArea())
-                .navigationTitle("远驱控制器")
+                .navigationTitle("大肥鱼控制器")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -56,6 +57,14 @@ struct ContentView: View {
                             Image(systemName: landscape
                                   ? "rectangle.portrait.rotate"
                                   : "rectangle.landscape.rotate")
+                        }
+                    }
+                    // 二级菜单：控制器参数
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showParams = true
+                        } label: {
+                            Image(systemName: "slider.horizontal.3")
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -68,6 +77,9 @@ struct ContentView: View {
                 }
                 .sheet(isPresented: $showSettings) {
                     SettingsView(mgr: mgr)
+                }
+                .sheet(isPresented: $showParams) {
+                    ParamView(mgr: mgr)
                 }
             }
             .preferredColorScheme(.dark)

@@ -67,6 +67,10 @@ final class FarDriverDecoder {
 
     private(set) var data = ControllerData.empty
 
+    /// 缓存每个帧号最近一次的原始数据（14 字节）
+    /// 用来给「参数查看」页取数，不参与实时显示
+    private(set) var frameCache: [Int: [UInt8]] = [:]
+
     /// 解一个 16 字节的包
     /// - Returns: 解出来了就返回 true
     @discardableResult
@@ -81,6 +85,9 @@ final class FarDriverDecoder {
 
         // 数据从第 3 个字节开始
         let p = Array(bytes[2...])
+
+        // 缓存原始数据
+        frameCache[id] = p
 
         switch address {
         case 0xE2:

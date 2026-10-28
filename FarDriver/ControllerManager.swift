@@ -96,6 +96,30 @@ final class ControllerManager: NSObject, ObservableObject {
         uploadError = msg
     }
 
+    // MARK: - 参数查看（只读）
+
+    /// 已经收到的帧数（用于判断参数页有没有数据）
+    var receivedFrameCount: Int { decoder.frameCache.count }
+
+    /// 帧号 → 寄存器地址
+    func registerAddress(frameId: Int) -> UInt8? {
+        guard frameId >= 0, frameId < FarDriverBLE.flashReadAddr.count else { return nil }
+        return FarDriverBLE.flashReadAddr[frameId]
+    }
+
+    /// 取某个帧号的原始数据
+    func rawFrame(_ frameId: Int) -> [UInt8]? {
+        decoder.frameCache[frameId]
+    }
+
+    /// 所有已收到的帧，按帧号排序
+    var allFrames: [(id: Int, address: UInt8, bytes: [UInt8])] {
+        decoder.frameCache.keys.sorted().compactMap { k in
+            guard let addr = registerAddress(frameId: k), let b = decoder.frameCache[k] else { return nil }
+            return (k, addr, b)
+        }
+    }
+
     // MARK: - Live Activity（CarPlay 显示）
 
     /// 启动 Live Activity —— 启动后会自动出现在 CarPlay
