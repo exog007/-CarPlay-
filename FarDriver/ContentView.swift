@@ -87,6 +87,8 @@ struct ContentView: View {
                         applyOrientation(true)
                     }
                 }
+                // 启动 GPS 车速（会弹一次定位授权）
+                gps.start()
             }
         }
     }
@@ -195,6 +197,32 @@ struct ContentView: View {
                     .font(.caption2)
                     .foregroundStyle(themeMgr.color(.power))
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // GPS 速度表状态：没授权时提示一下，不然用户以为功能没做
+            if gps.enabled && !gps.authorized {
+                HStack(spacing: 6) {
+                    Image(systemName: "location.slash")
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.color(.warn))
+                    Text("GPS 车速需要定位权限，点这里去设置")
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.color(.warn))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+
+            // 定位授权了就自动开定位，不用用户再点
+            if gps.enabled && gps.authorized && !gps.hasFix {
+                Text("GPS 正在搜星…（室外几秒后出速度）")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
             }
         }
         .padding()
