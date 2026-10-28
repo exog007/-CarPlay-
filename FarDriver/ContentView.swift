@@ -8,8 +8,10 @@ import UIKit
 
 struct ContentView: View {
     @StateObject private var mgr = ControllerManager.shared
+    @StateObject private var bms = AntBmsManager.shared
     @State private var showSettings = false
     @State private var showParams = false
+    @State private var showBms = false
     @State private var landscapeRequested = false
 
     var body: some View {
@@ -67,6 +69,15 @@ struct ContentView: View {
                             Image(systemName: "slider.horizontal.3")
                         }
                     }
+                    // 蚂蚁 BMS
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showBms = true
+                        } label: {
+                            Image(systemName: "battery.100percent.bolt")
+                                .foregroundStyle(bms.connected ? Color.green : Color.primary)
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             showSettings = true
@@ -80,6 +91,9 @@ struct ContentView: View {
                 }
                 .sheet(isPresented: $showParams) {
                     ParamView(mgr: mgr)
+                }
+                .sheet(isPresented: $showBms) {
+                    AntBmsView(bms: bms)
                 }
             }
             .preferredColorScheme(.dark)
