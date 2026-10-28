@@ -69,7 +69,9 @@ struct AntBmsView: View {
                 VStack(spacing: 12) {
                     connectionCard
 
-                    if bms.connected && bms.data.hasData {
+                    // 连上就把所有卡片都画出来
+                    // 数据还没到时显示占位符（—），到了自动填上
+                    if bms.connected {
                         mainCard          // ① 顶部大卡片
                         cellExtremeCard   // ② 单体极值
                         statusCard        // ③ 状态提示
@@ -190,6 +192,33 @@ struct AntBmsView: View {
     }
 
     // MARK: - ① 顶部大卡片
+    //
+    // 没数据时显示「—」，不整卡消失。这样连上就能看到界面框架，
+    // 数据一到自动填，不会出现空白页。
+
+    private var voltageText: String {
+        guard bms.data.hasData, bms.data.totalVoltage > 0 else { return "—" }
+        return String(format: "%.2f", bms.data.totalVoltage)
+    }
+    private var currentText: String {
+        guard bms.data.hasData else { return "—" }
+        return String(format: "%.1f", abs(bms.smoothedCurrent))
+    }
+    private var powerText: String {
+        guard bms.data.hasData else { return "—" }
+        return "\(Int(abs(bms.data.power)))"
+    }
+    private var capacityText: String {
+        guard bms.data.capacityTotal > 0 else { return "—" }
+        return String(format: "%.0f/%.0f", bms.data.capacityRemaining, bms.data.capacityTotal)
+    }
+    private var cyclesText: String {
+        guard bms.data.cycles > 0 else { return "—" }
+        return "\(bms.data.cycles)"
+    }
+    private var sohText: String {
+        soh.map { String(format: "%.0f", $0) } ?? "—"
+    }
 
     private var mainCard: some View {
         VStack(spacing: 0) {
@@ -201,15 +230,9 @@ struct AntBmsView: View {
                 VStack(spacing: 0) {
                     // 第一行：电压 / 电流 / 功率
                     HStack(spacing: 0) {
-                        gridCell("电压",
-                                 String(format: "%.2f", bms.data.totalVoltage),
-                                 "V", themeMgr.color(.voltage))
-                        gridCell("电流",
-                                 String(format: "%.1f", abs(bms.smoothedCurrent)),
-                                 "A", themeMgr.color(.current))
-                        gridCell("功率",
-                                 "\(Int(abs(bms.data.power)))",
-                                 "W", themeMgr.color(.power))
+                        gridCell("电压", voltageText, "V", themeMgr.color(.voltage))
+                        gridCell("电流", currentText, "A", themeMgr.color(.current))
+                        gridCell("功率", powerText, "W", themeMgr.color(.power))
                     }
                     .padding(.bottom, 10)
 
@@ -217,17 +240,9 @@ struct AntBmsView: View {
 
                     // 第二行：容量 / 循环 / 健康度（原厂是防拆置位）
                     HStack(spacing: 0) {
-                        gridCell("容量",
-                                 String(format: "%.0f/%.0f",
-                                        bms.data.capacityRemaining,
-                                        bms.data.capacityTotal),
-                                 "Ah", themeMgr.foreground)
-                        gridCell("循环",
-                                 "\(bms.data.cycles)",
-                                 "次", themeMgr.color(.rpm))
-                        gridCell("健康度",
-                                 soh.map { String(format: "%.0f", $0) } ?? "—",
-                                 "%", sohColor)
+                        gridCell("容量", capacityText, "Ah", themeMgr.foreground)
+                        gridCell("循环", cyclesText, "次", themeMgr.color(.rpm))
+                        gridCell("健康度", sohText, "%", sohColor)
                     }
                     .padding(.vertical, 10)
 
@@ -282,22 +297,23 @@ struct AntBmsView: View {
 
     /// 环形 SOC
     private var socRing: some View {
-        let ratio = Double(bms.data.soc) / 100.0
+        let hasSoc = bms.data.hasData
+        let ratio = hasSoc ? Double(bms.data.soc) / 100.0 : 0
         return ZStack {
             Circle()
                 .stroke(themeMgr.isLight ? Color.black.opacity(0.07) : Color.white.opacity(0.10),
                         lineWidth: 11)
             Circle()
                 .trim(from: 0, to: max(0.001, min(1, ratio)))
-                .stroke(socColor,
+                .stroke(hasSoc ? socColor : themeMgr.secondary.opacity(0.4),
                         style: StrokeStyle(lineWidth: 11, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.4), value: ratio)
             VStack(spacing: 1) {
-                Text("\(bms.data.soc)")
+                Text(hasSoc ? "\(bms.data.soc)" : "—")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(socColor)
+                    .foregroundStyle(hasSoc ? socColor : themeMgr.secondary)
                 Text("%")
                     .font(.system(size: 11))
                     .foregroundStyle(themeMgr.secondary)
@@ -360,25 +376,28 @@ struct AntBmsView: View {
     // MARK: - ② 单体极值条
 
     private var cellExtremeCard: some View {
-        HStack(spacing: 0) {
+        let hasCells = !bms.data.cells.isEmpty
+        return HStack(spacing: 0) {
             extremeCell("平均电压",
-                        String(format: "%.3f", bms.data.avgCell),
+                        hasCells ? String(format: "%.3f", bms.data.avgCell) : "—",
                         nil, themeMgr.color(.ok))
             Divider().frame(height: 42)
             extremeCell("最低电压",
-                        String(format: "%.3f", bms.data.minCell),
-                        bms.data.minCellIndex,
+                        hasCells ? String(format: "%.3f", bms.data.minCell) : "—",
+                        hasCells ? bms.data.minCellIndex : nil,
                         themeMgr.color(.voltage))
             Divider().frame(height: 42)
             extremeCell("最高电压",
-                        String(format: "%.3f", bms.data.maxCell),
-                        bms.data.maxCellIndex,
+                        hasCells ? String(format: "%.3f", bms.data.maxCell) : "—",
+                        hasCells ? bms.data.maxCellIndex : nil,
                         themeMgr.color(.warn))
             Divider().frame(height: 42)
             extremeCell("压差",
-                        String(format: "%.3f", bms.data.deltaCell),
+                        hasCells ? String(format: "%.3f", bms.data.deltaCell) : "—",
                         nil,
-                        bms.data.deltaCell > 0.05 ? themeMgr.color(.warn) : themeMgr.color(.ok))
+                        hasCells
+                        ? (bms.data.deltaCell > 0.05 ? themeMgr.color(.warn) : themeMgr.color(.ok))
+                        : themeMgr.secondary)
         }
         .padding(.vertical, 12)
         .background(themeMgr.cardBG)
@@ -541,23 +560,32 @@ struct AntBmsView: View {
     // MARK: - ⑤ 单体电压网格
 
     private var cellsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let hasCells = !bms.data.cells.isEmpty
+        // 没数据时先画 21 个空槽，等数据来了再填
+        let placeholderCount = 21
+        let displayCells: [(Int, Double)] = hasCells
+            ? bms.data.cells.enumerated().map { ($0.offset + 1, $0.element) }
+            : (1...placeholderCount).map { ($0, 0.0) }
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("单体电压")
                     .font(.subheadline.bold())
                     .foregroundStyle(themeMgr.foreground)
-                Text("\(bms.data.cellCount) 串")
+                Text(hasCells ? "\(bms.data.cellCount) 串" : "等待数据")
                     .font(.caption2)
                     .foregroundStyle(themeMgr.secondary)
                 Spacer()
-                Text(String(format: "%.3f V 平均", bms.data.avgCell))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(themeMgr.secondary)
+                if hasCells {
+                    Text(String(format: "%.3f V 平均", bms.data.avgCell))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(themeMgr.secondary)
+                }
             }
 
             LazyVGrid(columns: cellColumns, spacing: 10) {
-                ForEach(Array(bms.data.cells.enumerated()), id: \.offset) { idx, v in
-                    cellChip(index: idx + 1, voltage: v)
+                ForEach(displayCells, id: \.0) { idx, v in
+                    cellChip(index: idx, voltage: v, placeholder: !hasCells)
                 }
             }
         }
@@ -571,7 +599,7 @@ struct AntBmsView: View {
     }
 
     private var cellColumns: [GridItem] {
-        let n = bms.data.cellCount
+        let n = max(bms.data.cellCount, 21)
         let cols: Int
         switch n {
         case 0...8:   cols = 4
@@ -582,24 +610,24 @@ struct AntBmsView: View {
         return Array(repeating: GridItem(.flexible(), spacing: 10), count: cols)
     }
 
-    private func cellChip(index: Int, voltage: Double) -> some View {
-        let invalid = voltage < 1.0
-        let isMax = index == bms.data.maxCellIndex
-        let isMin = index == bms.data.minCellIndex
-        let c: Color = invalid ? themeMgr.secondary
+    private func cellChip(index: Int, voltage: Double, placeholder: Bool = false) -> some View {
+        let invalid = placeholder || voltage < 1.0
+        let isMax = !placeholder && index == bms.data.maxCellIndex
+        let isMin = !placeholder && index == bms.data.minCellIndex
+        let c: Color = invalid ? themeMgr.secondary.opacity(0.5)
             : (isMax ? themeMgr.color(.warn) : (isMin ? themeMgr.color(.voltage) : themeMgr.color(.current)))
         return VStack(spacing: 3) {
             // 电池小图标 + 编号
             ZStack {
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(c.opacity(invalid ? 0.3 : 0.6), lineWidth: 1.2)
+                    .stroke(c.opacity(invalid ? 0.35 : 0.6), lineWidth: 1.2)
                     .frame(width: 24, height: 34)
                 Text("\(index)")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(c)
                 // 电池正极小凸起
                 Rectangle()
-                    .fill(c.opacity(invalid ? 0.3 : 0.6))
+                    .fill(c.opacity(invalid ? 0.35 : 0.6))
                     .frame(width: 8, height: 2)
                     .offset(y: -18)
             }
