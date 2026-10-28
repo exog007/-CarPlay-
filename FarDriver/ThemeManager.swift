@@ -81,15 +81,18 @@ final class ThemeManager: ObservableObject {
 
         case .photo:
             if let img = photoImage {
+                // 先取出值，避免在闭包里引用 self
+                let blurValue = CGFloat(theme.photoBlur)
+                let dimValue = theme.photoDim
                 GeometryReader { geo in
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
-                        .blur(radius: CGFloat(theme.photoBlur))
+                        .blur(radius: blurValue)
                         .overlay {
-                            Color.black.opacity(theme.photoDim)
+                            Color.black.opacity(dimValue)
                         }
                 }
                 .ignoresSafeArea()
