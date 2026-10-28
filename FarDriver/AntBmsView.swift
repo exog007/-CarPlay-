@@ -235,10 +235,38 @@ struct AntBmsView: View {
                         .monospacedDigit()
                         .foregroundStyle(themeMgr.color(.ok))
                 }
+                // 预计充满时刻
+                HStack {
+                    Image(systemName: "flag.checkered")
+                        .foregroundStyle(themeMgr.color(.ok))
+                    Text("预计充满")
+                        .font(.caption)
+                        .foregroundStyle(themeMgr.secondary)
+                    Spacer()
+                    Text(finishClock(est.remainingSeconds))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(themeMgr.color(.ok))
+                }
                 if let note = est.note {
                     Text(note)
                         .font(.caption2)
                         .foregroundStyle(themeMgr.color(.power))
+                }
+                // 按 80% 截止的建议时刻
+                if bms.data.soc < 80, let to80 = chargeRemainingTo80() {
+                    HStack {
+                        Image(systemName: "battery.75percent")
+                            .foregroundStyle(themeMgr.color(.power))
+                        Text("预计到 80%")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                        Spacer()
+                        Text("\(ChargeEstimator.format(to80))（\(finishClock(to80))）")
+                            .font(.system(size: 13, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(themeMgr.color(.power))
+                    }
                 }
             } else if let est = dischargeEstimate() {
                 HStack {
@@ -250,6 +278,19 @@ struct AntBmsView: View {
                     Spacer()
                     Text(ChargeEstimator.format(est.remainingSeconds))
                         .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(themeMgr.color(.power))
+                }
+                // 预计没电时刻
+                HStack {
+                    Image(systemName: "flag.checkered")
+                        .foregroundStyle(themeMgr.color(.power))
+                    Text("预计没电")
+                        .font(.caption)
+                        .foregroundStyle(themeMgr.secondary)
+                    Spacer()
+                    Text(finishClock(est.remainingSeconds))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(themeMgr.color(.power))
                 }
@@ -266,6 +307,28 @@ struct AntBmsView: View {
         } header: {
             Text("实时读数")
         }
+    }
+
+    /// 从现在起 N 秒后是几点 → "12:35"
+    private func finishClock(_ seconds: TimeInterval) -> String {
+        let target = Date().addingTimeInterval(seconds)
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: target)
+    }
+
+    /// 充到 80% 还要多久
+    private func chargeRemainingTo80() -> TimeInterval? {
+        guard bms.smoothedCurrent > 0.5,
+              bms.data.capacityTotal > 0,
+              bms.data.soc < 80 else { return nil }
+        let needAh = Double(80 - bms.data.soc) / 100.0 * bms.data.capacityTotal
+        var sec = needAh / bms.smoothedCurrent * 3600.0
+        // 和总估算用同一套 CV 修正
+        if bms.smoothedCurrent < bms.fullChargeCurrent * 0.5 {
+            sec *= 1.7
+        }
+        return sec
     }
 
     private func tripleCell(_ title: String, _ value: String, _ unit: String, _ c: Color) -> some View {
