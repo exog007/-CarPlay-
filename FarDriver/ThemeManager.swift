@@ -87,7 +87,7 @@ final class ThemeManager: ObservableObject {
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
-                        .blur(radius: theme.photoBlur)
+                        .blur(radius: CGFloat(theme.photoBlur))
                         .overlay {
                             Color.black.opacity(theme.photoDim)
                         }
