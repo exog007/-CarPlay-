@@ -4,10 +4,16 @@
 //
 
 import SwiftUI
+import UIKit
 
 @main
 struct FarDriverApp: App {
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        // 允许代码里主动触发屏幕旋转
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+    }
 
     var body: some Scene {
         WindowGroup {

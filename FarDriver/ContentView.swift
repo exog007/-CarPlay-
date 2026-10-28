@@ -9,37 +9,113 @@ import UIKit
 struct ContentView: View {
     @StateObject private var mgr = ControllerManager.shared
     @State private var showSettings = false
+    @State private var landscapeRequested = false
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    statusCard
-                    mainGauges
-                    tempRow
-                    batteryRow
-                    faultRow
-                    uploadCard
+        GeometryReader { geo in
+            let landscape = geo.size.width > geo.size.height
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        statusCard
+                        if landscape {
+                            // 横屏：左右两栏，仪表和数据并排，一屏看全
+                            HStack(alignment: .top, spacing: 16) {
+                                VStack(spacing: 16) {
+                                    mainGauges
+                                    batteryRow
+                                }
+                                .frame(maxWidth: .infinity)
+                                VStack(spacing: 16) {
+                                    tempRow
+                                    faultRow
+                                    uploadCard
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        } else {
+                            // 竖屏：原来的单列
+                            mainGauges
+                            tempRow
+                            batteryRow
+                            faultRow
+                            uploadCard
+                        }
+                    }
+                    .padding()
+                    .animation(.easeInOut(duration: 0.2), value: landscape)
                 }
-                .padding()
+                .background(Color(white: 0.06).ignoresSafeArea())
+                .navigationTitle("远驱控制器")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            rotateScreen(currentLandscape: landscape)
+                        } label: {
+                            Image(systemName: landscape
+                                  ? "rectangle.portrait.rotate"
+                                  : "rectangle.landscape.rotate")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                    }
+                }
+                .sheet(isPresented: $showSettings) {
+                    SettingsView(mgr: mgr)
+                }
             }
-            .background(Color(white: 0.06).ignoresSafeArea())
-            .navigationTitle("远驱控制器")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
+            .preferredColorScheme(.dark)
+            .onAppear {
+                // 记下用户上次选的横屏状态
+                landscapeRequested = UserDefaults.standard.bool(forKey: "forceLandscape")
+                if landscapeRequested {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        applyOrientation(true)
                     }
                 }
             }
-            .sheet(isPresented: $showSettings) {
-                SettingsView(mgr: mgr)
-            }
         }
-        .preferredColorScheme(.dark)
+    }
+
+    // MARK: - 横竖屏切换
+
+    private func rotateScreen(currentLandscape: Bool) {
+        let target = !currentLandscape
+        landscapeRequested = target
+        UserDefaults.standard.set(target, forKey: "forceLandscape")
+        applyOrientation(target)
+    }
+
+    private func applyOrientation(_ landscape: Bool) {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+
+        // iOS 16+ 的正式接口：直接请求屏幕几何方向
+        if #available(iOS 16.0, *) {
+            let prefs = UIWindowScene.GeometryPreferences.iOS(
+                interfaceOrientations: landscape ? .landscapeRight : .portrait
+            )
+            scene.requestGeometryUpdate(prefs) { error in
+                // 旋转失败（比如被别的东西锁住）就把开关状态退回去
+                print("旋转失败：\(error.localizedDescription)")
+            }
+            // 让 SwiftUI 重新算布局
+            for window in scene.windows {
+                window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+            }
+        } else {
+            UIDevice.current.setValue(
+                landscape ? UIInterfaceOrientation.landscapeRight.rawValue
+                          : UIInterfaceOrientation.portrait.rawValue,
+                forKey: "orientation"
+            )
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
     }
 
     // MARK: - 状态卡片
@@ -237,17 +313,24 @@ struct ContentView: View {
     // MARK: - 上传状态
 
     private var uploadCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            // 第一行：标题 + 开关（开关方式上传）
             HStack {
                 Image(systemName: "antenna.radiowaves.left.and.right")
+                    .foregroundStyle(mgr.autoUpload ? Color.green : Color.gray)
                 Text("数据上传")
                     .font(.subheadline.bold())
                 Spacer()
-                Text(mgr.autoUpload ? "每 60 秒" : "已关闭")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Toggle("", isOn: $mgr.autoUpload)
+                    .labelsHidden()
+                    .tint(.green)
             }
 
+            Text(mgr.autoUpload ? "正在上传：每 60 秒自动传一次" : "已停止上传（打开开关开始传）")
+                .font(.caption)
+                .foregroundStyle(mgr.autoUpload ? Color.green.opacity(0.9) : Color.secondary)
+
+            // 档位
             HStack(spacing: 12) {
                 Text("档位")
                     .font(.caption)
@@ -295,6 +378,7 @@ struct ContentView: View {
             }
             .disabled(!mgr.status.isConnected)
 
+            // 手动补传一次：开关关掉也能点
             Button {
                 mgr.upload()
             } label: {
@@ -314,6 +398,12 @@ struct ContentView: View {
         .padding()
         .background(Color(white: 0.12))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            if mgr.autoUpload {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.green.opacity(0.35), lineWidth: 1)
+            }
+        }
     }
 }
 
@@ -431,8 +521,19 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("自动上传（每 60 秒）", isOn: $mgr.autoUpload)
                     Toggle("自动连接控制器", isOn: $mgr.autoConnect)
+                } header: {
+                    Text("蓝牙")
+                } footer: {
+                    Text("关闭后不会自动搜索控制器，需要手动点「搜索蓝牙」")
+                }
+
+                Section {
+                    Toggle("自动上传（每 60 秒）", isOn: $mgr.autoUpload)
+                } header: {
+                    Text("数据上传")
+                } footer: {
+                    Text("主界面的上传卡片上也有这个开关，两边同步")
                 }
 
                 Section {
@@ -442,11 +543,13 @@ struct SettingsView: View {
                 }
 
                 Section("说明") {
-                    Label("MOS 温度超过 75°C 会变红", systemImage: "thermometer.high")
+                    Label("MOS 温度超过 60°C 亮红三角警告", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                    Label("电机温度超过 110°C 会变红", systemImage: "thermometer.high")
+                    Label("电机温度超过 50°C 亮黄色发动机故障灯", systemImage: "engine.combustion.fill")
                         .font(.caption)
                     Label("电流为负表示在动能回收", systemImage: "arrow.down.circle")
+                        .font(.caption)
+                    Label("左上角按钮切换横屏/竖屏", systemImage: "rectangle.landscape.rotate")
                         .font(.caption)
                 }
             }

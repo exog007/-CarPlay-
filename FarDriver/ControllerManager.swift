@@ -28,8 +28,22 @@ final class ControllerManager: NSObject, ObservableObject {
             SharedStore.saveServerURL(serverBaseURL)
         }
     }
-    @Published var autoUpload: Bool = true
-    @Published var autoConnect: Bool = true
+    /// 上传开关（持久化，App 重启后保持）
+    @Published var autoUpload: Bool {
+        didSet {
+            UserDefaults.standard.set(autoUpload, forKey: "autoUpload")
+            // 打开开关时立刻补传一次，不用干等 60 秒
+            if autoUpload && !oldValue {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.uploadIfNeeded()
+                }
+            }
+        }
+    }
+    /// 自动连接开关（持久化）
+    @Published var autoConnect: Bool {
+        didSet { UserDefaults.standard.set(autoConnect, forKey: "autoConnect") }
+    }
 
     enum ConnectStatus: Equatable {
         case idle
@@ -69,6 +83,9 @@ final class ControllerManager: NSObject, ObservableObject {
 
     private override init() {
         serverBaseURL = UserDefaults.standard.string(forKey: "serverBaseURL") ?? "http://192.168.100.101:38281"
+        // 没存过就默认开
+        autoUpload = UserDefaults.standard.object(forKey: "autoUpload") as? Bool ?? true
+        autoConnect = UserDefaults.standard.object(forKey: "autoConnect") as? Bool ?? true
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
         startUploadTimer()
@@ -223,8 +240,17 @@ final class ControllerManager: NSObject, ObservableObject {
         upload()
     }
 
-    /// 立刻上传一次
+    /// 立刻上传一次（手动按钮用，不受开关限制）
     func upload() {
+        guard status.isConnected else {
+            uploadError = "控制器没连上，没数据可传"
+            return
+        }
+        guard Date().timeIntervalSince(data.updatedAt) < 120 else {
+            uploadError = "数据超过 2 分钟没更新，先等控制器回数据"
+            return
+        }
+
         guard let url = URL(string: serverBaseURL.trimmingCharacters(in: .whitespaces) + "/api/controller") else {
             uploadError = "服务器地址不对"
             return
