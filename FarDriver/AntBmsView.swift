@@ -109,10 +109,23 @@ struct AntBmsView: View {
             .navigationTitle(bms.connected ? bms.deviceName : "蚂蚁 BMS")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                // 左上角返回：关掉全屏页，回到主界面
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 15, weight: .semibold))
+                            Text("返回")
+                                .font(.system(size: 16))
+                        }
+                        .foregroundStyle(themeMgr.color(.ok))
+                    }
                 }
             }
+            // 全屏页没有系统返回手势条，自己顶上
+            .navigationBarBackButtonHidden(true)
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }

@@ -74,7 +74,7 @@ struct ContentView: View {
                 .sheet(isPresented: $showSettings) {
                     SettingsView(mgr: mgr)
                 }
-                .sheet(isPresented: $showBms) {
+                .fullScreenCover(isPresented: $showBms) {
                     AntBmsView(bms: bms, themeMgr: themeMgr)
                 }
             }
