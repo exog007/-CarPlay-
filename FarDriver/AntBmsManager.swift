@@ -72,8 +72,8 @@ final class AntBmsManager: NSObject, ObservableObject {
     private func recordVoltage(_ cellV: Double) {
         guard cellV > 1.0 else { return }
         let now = Date()
-        // 只在充电时记录（电流为正）
-        guard smoothedCurrent > 0.5 else {
+        // 只在充电时记录（本机约定：电流为负 = 充电）
+        guard smoothedCurrent < -0.5 else {
             // 不充电就把历史清掉，下次充电重新开始
             if !voltageHistory.isEmpty { voltageHistory.removeAll() }
             return
@@ -90,12 +90,12 @@ final class AntBmsManager: NSObject, ObservableObject {
         if currentSamples.count > 15 {
             currentSamples.removeFirst(currentSamples.count - 15)
         }
-        // 充电时刷新峰值
-        if amp > 1.0 {
-            peakChargeCurrent = max(peakChargeCurrent, amp)
+        // 充电时刷新峰值（本机约定：电流为负 = 充电）
+        if amp < -1.0 {
+            peakChargeCurrent = max(peakChargeCurrent, -amp)
         }
         // 掉落电就不保留峰值，下次充电重新测
-        if amp < -1.0 {
+        if amp > 1.0 {
             peakChargeCurrent = 0
         }
     }

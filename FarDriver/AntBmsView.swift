@@ -51,14 +51,14 @@ struct AntBmsView: View {
     /// MOS 是「能力开关」，不是「正在发生」——充放电 MOS 都开着是正常的，
     /// 不代表正在充电。官方 App 也是按电流判断的。
     ///
-    /// 电流 > 1A  → 充电中
-    /// 电流 < -1A → 放电中
+    /// 电流 < -1A → 充电中（负电流 = 电流流进电池）
+    /// 电流 >  1A → 放电中（正电流 = 电流流出电池）
     /// 其它       → 待机
     private var stateText: (String, Color, String) {
         let cur = bms.smoothedCurrent
-        if cur > 1.0 {
+        if cur < -1.0 {
             return ("充电中", themeMgr.color(.ok), "bolt.fill")
-        } else if cur < -1.0 {
+        } else if cur > 1.0 {
             return ("放电中", themeMgr.color(.power), "bolt.slash.fill")
         }
         return ("待机", themeMgr.color(.warn), "pause.circle.fill")
@@ -214,11 +214,16 @@ struct AntBmsView: View {
     }
     private var currentText: String {
         guard bms.data.hasData else { return "—" }
-        return String(format: "%.1f", abs(bms.smoothedCurrent))
+        return String(format: "%.1f", bms.data.current)
+    }
+    /// 功率（按电流符号取号：负 = 充电，正 = 放电）
+    private var powerSign: String {
+        guard bms.data.hasData else { return "" }
+        return bms.data.power < -1 ? "−" : (bms.data.power > 1 ? "+" : "")
     }
     private var powerText: String {
         guard bms.data.hasData else { return "—" }
-        return "\(Int(abs(bms.data.power)))"
+        return powerSign + "\(Int(abs(bms.data.power)))"
     }
     private var capacityText: String {
         guard bms.data.capacityTotal > 0 else { return "—" }
