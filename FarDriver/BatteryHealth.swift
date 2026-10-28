@@ -143,43 +143,182 @@ struct BatteryHealth {
     }
 }
 
+// MARK: - 充电阶段
+
+/// 充电处于哪个阶段
+enum ChargePhase {
+    case cc          // 恒流：电压低，电流满
+    case ccLate      // 恒流末段：电压接近满，开始有降流趋势
+    case cv          // 恒压：电压基本不动，电流一直掉
+
+    var title: String {
+        switch self {
+        case .cc:     return "恒流充电"
+        case .ccLate: return "恒流末段"
+        case .cv:     return "恒压充电（降流中）"
+        }
+    }
+
+    var hint: String? {
+        switch self {
+        case .cc:     return nil
+        case .ccLate: return "快到满电了，充电器准备降流"
+        case .cv:     return "充电器在降流，速度会越来越慢"
+        }
+    }
+}
+
 // MARK: - 充放电时间估算
 
 enum ChargeEstimator {
 
     struct Result {
         var remainingSeconds: TimeInterval
-        var isEstimate: Bool      // 是不是粗估（CV 阶段）
+        var isEstimate: Bool      // 是不是粗估
         var note: String?
+        var phase: ChargePhase?
     }
 
-    /// 估充电剩余时间
+    // MARK: 阶段判定
+
+    /// 按单体电压判定充电阶段
+    /// - Parameters:
+    ///   - cellVoltage: 当前单体电压（V），例如 4.28
+    ///   - cellFull: 单体满电电压（V），例如 4.30
+    ///   - currentA: 当前电流
+    ///   - fullCurrentA: 本次充电的峰值电流
+    static func phase(cellVoltage: Double,
+                      cellFull: Double,
+                      currentA: Double,
+                      fullCurrentA: Double) -> ChargePhase {
+        // 电流掉到峰值 80% 以下 → 已经进入 CV
+        let currentDropped = fullCurrentA > 1 && currentA < fullCurrentA * 0.80
+        // 单体电压接近满电
+        let nearFull = cellVoltage > cellFull - 0.10   // 4.20V 以上
+
+        if currentDropped && nearFull {
+            return .cv
+        }
+        if nearFull {
+            return .ccLate
+        }
+        return .cc
+    }
+
+    // MARK: 估充电剩余时间
+
+    /// 估充电剩余时间（分阶段）
     /// - Parameters:
     ///   - soc: 当前电量 %
     ///   - capacityTotal: 电池总容量 Ah
     ///   - currentA: 当前电流 A（充电时为正）
-    ///   - fullCurrentA: 满功率充电电流 A（用来判断是否进入 CV 阶段）
+    ///   - fullCurrentA: 本次充电峰值电流 A
+    ///   - cellVoltage: 当前单体电压 V
+    ///   - cellFull: 单体满电电压 V
+    ///   - voltageHistory: 最近的电压采样（用来算电压爬升速度）
     static func chargeRemaining(soc: Int,
                                 capacityTotal: Double,
                                 currentA: Double,
-                                fullCurrentA: Double) -> Result? {
+                                fullCurrentA: Double,
+                                cellVoltage: Double = 0,
+                                cellFull: Double = 4.3,
+                                voltageHistory: [(time: Date, cellVoltage: Double)] = []) -> Result? {
         guard capacityTotal > 0, currentA > 0.5 else { return nil }
-        let remainingAh = Double(100 - soc) / 100.0 * capacityTotal
-        guard remainingAh > 0 else { return nil }
 
-        var seconds = remainingAh / currentA * 3600.0
-        var isEstimate = false
-        var note: String?
+        let ph = phase(cellVoltage: cellVoltage,
+                       cellFull: cellFull,
+                       currentA: currentA,
+                       fullCurrentA: fullCurrentA)
 
-        // CV 阶段（电流掉到满电流一半以下）：速度会越来越慢，粗估要放大
-        if fullCurrentA > 0 && currentA < fullCurrentA * 0.5 {
-            isEstimate = true
-            note = "恒压阶段，电流在减小，时间不准"
-            // 经验修正：CV 阶段通常比线性估算多 1.5~2 倍
-            seconds *= 1.7
+        switch ph {
+        case .cc:
+            // 恒流阶段：用容量算，最准
+            let remainingAh = Double(100 - soc) / 100.0 * capacityTotal
+            guard remainingAh > 0 else { return nil }
+            let seconds = remainingAh / currentA * 3600.0
+            return Result(remainingSeconds: seconds,
+                          isEstimate: false,
+                          note: nil,
+                          phase: .cc)
+
+        case .ccLate:
+            // 恒流末段：容量法 + 一点保守修正
+            let remainingAh = Double(100 - soc) / 100.0 * capacityTotal
+            guard remainingAh > 0 else { return nil }
+            // 这一段实际比纯线性估算慢 20~40%
+            let seconds = remainingAh / currentA * 3600.0 * 1.3
+            return Result(remainingSeconds: seconds,
+                          isEstimate: true,
+                          note: "接近满电，按经验加时",
+                          phase: .ccLate)
+
+        case .cv:
+            // 恒压阶段：按电压爬升速度算，比按电流准
+            if let s = cvRemainingByVoltage(cellVoltage: cellVoltage,
+                                            cellFull: cellFull,
+                                            history: voltageHistory) {
+                return Result(remainingSeconds: s,
+                              isEstimate: true,
+                              note: "按电压爬升速度推算",
+                              phase: .cv)
+            }
+            // 电压历史不够时，退回按电流算 + 放大
+            let remainingAh = Double(100 - soc) / 100.0 * capacityTotal
+            guard remainingAh > 0 else { return nil }
+            let seconds = remainingAh / currentA * 3600.0 * 2.0
+            return Result(remainingSeconds: seconds,
+                          isEstimate: true,
+                          note: "恒压阶段，粗估",
+                          phase: .cv)
         }
+    }
 
-        return Result(remainingSeconds: seconds, isEstimate: isEstimate, note: note)
+    /// 恒压阶段：按电压差的对数关系推算剩余时间
+    ///
+    /// 锂电 CV 阶段电流指数衰减：I(t) = I₀·e^(-t/τ)
+    /// 电压差也随之指数收窄：ΔV(t) = ΔV₀·e^(-t/τ)
+    ///
+    /// 所以：剩余时间 = Δt × ln(当前差 ÷ 目标差) ÷ ln(上次差 ÷ 当前差)
+    ///
+    /// - Returns: 剩余秒数；历史不够时返回 nil
+    private static func cvRemainingByVoltage(cellVoltage: Double,
+                                             cellFull: Double,
+                                             history: [(time: Date, cellVoltage: Double)]) -> TimeInterval? {
+        // 充满判据：单体到 cellFull - 0.02（留一点余量，实际永远到不了绝对值）
+        let target = cellFull - 0.02
+        let currentGap = target - cellVoltage
+        guard currentGap > 0.001 else { return 0 }
+
+        // 至少要 3 个采样才能算斜率
+        guard history.count >= 3 else { return nil }
+
+        // 用最近的一段（最多 8 分钟）
+        let now = Date()
+        let recent = history.filter { now.timeIntervalSince($0.time) <= 480 && now.timeIntervalSince($0.time) > 30 }
+        guard let first = recent.first, let last = recent.last else { return nil }
+
+        let dt = last.time.distance(to: first.time) * -1   // 正数，秒
+        guard dt > 60 else { return nil }
+
+        let firstGap = target - first.cellVoltage
+        let lastGap = target - last.cellVoltage
+
+        // 电压必须是在上升，且电压差必须是在收窄
+        guard firstGap > lastGap, lastGap > 0.001 else { return nil }
+
+        // 比值：这段里电压差缩窄了多少倍
+        let ratio = firstGap / lastGap
+        // ln(ratio) 是在 dt 时间内的"衰减指数"
+        let decay = log(ratio)
+        guard decay > 0.02 else { return nil }   // 电压几乎没动，算不了
+
+        // 剩下的衰减量
+        let remainDecay = log(lastGap / currentGap)
+        guard remainDecay > 0 else { return 0 }
+
+        let seconds = dt * remainDecay / decay
+        // 上限 3 小时，防止算出离谱的值
+        return min(seconds, 3 * 3600)
     }
 
     /// 估放电剩余时间
@@ -198,7 +337,10 @@ enum ChargeEstimator {
         guard usableAh > 0 else { return nil }
 
         let seconds = usableAh / draw * 3600.0
-        return Result(remainingSeconds: seconds, isEstimate: false, note: "按剩余电量估算，留 10% 余量")
+        return Result(remainingSeconds: seconds,
+                      isEstimate: false,
+                      note: "按剩余电量估算，留 10% 余量",
+                      phase: nil)
     }
 
     /// 秒 → "2 小时 11 分"

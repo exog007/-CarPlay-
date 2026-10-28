@@ -223,6 +223,29 @@ struct AntBmsView: View {
 
             // 时间估算
             if let est = chargeEstimate() {
+                // 充电阶段标签
+                if let ph = est.phase {
+                    HStack(spacing: 6) {
+                        Image(systemName: phaseIcon(ph))
+                            .font(.caption)
+                            .foregroundStyle(phaseColor(ph))
+                        Text(ph.title)
+                            .font(.caption.bold())
+                            .foregroundStyle(phaseColor(ph))
+                        Spacer()
+                        if ph == .cv, let cellV = currentCellVoltage {
+                            Text(String(format: "单体 %.3fV", cellV))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+                    }
+                    if let hint = ph.hint {
+                        Text(hint)
+                            .font(.caption2)
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                }
+
                 HStack {
                     Image(systemName: "clock")
                         .foregroundStyle(themeMgr.color(.ok))
@@ -317,6 +340,22 @@ struct AntBmsView: View {
         return f.string(from: target)
     }
 
+    private func phaseIcon(_ p: ChargePhase) -> String {
+        switch p {
+        case .cc:     return "bolt.fill"
+        case .ccLate: return "bolt.badge.clock.fill"
+        case .cv:     return "waveform.path.ecg"
+        }
+    }
+
+    private func phaseColor(_ p: ChargePhase) -> Color {
+        switch p {
+        case .cc:     return themeMgr.color(.ok)
+        case .ccLate: return themeMgr.color(.power)
+        case .cv:     return themeMgr.color(.voltage)
+        }
+    }
+
     /// 充到 80% 还要多久
     private func chargeRemainingTo80() -> TimeInterval? {
         guard bms.smoothedCurrent > 0.5,
@@ -349,13 +388,30 @@ struct AntBmsView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// 当前单体平均电压
+    private var currentCellVoltage: Double? {
+        let v = bms.avgCellVoltage
+        return v > 1.0 ? v : nil
+    }
+
+    /// 单体满电电压（按配置的总电压和串数算）
+    private var cellFullVoltage: Double {
+        let series = max(1, bms.data.cellCount)
+        // 你的电池满电 90.3V / 21 串 = 4.30V
+        // 没配的话按 4.2V 默认
+        return 4.3
+    }
+
     private func chargeEstimate() -> ChargeEstimator.Result? {
         guard bms.smoothedCurrent > 0.5 else { return nil }
         return ChargeEstimator.chargeRemaining(
             soc: bms.data.soc,
             capacityTotal: bms.data.capacityTotal,
             currentA: bms.smoothedCurrent,
-            fullCurrentA: bms.fullChargeCurrent
+            fullCurrentA: bms.fullChargeCurrent,
+            cellVoltage: currentCellVoltage ?? 0,
+            cellFull: cellFullVoltage,
+            voltageHistory: bms.voltageHistory
         )
     }
 

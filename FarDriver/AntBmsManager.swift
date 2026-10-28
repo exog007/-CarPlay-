@@ -48,9 +48,32 @@ final class AntBmsManager: NSObject, ObservableObject {
         max(peakChargeCurrent, 1.0)
     }
 
+    /// 单体平均电压（CV 阶段用它算时间）
+    var avgCellVoltage: Double {
+        data.cells.isEmpty ? 0 : data.cells.reduce(0, +) / Double(data.cells.count)
+    }
+
+    /// 电压历史（用来算恒压阶段的爬升速度）
+    private(set) var voltageHistory: [(time: Date, cellVoltage: Double)] = []
+
     private override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    /// 记一笔电压采样
+    private func recordVoltage(_ cellV: Double) {
+        guard cellV > 1.0 else { return }
+        let now = Date()
+        // 只在充电时记录（电流为正）
+        guard smoothedCurrent > 0.5 else {
+            // 不充电就把历史清掉，下次充电重新开始
+            if !voltageHistory.isEmpty { voltageHistory.removeAll() }
+            return
+        }
+        voltageHistory.append((now, cellV))
+        // 只保留最近 10 分钟
+        voltageHistory.removeAll { now.timeIntervalSince($0.time) > 600 }
     }
 
     /// 记一笔电流采样（每收到一次状态帧调用一次）
@@ -201,7 +224,9 @@ final class AntBmsManager: NSObject, ObservableObject {
         errorMsg = nil
         if decoder.process(frame) {
             data = decoder.data
+            // 先记电流（电压记录要用到平滑电流判断是否在充电）
             recordCurrent(decoder.data.current)
+            recordVoltage(avgCellVoltage)
         }
     }
 }
