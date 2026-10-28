@@ -17,6 +17,9 @@ struct AntBmsView: View {
         BatteryChemistry(rawValue: chemistryRaw) ?? .ncm
     }
 
+    /// 手动设的单体满电电压（BMS 读不到时兜底，0 = 没设）
+    @AppStorage("manualCellFullVoltage") private var manualCellFull: Double = 0
+
     /// 健康度（读不到循环次数就是 nil）
     private var soh: Double? {
         guard bms.data.cycles > 0 else { return nil }
@@ -46,6 +49,7 @@ struct AntBmsView: View {
                     if bms.data.hasData {
                         socSection
                         chargeSection
+                        bmsConfigSection
                         summarySection
                         healthSection
                         chargingAdviceSection
@@ -139,7 +143,120 @@ struct AntBmsView: View {
         }
     }
 
-    // MARK: - SOC 进度条
+    // MARK: - BMS 配置（自动读取）
+
+    private var bmsConfigSection: some View {
+        Section {
+            if bms.bmsConfig.isEmpty {
+                // 没读到
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(themeMgr.color(.power))
+                        Text("没读到 BMS 配置")
+                            .font(.subheadline)
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Button("重试") {
+                            bms.reloadConfig()
+                        }
+                        .font(.caption)
+                    }
+                    if let e = bms.configError {
+                        Text(e)
+                            .font(.caption2)
+                            .foregroundStyle(themeMgr.color(.power))
+                    }
+                }
+            } else {
+                // 读到了
+                HStack {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(themeMgr.color(.ok))
+                    Text("已从 BMS 读取")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(themeMgr.color(.ok))
+                    Spacer()
+                    Button("重读") {
+                        bms.reloadConfig()
+                    }
+                    .font(.caption)
+                }
+
+                configRow("单体过压保护", fmt(bms.bmsConfig.cellOvervoltageProtection, "%.3f", "V"), "cellOVP")
+                if bms.bmsConfig.packOvervoltageProtection > 0 {
+                    configRow("整包过压保护", fmt(bms.bmsConfig.packOvervoltageProtection, "%.1f", "V"), "packOVP")
+                }
+                if let c = bms.bmsConfig.capacity {
+                    configRow("额定容量", fmt(c, "%.1f", "Ah"), "capacity")
+                }
+                if bms.bmsConfig.cellNumber > 0 {
+                    configRow("串数", "\(bms.bmsConfig.cellNumber) S", "cellNumber")
+                }
+                if bms.bmsConfig.loadedFields.contains("cellType") {
+                    configRow("电芯类型", bms.bmsConfig.cellTypeName, "cellType")
+                }
+                if bms.bmsConfig.cellUndervoltageProtection > 0 {
+                    configRow("单体欠压保护",
+                              fmt(bms.bmsConfig.cellUndervoltageProtection, "%.3f", "V"),
+                              "cellUVP")
+                }
+            }
+
+            // 手动兜底
+            if bms.bmsConfig.cellFullVoltage == nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("单体满电电压（手动）")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        TextField("例如 4.20", value: $manualCellFull, format: .number)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                            .textFieldStyle(.roundedBorder)
+                        Text("V")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Text("BMS 没报出过压保护，这里填一个实际满电的单体电压。\n填 0 表示不设置。")
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.secondary)
+                }
+            }
+        } header: {
+            Text("BMS 配置")
+        } footer: {
+            Text("满电电压来源：\(cellFullVoltageSource)。充电阶段判定和剩余时间都用这个值。")
+                .font(.caption2)
+        }
+    }
+
+    private func configRow(_ title: String, _ value: String, _ key: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(themeMgr.foreground)
+            Spacer()
+            if bms.bmsConfig.loadedFields.contains(key) {
+                Text(value)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(themeMgr.color(.rpm))
+            } else {
+                Text("—")
+                    .font(.caption)
+                    .foregroundStyle(themeMgr.secondary)
+            }
+        }
+    }
+
+    private func fmt(_ v: Double, _ f: String, _ unit: String) -> String {
+        guard v > 0 else { return "—" }
+        return String(format: f, v) + " " + unit
+    }
+
+    // MARK: - 电量进度条
 
     private var socSection: some View {
         Section {
@@ -359,9 +476,9 @@ struct AntBmsView: View {
     /// 充到 80% 还要多久
     private func chargeRemainingTo80() -> TimeInterval? {
         guard bms.smoothedCurrent > 0.5,
-              bms.data.capacityTotal > 0,
+              effectiveCapacity > 0,
               bms.data.soc < 80 else { return nil }
-        let needAh = Double(80 - bms.data.soc) / 100.0 * bms.data.capacityTotal
+        let needAh = Double(80 - bms.data.soc) / 100.0 * effectiveCapacity
         var sec = needAh / bms.smoothedCurrent * 3600.0
         // 和总估算用同一套 CV 修正
         if bms.smoothedCurrent < bms.fullChargeCurrent * 0.5 {
@@ -394,23 +511,43 @@ struct AntBmsView: View {
         return v > 1.0 ? v : nil
     }
 
-    /// 单体满电电压（按配置的总电压和串数算）
-    private var cellFullVoltage: Double {
-        let series = max(1, bms.data.cellCount)
-        // 你的电池满电 90.3V / 21 串 = 4.30V
-        // 没配的话按 4.2V 默认
-        return 4.3
+    /// 单体满电电压
+    /// 优先级：BMS 读到的过压保护值 > 用户手动设的 > 什么都不用（不给默认 4.3）
+    private var cellFullVoltage: Double? {
+        // ① BMS 上报的过压保护（最权威）
+        if let v = bms.bmsConfig.cellFullVoltage { return v }
+        // ② 用户手动填的
+        if manualCellFull > 2.0 && manualCellFull < 5.0 { return manualCellFull }
+        // ③ 都没有就不猜
+        return nil
+    }
+
+    /// 满电电压的来源说明
+    private var cellFullVoltageSource: String {
+        if bms.bmsConfig.cellFullVoltage != nil { return "BMS 自动读取" }
+        if manualCellFull > 2.0 { return "手动设置" }
+        return "未设置"
+    }
+
+    /// 电池总容量
+    /// 优先用 BMS 配置的额定容量，其次用状态帧里的
+    private var effectiveCapacity: Double {
+        if let c = bms.bmsConfig.capacity { return c }
+        return bms.data.capacityTotal
     }
 
     private func chargeEstimate() -> ChargeEstimator.Result? {
         guard bms.smoothedCurrent > 0.5 else { return nil }
+        guard effectiveCapacity > 0 else { return nil }
+        // 没有满电电压就按单体 4.2V 兜底算阶段，但不宣称准确
+        let full = cellFullVoltage ?? 4.2
         return ChargeEstimator.chargeRemaining(
             soc: bms.data.soc,
-            capacityTotal: bms.data.capacityTotal,
+            capacityTotal: effectiveCapacity,
             currentA: bms.smoothedCurrent,
             fullCurrentA: bms.fullChargeCurrent,
             cellVoltage: currentCellVoltage ?? 0,
-            cellFull: cellFullVoltage,
+            cellFull: full,
             voltageHistory: bms.voltageHistory
         )
     }

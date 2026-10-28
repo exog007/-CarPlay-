@@ -23,6 +23,13 @@ final class AntBmsManager: NSObject, ObservableObject {
     @Published private(set) var framesReceived = 0
     @Published private(set) var discovered: [(id: UUID, name: String, rssi: Int)] = []
 
+    /// 从 BMS 读回来的配置（保护电压、容量等）
+    @Published private(set) var bmsConfig = AntBmsConfig.empty
+    /// 读配置失败的原因
+    @Published private(set) var configError: String?
+    /// 内部计数
+    private var readConfigAttempt = 0
+
     // MARK: - 内部
 
     private var central: CBCentralManager!
@@ -152,12 +159,48 @@ final class AntBmsManager: NSObject, ObservableObject {
         sendStatusRequest()
     }
 
+    /// 手动重新读一遍配置
+    func reloadConfig() {
+        guard connected, characteristic != nil else {
+            errorMsg = "没连上，读不了配置"
+            return
+        }
+        configError = nil
+        readConfigAttempt = 0
+        sendConfigRequests()
+    }
+
     // MARK: - 发送
 
     private func sendStatusRequest() {
         guard let p = peripheral, let c = characteristic else { return }
         let frame = AntBmsCommand.requestStatus()
         p.writeValue(frame, for: c, type: .withoutResponse)
+    }
+
+    /// 依次读所有配置寄存器
+    private func sendConfigRequests() {
+        let reqs = AntBmsCommand.allConfigRequests()
+        for (i, r) in reqs.enumerated() {
+            // 每条间隔 120ms，避免一次性写爆 BMS 的接收缓冲
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.12) { [weak self] in
+                guard let self = self,
+                      let pp = self.peripheral,
+                      let cc = self.characteristic else { return }
+                let frame = AntBmsCommand.readRegister(r.address, length: r.length)
+                pp.writeValue(frame, for: cc, type: .withoutResponse)
+            }
+        }
+        // 3.5 秒后检查读到了几个
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            guard let self = self else { return }
+            let total = AntBmsCommand.allConfigRequests().count
+            if self.bmsConfig.isEmpty {
+                self.configError = "BMS 没有回应配置读取请求（指令格式可能不对）"
+            } else if self.bmsConfig.loadedFields.count < total {
+                self.configError = "部分参数没读到（\(self.bmsConfig.loadedFields.count)/\(total)）"
+            }
+        }
     }
 
     private func startPolling() {
@@ -227,6 +270,13 @@ final class AntBmsManager: NSObject, ObservableObject {
             // 先记电流（电压记录要用到平滑电流判断是否在充电）
             recordCurrent(decoder.data.current)
             recordVoltage(avgCellVoltage)
+            // 同步配置（读到了就更新）
+            if decoder.config != bmsConfig {
+                bmsConfig = decoder.config
+                if !bmsConfig.isEmpty {
+                    configError = nil
+                }
+            }
         }
     }
 }
@@ -307,6 +357,11 @@ extension AntBmsManager: CBPeripheralDelegate {
                     peripheral.setNotifyValue(true, for: c)
                 }
                 startPolling()
+                // 连上就自动读一次配置（过压保护、容量等）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    self?.readConfigAttempt = 0
+                    self?.sendConfigRequests()
+                }
                 return
             }
         }
@@ -316,6 +371,10 @@ extension AntBmsManager: CBPeripheralDelegate {
                 characteristic = c
                 peripheral.setNotifyValue(true, for: c)
                 startPolling()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    self?.readConfigAttempt = 0
+                    self?.sendConfigRequests()
+                }
             } else {
                 errorMsg = "没有可用的特征（找不到 FFE1）"
             }

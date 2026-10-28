@@ -95,6 +95,84 @@ struct AntBmsData: Equatable {
     static let empty = AntBmsData()
 }
 
+// MARK: - BMS 配置（从 BMS 读的保护参数）
+
+/// 蚂蚁 BMS 的配置参数
+/// 地址表来自社区验证过的实现（syssi/esphome-ant-bms）
+struct AntBmsConfig: Equatable {
+    /// 单体过压保护电压 V（地址 0x0000，×0.001）—— 这就是"单体满电电压"
+    var cellOvervoltageProtection: Double = 0
+    /// 单体过压恢复 V（0x0002）
+    var cellOvervoltageRecovery: Double = 0
+    /// 整包过压保护 V（0x0008，×0.1）
+    var packOvervoltageProtection: Double = 0
+    /// 整包过压恢复 V（0x000a）
+    var packOvervoltageRecovery: Double = 0
+    /// 单体欠压保护 V（0x000c）
+    var cellUndervoltageProtection: Double = 0
+    /// 整包欠压保护 V（0x0014）
+    var packUndervoltageProtection: Double = 0
+    /// 额定容量 Ah（0x00a2）
+    var nominalCapacity: Double = 0
+    /// 电芯串数（0x009a）
+    var cellNumber: Int = 0
+    /// 电芯类型（0x0098）
+    var cellType: Int = 0
+    /// 累计循环容量 Ah（0x00aa）
+    var totalCycleCapacity: Double = 0
+
+    /// 哪些项已经读到了
+    var loadedFields: Set<String> = []
+
+    var isEmpty: Bool { loadedFields.isEmpty }
+
+    /// 单体满电电压：优先用 BMS 的过压保护值
+    var cellFullVoltage: Double? {
+        cellOvervoltageProtection > 2.0 && cellOvervoltageProtection < 5.0
+            ? cellOvervoltageProtection : nil
+    }
+
+    /// 整包满电电压
+    var packFullVoltage: Double? {
+        packOvervoltageProtection > 20 ? packOvervoltageProtection : nil
+    }
+
+    /// 额定容量
+    var capacity: Double? {
+        nominalCapacity > 0 && nominalCapacity < 2000 ? nominalCapacity : nil
+    }
+
+    var cellTypeName: String {
+        switch cellType {
+        case 0: return "三元锂"
+        case 1: return "磷酸铁锂"
+        case 2: return "钛酸锂"
+        default: return cellType == 0 ? "未知" : "类型 \(cellType)"
+        }
+    }
+
+    static let empty = AntBmsConfig()
+}
+
+// MARK: - 寄存器地址表
+
+enum AntRegister {
+    // 电压保护
+    static let cellOvervoltageProtection: UInt16 = 0x0000
+    static let cellOvervoltageRecovery:   UInt16 = 0x0002
+    static let packOvervoltageProtection: UInt16 = 0x0008
+    static let packOvervoltageRecovery:   UInt16 = 0x000a
+    static let cellUndervoltageProtection: UInt16 = 0x000c
+    static let packUndervoltageProtection: UInt16 = 0x0014
+    // 容量
+    static let nominalCapacity:    UInt16 = 0x00a2
+    static let remainingCapacity:  UInt16 = 0x00a6
+    static let totalCycleCapacity: UInt16 = 0x00aa
+    // 电芯
+    static let cellType:   UInt16 = 0x0098
+    static let cellNumber: UInt16 = 0x009a
+}
+
 // MARK: - 组帧
 
 enum AntBmsCommand {
@@ -124,6 +202,30 @@ enum AntBmsCommand {
     /// 请求设备信息
     static func requestDeviceInfo() -> Data {
         build(function: AntFrame.deviceInfo, address: 0x0000, value: 0x20)
+    }
+
+    /// 读某个寄存器
+    /// - Parameters:
+    ///   - address: 寄存器地址
+    ///   - length: 要读几个字节（2 或 4）
+    static func readRegister(_ address: UInt16, length: UInt8 = 2) -> Data {
+        build(function: AntFrame.deviceInfo, address: address, value: length)
+    }
+
+    /// 一次要读的全部配置寄存器
+    static func allConfigRequests() -> [(name: String, address: UInt16, length: UInt8)] {
+        [
+            ("单体过压保护", AntRegister.cellOvervoltageProtection, 2),
+            ("单体过压恢复", AntRegister.cellOvervoltageRecovery, 2),
+            ("整包过压保护", AntRegister.packOvervoltageProtection, 2),
+            ("整包过压恢复", AntRegister.packOvervoltageRecovery, 2),
+            ("单体欠压保护", AntRegister.cellUndervoltageProtection, 2),
+            ("整包欠压保护", AntRegister.packUndervoltageProtection, 2),
+            ("额定容量",     AntRegister.nominalCapacity, 4),
+            ("串数",         AntRegister.cellNumber, 2),
+            ("电芯类型",     AntRegister.cellType, 2),
+            ("累计循环容量", AntRegister.totalCycleCapacity, 4),
+        ]
     }
 
     /// 校验：帧头正确、长度够、CRC 对
@@ -158,6 +260,9 @@ enum AntBmsCommand {
 final class AntBmsDecoder {
 
     private(set) var data = AntBmsData.empty
+
+    /// 从 BMS 读回来的配置
+    private(set) var config = AntBmsConfig.empty
 
     /// 解析一个完整帧
     /// - Returns: 解析出有效数据就返回 true
@@ -281,10 +386,160 @@ final class AntBmsDecoder {
         return true
     }
 
-    // MARK: - 设备信息帧
+    // MARK: - 设备信息帧（配置参数）
 
+    /// 设备信息帧的格式（社区实现）：
+    ///   [0] 0x7E  [1] 0xA1  [2] 0x12（帧类型）
+    ///   [3..4] 地址（低字节在前）
+    ///   [5]    数据长度
+    ///   [6...] 数据
+    ///   [倒数4..3] CRC  [倒数2..1] AA 55
+    ///
+    /// ⚠️ 这个布局是按社区实现推的，第一次连真机可能对不上。
+    ///    如果读出来的值明显不合理（比如过压保护 0.5V 或 60V），
+    ///    说明偏移不对，需要看原始帧再调。
     private func parseDeviceInfo(_ frame: [UInt8]) -> Bool {
-        // 设备信息帧暂时不解析细节，只要确认能收到就说明协议通
+        let dataEnd = frame.count - 4
+        guard dataEnd > 6 else { return false }
+
+        // 地址
+        let address = UInt16(frame[3]) | (UInt16(frame[4]) << 8)
+        let declaredLen = Int(frame[5])
+        let payload = Array(frame[6..<dataEnd])
+        guard !payload.isEmpty else { return false }
+        let len = min(declaredLen == 0 ? payload.count : declaredLen, payload.count)
+
+        var cfg = config
+        var matched = false
+
+        switch address {
+        case AntRegister.cellOvervoltageProtection:
+            if len >= 2 {
+                let mv = Double(readUInt16(payload, 0))
+                // 合理范围 2.0V ~ 5.0V
+                if mv >= 2000 && mv <= 5000 {
+                    cfg.cellOvervoltageProtection = mv / 1000.0
+                    cfg.loadedFields.insert("cellOVP")
+                    matched = true
+                }
+            }
+
+        case AntRegister.cellOvervoltageRecovery:
+            if len >= 2 {
+                let mv = Double(readUInt16(payload, 0))
+                if mv >= 2000 && mv <= 5000 {
+                    cfg.cellOvervoltageRecovery = mv / 1000.0
+                    cfg.loadedFields.insert("cellOVR")
+                    matched = true
+                }
+            }
+
+        case AntRegister.packOvervoltageProtection:
+            if len >= 2 {
+                let dv = Double(readUInt16(payload, 0))
+                // 整包过压保护：×0.1V，合理 20V ~ 200V
+                if dv >= 200 && dv <= 2000 {
+                    cfg.packOvervoltageProtection = dv / 10.0
+                    cfg.loadedFields.insert("packOVP")
+                    matched = true
+                }
+            }
+
+        case AntRegister.packOvervoltageRecovery:
+            if len >= 2 {
+                let dv = Double(readUInt16(payload, 0))
+                if dv >= 200 && dv <= 2000 {
+                    cfg.packOvervoltageRecovery = dv / 10.0
+                    cfg.loadedFields.insert("packOVR")
+                    matched = true
+                }
+            }
+
+        case AntRegister.cellUndervoltageProtection:
+            if len >= 2 {
+                let mv = Double(readUInt16(payload, 0))
+                if mv >= 1500 && mv <= 4000 {
+                    cfg.cellUndervoltageProtection = mv / 1000.0
+                    cfg.loadedFields.insert("cellUVP")
+                    matched = true
+                }
+            }
+
+        case AntRegister.packUndervoltageProtection:
+            if len >= 2 {
+                let dv = Double(readUInt16(payload, 0))
+                if dv >= 100 && dv <= 1500 {
+                    cfg.packUndervoltageProtection = dv / 10.0
+                    cfg.loadedFields.insert("packUVP")
+                    matched = true
+                }
+            }
+
+        case AntRegister.nominalCapacity:
+            if len >= 4 {
+                let ah = Double(readUInt32(payload, 0))
+                // 合理范围 1Ah ~ 2000Ah
+                if ah >= 1 && ah <= 2000 {
+                    cfg.nominalCapacity = ah
+                    cfg.loadedFields.insert("capacity")
+                    matched = true
+                }
+            } else if len >= 2 {
+                // 有的板子用 2 字节（×0.1Ah）
+                let ah = Double(readUInt16(payload, 0)) / 10.0
+                if ah >= 1 && ah <= 2000 {
+                    cfg.nominalCapacity = ah
+                    cfg.loadedFields.insert("capacity")
+                    matched = true
+                }
+            }
+
+        case AntRegister.cellNumber:
+            if len >= 2 {
+                let n = Int(readUInt16(payload, 0))
+                if n >= 1 && n <= 40 {
+                    cfg.cellNumber = n
+                    cfg.loadedFields.insert("cellNumber")
+                    matched = true
+                }
+            } else if len >= 1 && payload[0] >= 1 && payload[0] <= 40 {
+                cfg.cellNumber = Int(payload[0])
+                cfg.loadedFields.insert("cellNumber")
+                matched = true
+            }
+
+        case AntRegister.cellType:
+            if len >= 2 {
+                let t = Int(readUInt16(payload, 0))
+                if t >= 0 && t <= 10 {
+                    cfg.cellType = t
+                    cfg.loadedFields.insert("cellType")
+                    matched = true
+                }
+            } else if len >= 1 && payload[0] <= 10 {
+                cfg.cellType = Int(payload[0])
+                cfg.loadedFields.insert("cellType")
+                matched = true
+            }
+
+        case AntRegister.totalCycleCapacity:
+            if len >= 4 {
+                let ah = Double(readUInt32(payload, 0))
+                if ah > 0 && ah < 1_000_000 {
+                    cfg.totalCycleCapacity = ah
+                    cfg.loadedFields.insert("cycleCapacity")
+                    matched = true
+                }
+            }
+
+        default:
+            break
+        }
+
+        if matched {
+            config = cfg
+        }
+        // 设备信息帧不算失败
         return true
     }
 
