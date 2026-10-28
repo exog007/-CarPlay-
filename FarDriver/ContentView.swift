@@ -10,33 +10,28 @@ struct ContentView: View {
     @StateObject private var mgr = ControllerManager.shared
     @StateObject private var bms = AntBmsManager.shared
     @StateObject private var themeMgr = ThemeManager.shared
+    @StateObject private var gps = GpsSpeed.shared
     @State private var showSettings = false
     @State private var showBms = false
     @State private var landscapeRequested = false
+
+    /// 最终显示的车速：控制器轮速和 GPS 融合
+    private var displaySpeed: Double {
+        gps.fused(with: mgr.data.speed)
+    }
 
     var body: some View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
             NavigationStack {
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 12) {
                         statusCard
-                        gearRow
                         if landscape {
-                            // 横屏：左右两栏，仪表和数据并排，一屏看全
-                            HStack(alignment: .top, spacing: 16) {
-                                VStack(spacing: 16) {
-                                    mainGauges
-                                    batteryRow
-                                }
-                                .frame(maxWidth: .infinity)
-                                VStack(spacing: 16) {
-                                    tempRow
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
+                            // 横屏：左速度 / 中档位 / 右电压功率
+                            landscapePanel
                         } else {
-                            // 竖屏：单列
+                            gearRow
                             mainGauges
                             tempRow
                             batteryRow
@@ -203,6 +198,140 @@ struct ContentView: View {
             }
         }
         .padding()
+        .background(themeMgr.cardBG)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(themeMgr.cardStroke, lineWidth: 1)
+        }
+    }
+
+    // MARK: - 横屏主面板
+
+    /// 横屏布局：左边速度表 / 中间很窄的 P + 123 档 / 右边电压和实时功率
+    private var landscapePanel: some View {
+        HStack(alignment: .top, spacing: 12) {
+            speedometerLarge
+                .frame(maxWidth: .infinity)
+
+            gearColumn
+                .frame(width: 78)
+
+            VStack(spacing: 12) {
+                StatCard(
+                    title: "电压",
+                    value: String(format: "%.1f", mgr.data.voltage),
+                    unit: "V",
+                    color: themeMgr.color(.voltage),
+                    theme: themeMgr
+                )
+                StatCard(
+                    title: "实时功率",
+                    value: powerText,
+                    unit: "W",
+                    color: mgr.data.isRegen ? themeMgr.color(.ok) : themeMgr.color(.power),
+                    theme: themeMgr
+                )
+                tempRow
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// 功率文字：回收时带负号
+    private var powerText: String {
+        let p = Int(mgr.data.power)
+        return mgr.data.power < -1 ? "−\(abs(p))" : "\(p)"
+    }
+
+    /// 大号速度表（GPS + 轮速融合）
+    private var speedometerLarge: some View {
+        let kmh = displaySpeed
+        return VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Text("速度")
+                    .font(.system(size: 12))
+                    .foregroundStyle(themeMgr.secondary)
+                if gps.isContributing {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(themeMgr.color(.ok))
+                }
+            }
+            Spacer(minLength: 0)
+            Text("\(Int(kmh.rounded()))")
+                .font(.system(size: 82, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(themeMgr.foreground)
+                .minimumScaleFactor(0.4)
+                .lineLimit(1)
+            Text("km/h")
+                .font(.system(size: 13))
+                .foregroundStyle(themeMgr.secondary)
+            Spacer(minLength: 0)
+            // 速度条，一眼看出快慢
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(themeMgr.isLight
+                              ? Color.black.opacity(0.08)
+                              : Color.white.opacity(0.12))
+                    Capsule()
+                        .fill(themeMgr.color(.ok))
+                        .frame(width: max(0, min(1, kmh / 100)) * g.size.width)
+                }
+            }
+            .frame(height: 8)
+            .animation(.easeOut(duration: 0.15), value: kmh)
+        }
+        .padding(14)
+        .frame(maxHeight: .infinity)
+        .background(themeMgr.cardBG)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(themeMgr.cardStroke, lineWidth: 1)
+        }
+    }
+
+    /// 中间窄列：P 档 + 1/2/3 档
+    private var gearColumn: some View {
+        // P 档信号还没在协议里找到，先按「车速 0 且没电流」判定
+        let parked = mgr.status.isConnected
+                     && abs(mgr.data.current) < 0.5
+                     && displaySpeed < 1.0
+        let gear = mgr.data.gear
+        return VStack(spacing: 8) {
+            Text(parked ? "P" : " ")
+                .font(.system(size: 22, weight: .heavy, design: .rounded))
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(parked ? themeMgr.color(.warn) : Color.clear)
+                )
+
+            ForEach([3, 2, 1], id: \.self) { g in
+                let on = (gear == g) && !parked
+                Text("\(g)")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(on ? Color.black : themeMgr.foreground.opacity(gear == 0 ? 0.18 : 0.4))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 38)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(on ? themeMgr.color(.rpm)
+                                     : (themeMgr.isLight ? Color.black.opacity(0.06)
+                                                         : Color.white.opacity(0.10)))
+                    )
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .frame(maxHeight: .infinity)
         .background(themeMgr.cardBG)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay {

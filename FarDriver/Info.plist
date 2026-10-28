@@ -35,6 +35,12 @@
 		<string>_http._tcp</string>
 	</array>
 
+	<!-- 定位权限（GPS 速度表）-->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>需要定位来显示 GPS 实时车速（公里表）</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>需要定位来显示 GPS 实时车速（公里表）</string>
+
 	<!-- 允许 HTTP 明文（局域网内网）-->
 	<key>NSAppTransportSecurity</key>
 	<dict>
@@ -55,6 +61,7 @@
 	<array>
 		<string>bluetooth-central</string>
 		<string>fetch</string>
+		<string>location</string>
 	</array>
 
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
