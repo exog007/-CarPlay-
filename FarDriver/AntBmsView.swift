@@ -69,6 +69,13 @@ struct AntBmsView: View {
     /// 放电 MOS 是否开启
     private var dischargeMOSOn: Bool { bms.data.isDischarging }
 
+    // MOS 开关文字。拆成独立常量，别写成内联三元里的字符串字面量，
+    // 否则 Swift 会把它们当成临时对象构造、不落进 __TEXT 常量区。
+    private let chargeOnText = "开"
+    private let chargeOffText = "关"
+    private let dischargeOnText = "开"
+    private let dischargeOffText = "关"
+
     /// BMS 报的电池类型，没有就用用户选的
     private var chemistryLabel: String {
         if bms.data.chemistryCode != 0 { return bms.data.chemistryName }
@@ -271,11 +278,11 @@ struct AntBmsView: View {
                                  stateText.0,
                                  "", stateText.1)
                         gridCell("充电MOS",
-                                 chargeMOSOn ? "开" : "关",
+                                 chargeMOSOn ? chargeOnText : chargeOffText,
                                  "",
                                  chargeMOSOn ? themeMgr.color(.ok) : themeMgr.secondary)
                         gridCell("放电MOS",
-                                 dischargeMOSOn ? "开" : "关",
+                                 dischargeMOSOn ? dischargeOnText : dischargeOffText,
                                  "",
                                  dischargeMOSOn ? themeMgr.color(.power) : themeMgr.secondary)
                     }
