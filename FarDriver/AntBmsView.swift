@@ -256,6 +256,15 @@ struct AntBmsView: View {
         return String(format: f, v) + " " + unit
     }
 
+    /// 分钟数 → "2 小时 6 分"
+    private func minutesText(_ min: Int) -> String {
+        guard min > 0 else { return "—" }
+        if min >= 60 {
+            return "\(min / 60) 小时 \(min % 60) 分"
+        }
+        return "\(min) 分"
+    }
+
     // MARK: - 电量进度条
 
     private var socSection: some View {
@@ -337,6 +346,41 @@ struct AntBmsView: View {
                 tripleCell("功率", "\(Int(abs(bms.data.power)))", "W", themeMgr.color(.power))
             }
             .padding(.vertical, 4)
+
+            // ── BMS 自己算的剩余时间（最准，优先显示）──
+            if bms.data.chargeRemainMin > 0 || bms.data.dischargeRemainMin > 0 {
+                if bms.data.chargeRemainMin > 0 {
+                    HStack {
+                        Image(systemName: "bolt.badge.clock.fill")
+                            .foregroundStyle(themeMgr.color(.ok))
+                        Text("充电剩余")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                        Spacer()
+                        Text(minutesText(bms.data.chargeRemainMin))
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(themeMgr.color(.ok))
+                    }
+                }
+                if bms.data.dischargeRemainMin > 0 {
+                    HStack {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(themeMgr.color(.power))
+                        Text("放电剩余")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                        Spacer()
+                        Text(minutesText(bms.data.dischargeRemainMin))
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(themeMgr.color(.power))
+                    }
+                }
+                Text("这两个是 BMS 自己算的，比按电流估算准")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
+            }
 
             // 时间估算
             if let est = chargeEstimate() {
@@ -796,6 +840,16 @@ struct AntBmsView: View {
                         .foregroundStyle(bms.data.deltaCell > 0.05
                                          ? themeMgr.color(.power)
                                          : themeMgr.color(.ok))
+                }
+                // BMS 上报的电池类型
+                if bms.data.chemistryCode != 0 {
+                    HStack {
+                        Text("电池类型")
+                        Spacer()
+                        Text(bms.data.chemistryName)
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.color(.rpm))
+                    }
                 }
             }
         }
