@@ -241,7 +241,7 @@ struct AntBmsView: View {
         return "\(bms.data.cycles)"
     }
     private var sohText: String {
-        soh.map { String(format: "%.0f", $0) } ?? "—"
+        soh.map { String(format: "%.2f", $0) } ?? "—"
     }
 
     private var mainCard: some View {
@@ -467,7 +467,7 @@ struct AntBmsView: View {
                         .font(.system(size: 15))
                         .foregroundStyle(level.color)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("健康度 \(String(format: "%.0f", soh ?? 0))%")
+                        Text("健康度 \(String(format: "%.2f", soh ?? 0))%")
                             .font(.caption.bold())
                             .foregroundStyle(level.color)
                         Text(msg)
