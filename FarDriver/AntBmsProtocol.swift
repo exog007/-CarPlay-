@@ -338,6 +338,8 @@ final class AntBmsDecoder {
 
         var out = AntBmsData()
         out.updatedAt = Date()
+        /// 每节的均衡标志（来自单体电压字节的高 3 位）
+        var balFlags: [Bool] = []
 
         // ── 1. 定串数 ──
         // 实测：单体电压从偏移 33 开始
@@ -365,29 +367,41 @@ final class AntBmsDecoder {
         if d.count >= cellStart + cellCount * 2 {
             var cells: [Double] = []
             for i in 0..<cellCount {
-                let mv = readUInt16(d, cellStart + i * 2)
+                // 每节 2 字节，高 3 位是均衡标志
+                var b0 = d[cellStart + i * 2]
+                var b1 = d[cellStart + i * 2 + 1]
+                let bal = (b1 >> 5) & 0x07
+                b1 = b1 & 0x1F
+                let mv = UInt16(b0) | (UInt16(b1) << 8)
+                b0 = 0
                 cells.append(mv >= 1000 && mv <= 5000 ? Double(mv) / 1000.0 : 0)
+                if bal > 0 { balFlags.append(true) } else { balFlags.append(false) }
             }
             out.cells = cells
             out.cellCount = cellCount
+            out.balancing = balFlags
         }
+
+        // ── 2.5 温度传感器数量（BMS 自己报，不能写死）──
+        let tempCount = Int(d[2])
+        let nTemps = (tempCount > 0 && tempCount <= 8) ? tempCount : 4
 
         /// 温度开始的位置 = 单体电压之后
         let tempStart = cellStart + cellCount * 2
-        /// 总电压等字段的基准偏移（社区公式里的 offset）
-        /// 实测：总电压在 tempStart + 12
-        let base = tempStart + 12
+        /// 总电压等字段的基准 = 温度之后 + MOS温度 + 均衡温度
+        let base = tempStart + nTemps * 2 + 4
 
-        // ── 3. 温度（4 个传感器 + MOS + 均衡器）──
+        // ── 3. 温度（nTemps 个）──
         var temps: [Int] = []
-        for k in 0..<4 {
+        for k in 0..<nTemps {
             let off = tempStart + k * 2
             guard off + 1 < d.count else { break }
             let t = Int(Int16(bitPattern: readUInt16(d, off)))
             if t > -40 && t < 120 { temps.append(t) }
         }
         if !temps.isEmpty { out.temps = temps }
-        let mosOff = tempStart + 8
+        // MOS 温度紧跟在电芯温度后面
+        let mosOff = tempStart + nTemps * 2
         if mosOff + 1 < d.count {
             let mosT = Int(Int16(bitPattern: readUInt16(d, mosOff)))
             if mosT > -40 && mosT < 120 { out.mosTemp = mosT }
@@ -420,10 +434,10 @@ final class AntBmsDecoder {
             if bmsSoh >= 0 && bmsSoh <= 100 { out.bmsSoh = bmsSoh }
         }
 
-        // ── 8. MOS 状态 ──
-        if base + 8 < d.count {
-            let chgMos = d[base + 8]
-            let dsgMos = d[base + 9]
+        // ── 8. MOS 状态（base+8 起，先放电后充电）──
+        if base + 9 < d.count {
+            let dsgMos = d[base + 8]
+            let chgMos = d[base + 9]
             out.isCharging = (chgMos == 0x01)
             out.isDischarging = (dsgMos == 0x01)
         }
