@@ -49,24 +49,30 @@ struct ParamView: View {
                     }
 
                     // 自学习入口
-                    Section {
-                        NavigationLink {
-                            SelfLearnView(mgr: mgr)
-                        } label: {
-                            HStack {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                    .foregroundStyle(.orange)
-                                    .frame(width: 22)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("电机自学习")
-                                    Text("相序 / 角度自动识别")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
+                    // ⚠️ 已隐藏。原因：自学习指令的字节格式未经验证
+                    //    （官方 App 是 Xamarin AOT 编译，组包逻辑无法从二进制还原）
+                    //    代码完整保留在 SelfLearnView.swift 和 FarDriverCommand.swift
+                    //    拿到官方 App 的 BLE 写入日志后，把下面改成 true 就能恢复。
+                    if SelfLearnSwitch.visible {
+                        Section {
+                            NavigationLink {
+                                SelfLearnView(mgr: mgr)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .foregroundStyle(.orange)
+                                        .frame(width: 22)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("电机自学习")
+                                        Text("相序 / 角度自动识别")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
+                        } header: {
+                            Text("调试")
                         }
-                    } header: {
-                        Text("调试")
                     }
 
                     // 参数分组
