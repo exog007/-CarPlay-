@@ -96,25 +96,27 @@ struct SelfLearnView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)
                         .disabled(!mgr.status.isConnected)
-                    } else {
-                        Button {
-                            cancelSelfLearn()
-                        } label: {
-                            HStack {
-                                Image(systemName: "stop.circle.fill")
-                                Text("取消自学")
-                            }
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
                     }
+
+                    // 取消自学：任何时候都能点
+                    Button {
+                        cancelSelfLearn(force: true)
+                    } label: {
+                        HStack {
+                            Image(systemName: "stop.circle.fill")
+                            Text(running ? "取消自学" : "取消自学（强制停止）")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(!mgr.status.isConnected)
                 } header: {
                     Text("操作")
                 } footer: {
-                    Text("⚠️ 自学习指令为试验性实现，未在真机验证过。如果点了没反应，说明指令格式不对，需要抓官方 App 的蓝牙日志才能修。")
+                    Text("「取消自学」会立刻给控制器发停止指令，不管当前有没有在自学。\n\n⚠️ 自学习指令为试验性实现，未在真机验证过。如果点了没反应，说明指令格式不对，需要抓官方 App 的蓝牙日志才能修。")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                 }
@@ -192,12 +194,19 @@ struct SelfLearnView: View {
         }
     }
 
-    private func cancelSelfLearn() {
+    /// 取消自学习
+    /// - Parameter force: true 时不管当前状态都发一次停止指令（手动点按钮用）
+    private func cancelSelfLearn(force: Bool = false) {
         timer?.invalidate()
         timer = nil
-        if running {
-            mgr.stopSelfLearn()
-            running = false
+        let wasRunning = running
+        running = false
+        // 手动点「取消自学」时，不管界面认为在不在自学，都发一次停止
+        if force || wasRunning {
+            let ok = mgr.stopSelfLearn()
+            if force {
+                result = ok ? "已发送停止指令" : "停止指令发送失败：\(mgr.uploadError ?? "未知原因")"
+            }
         }
     }
 }

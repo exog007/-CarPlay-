@@ -138,11 +138,19 @@ final class ControllerManager: NSObject, ObservableObject {
     }
 
     /// 发送「取消自学」
-    func stopSelfLearn() {
-        guard selfLearnActive else { return }
+    /// - Returns: 指令是否成功发出
+    @discardableResult
+    func stopSelfLearn() -> Bool {
         selfLearnActive = false
-        guard let p = peripheral, let c = characteristic else { return }
-        send(FarDriverCommand.exitSelfLearn(), to: c, peripheral: p, label: "取消自学") { _ in }
+        guard let p = peripheral, let c = characteristic, status.isConnected else {
+            uploadError = "控制器没连上，停止指令没发出"
+            return false
+        }
+        var ok = false
+        send(FarDriverCommand.exitSelfLearn(), to: c, peripheral: p, label: "取消自学") { success in
+            ok = success
+        }
+        return ok
     }
 
     /// 发送一条 16 字节指令
