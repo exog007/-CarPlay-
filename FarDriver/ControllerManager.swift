@@ -200,6 +200,7 @@ final class ControllerManager: NSObject, ObservableObject {
         }
         peripheral = nil
         characteristic = nil
+        discovered.removeAll()
         status = .disconnected
     }
 
@@ -314,6 +315,8 @@ extension ControllerManager: CBCentralManagerDelegate {
         let name = peripheral.name ?? "FarDriver"
         lastDeviceName = name
         status = .connected(name: name)
+        // 连上了就清空搜索列表，界面更干净
+        discovered.removeAll()
         // 发现所有服务，不限定 UUID
         peripheral.discoverServices(nil)
     }

@@ -71,8 +71,8 @@ struct ContentView: View {
                 }
             }
 
-            // 搜索到的设备列表
-            if !mgr.discovered.isEmpty {
+            // 搜索到的设备列表：已连接后自动收起
+            if !mgr.status.isConnected && !mgr.discovered.isEmpty {
                 Divider().background(Color.gray.opacity(0.3))
                 Text("搜索到 \(mgr.discovered.count) 个设备，点一下连接：")
                     .font(.caption)
