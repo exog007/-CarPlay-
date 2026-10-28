@@ -17,7 +17,6 @@ struct SelfLearnView: View {
     @ObservedObject var mgr: ControllerManager
     @Environment(\.dismiss) private var dismiss
 
-    @State private var confirmed = false
     @State private var running = false
     @State private var elapsed: Double = 0
     @State private var timer: Timer?
@@ -159,6 +158,7 @@ struct SelfLearnView: View {
                 Button("取消", role: .cancel) { }
             } message: {
                 Text("电机会立刻开始转动。确认车已经架稳、后轮离地、周围没有人。")
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -171,9 +171,11 @@ struct SelfLearnView: View {
         elapsed = 0
         result = nil
         mgr.startSelfLearn { ok in
-            if !ok {
-                running = false
-                result = "指令发送失败：\(mgr.uploadError ?? "未知原因")"
+            DispatchQueue.main.async {
+                if !ok {
+                    running = false
+                    result = "指令发送失败：\(mgr.uploadError ?? "未知原因")"
+                }
             }
         }
         timer?.invalidate()
@@ -185,7 +187,9 @@ struct SelfLearnView: View {
                 result = "30 秒没有收到完成信号，已自动停止。请检查电机接线。"
             }
         }
-        RunLoop.current.add(timer!, forMode: .common)
+        if let t = timer {
+            RunLoop.current.add(t, forMode: .common)
+        }
     }
 
     private func cancelSelfLearn() {
