@@ -4,10 +4,16 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 struct AppearanceView: View {
     @ObservedObject var themeMgr: ThemeManager
     @Environment(\.dismiss) private var dismiss
+
+    /// 相册选图
+    @State private var pickedItem: PhotosPickerItem?
+    @State private var photoBusy = false
+    @State private var showPhotoError = false
 
     var body: some View {
         NavigationStack {
@@ -28,8 +34,37 @@ struct AppearanceView: View {
             }
             .scrollContentBackground(.hidden)
             .background(themeMgr.backgroundView)
+            .onChange(of: pickedItem) { _, item in
+                guard let item else { return }
+                loadPickedPhoto(item)
+            }
+            .alert("图片读取失败", isPresented: $showPhotoError) {
+                Button("好", role: .cancel) { }
+            } message: {
+                Text("这个图片可能损坏或格式不支持，换一张试试。")
+            }
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
+    }
+
+    /// 从相册取图并设为背景
+    private func loadPickedPhoto(_ item: PhotosPickerItem) {
+        photoBusy = true
+        Task {
+            defer {
+                Task { @MainActor in photoBusy = false }
+            }
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let img = UIImage(data: data) else {
+                await MainActor.run { showPhotoError = true }
+                return
+            }
+            let ok = await MainActor.run { themeMgr.setBackgroundPhoto(img) }
+            if !ok {
+                await MainActor.run { showPhotoError = true }
+            }
+            await MainActor.run { pickedItem = nil }
+        }
     }
 
     // MARK: - 预览
@@ -140,6 +175,131 @@ struct AppearanceView: View {
                 }
                 .listRowBackground(themeMgr.cardBG)
             }
+
+        case .photo:
+            photoSection
+        }
+    }
+
+    // MARK: - 相册图片背景
+
+    private var photoSection: some View {
+        Group {
+            Section {
+                // 当前图片预览
+                if let img = themeMgr.photoImage {
+                    VStack(spacing: 8) {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: 160)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay {
+                                Color.black.opacity(themeMgr.theme.photoDim)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .overlay(alignment: .topLeading) {
+                                Text("当前背景")
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(.black.opacity(0.6))
+                                    .foregroundStyle(.white)
+                                    .clipShape(Capsule())
+                                    .padding(8)
+                            }
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "photo.badge.plus")
+                            .foregroundStyle(themeMgr.color(.rpm))
+                        Text("还没有选图片")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                }
+
+                // 从相册选
+                PhotosPicker(selection: $pickedItem, matching: .images) {
+                    HStack {
+                        if photoBusy {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .foregroundStyle(themeMgr.color(.rpm))
+                        }
+                        Text(photoBusy ? "正在处理…" : (themeMgr.photoImage == nil ? "从相册选择图片" : "换一张图片"))
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                }
+                .disabled(photoBusy)
+
+                // 删除
+                if themeMgr.photoImage != nil {
+                    Button(role: .destructive) {
+                        themeMgr.clearBackgroundPhoto()
+                    } label: {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("删除背景图")
+                        }
+                    }
+                }
+            } header: {
+                Text("背景图片")
+            } footer: {
+                Text("选好的图片会存到本机，重装 App 前都有效。图片会自动压缩，不占太多空间。")
+                    .font(.caption2)
+            }
+            .listRowBackground(themeMgr.cardBG)
+
+            // 模糊 / 遮罩调节
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("模糊")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.0f", themeMgr.theme.photoBlur))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Slider(value: Binding(
+                        get: { themeMgr.theme.photoBlur },
+                        set: { themeMgr.theme.photoBlur = $0 }
+                    ), in: 0...20, step: 1)
+                }
+                .padding(.vertical, 2)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("暗度（让字更清楚）")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.0f%%", themeMgr.theme.photoDim * 100))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Slider(value: Binding(
+                        get: { themeMgr.theme.photoDim },
+                        set: { themeMgr.theme.photoDim = $0 }
+                    ), in: 0...0.8, step: 0.05)
+                }
+                .padding(.vertical, 2)
+            } header: {
+                Text("调节")
+            } footer: {
+                Text("背景太花的时候，把「暗度」调高一点，仪表数字更清楚。")
+                    .font(.caption2)
+            }
+            .listRowBackground(themeMgr.cardBG)
         }
     }
 

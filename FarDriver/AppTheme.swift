@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - 背景类型
 
@@ -11,12 +12,14 @@ enum BackgroundType: String, Codable, CaseIterable {
     case solid      // 纯色
     case gradient   // 渐变
     case preset     // 预设主题
+    case photo      // 相册图片
 
     var title: String {
         switch self {
         case .solid:    return "纯色"
         case .gradient: return "渐变"
-        case .preset:   return "预设主题"
+        case .preset:   return "主题"
+        case .photo:    return "图片"
         }
     }
 }
@@ -98,6 +101,13 @@ struct AppTheme: Codable, Equatable {
     var gradientStart: String = "#0F0F12"
     var gradientEnd: String = "#050507"
 
+    /// 相册图片文件名（存在 Documents 目录下，只存文件名）
+    var photoFileName: String = ""
+    /// 图片模糊度 0 ~ 20
+    var photoBlur: Double = 0
+    /// 图片上压的暗色遮罩 0 ~ 0.8（让文字看得清）
+    var photoDim: Double = 0.35
+
     /// 自定义颜色槽（hex）
     var colorSlots: [String: String] = [:]
 
@@ -114,6 +124,9 @@ struct AppTheme: Codable, Equatable {
         case .gradient:
             // 两端都亮才算浅色
             return ColorUtil.isLight(hex: gradientStart) && ColorUtil.isLight(hex: gradientEnd)
+        case .photo:
+            // 图片背景：有遮罩就当深色处理，文字用白色更保险
+            return photoDim < 0.25
         }
     }
 
@@ -160,6 +173,29 @@ struct AppTheme: Codable, Equatable {
 
     private static let key = "appTheme"
 
+    /// 老版本存档没有新字段，用默认值补齐
+    init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case backgroundType, presetId, solidHex, gradientStart, gradientEnd
+        case photoFileName, photoBlur, photoDim
+        case colorSlots, cardOpacity
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        backgroundType = (try? c.decode(BackgroundType.self, forKey: .backgroundType)) ?? .preset
+        presetId       = (try? c.decode(String.self, forKey: .presetId)) ?? "night"
+        solidHex       = (try? c.decode(String.self, forKey: .solidHex)) ?? "#0F0F12"
+        gradientStart  = (try? c.decode(String.self, forKey: .gradientStart)) ?? "#0F0F12"
+        gradientEnd    = (try? c.decode(String.self, forKey: .gradientEnd)) ?? "#050507"
+        photoFileName  = (try? c.decode(String.self, forKey: .photoFileName)) ?? ""
+        photoBlur      = (try? c.decode(Double.self, forKey: .photoBlur)) ?? 0
+        photoDim       = (try? c.decode(Double.self, forKey: .photoDim)) ?? 0.35
+        colorSlots     = (try? c.decode([String: String].self, forKey: .colorSlots)) ?? [:]
+        cardOpacity    = (try? c.decode(Double.self, forKey: .cardOpacity)) ?? 0.75
+    }
+
     static func load() -> AppTheme {
         guard let data = UserDefaults.standard.data(forKey: key),
               let t = try? JSONDecoder().decode(AppTheme.self, from: data) else {
@@ -171,6 +207,70 @@ struct AppTheme: Codable, Equatable {
     func save() {
         if let data = try? JSONEncoder().encode(self) {
             UserDefaults.standard.set(data, forKey: Self.key)
+        }
+    }
+}
+
+// MARK: - 背景图片存取
+
+enum BackgroundImageStore {
+
+    /// 图片放这里：Documents/bg-photo.jpg
+    static var fileURL: URL? {
+        guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return dir.appendingPathComponent("bg-photo.jpg")
+    }
+
+    /// 存一张图（会压到合理尺寸，防止内存爆掉）
+    /// - Returns: 是否成功
+    @discardableResult
+    static func save(_ image: UIImage) -> Bool {
+        guard let url = fileURL else { return false }
+        // 按屏幕宽度缩一下，竖屏也够用
+        let maxSide: CGFloat = 1600
+        let scaled = image.resized(maxSide: maxSide)
+        guard let data = scaled.jpegData(compressionQuality: 0.85) else { return false }
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 读图
+    static func load() -> UIImage? {
+        guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    static func delete() {
+        guard let url = fileURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    static var exists: Bool {
+        guard let url = fileURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+}
+
+extension UIImage {
+    /// 等比缩放到最长边不超过 maxSide
+    func resized(maxSide: CGFloat) -> UIImage {
+        let w = size.width, h = size.height
+        guard w > 0, h > 0 else { return self }
+        let longest = max(w, h)
+        guard longest > maxSide else { return self }
+        let ratio = maxSide / longest
+        let newSize = CGSize(width: w * ratio, height: h * ratio)
+        let fmt = UIGraphicsImageRendererFormat.default()
+        fmt.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: newSize, format: fmt)
+        return renderer.image { _ in
+            self.draw(in: CGRect(origin: .zero, size: newSize))
         }
     }
 }
