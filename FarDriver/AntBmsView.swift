@@ -7,6 +7,7 @@ import SwiftUI
 
 struct AntBmsView: View {
     @ObservedObject var bms: AntBmsManager
+    @ObservedObject var themeMgr: ThemeManager
     @Environment(\.dismiss) private var dismiss
     @State private var showCells = true
 
@@ -36,7 +37,7 @@ struct AntBmsView: View {
                 // 不主动断开，让它在后台继续读
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }
 
     // MARK: - 连接

@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ParamView: View {
     @ObservedObject var mgr: ControllerManager
+    @ObservedObject var themeMgr: ThemeManager
     @Environment(\.dismiss) private var dismiss
 
     /// 精简模式 / 专业模式
@@ -79,11 +80,11 @@ struct ParamView: View {
                     Section("参数分组") {
                         ForEach(groups) { g in
                             NavigationLink {
-                                ParamDetailView(group: g, mgr: mgr)
+                                ParamDetailView(group: g, mgr: mgr, themeMgr: themeMgr)
                             } label: {
                                 HStack {
                                     Image(systemName: iconFor(g.title))
-                                        .foregroundStyle(.cyan)
+                                        .foregroundStyle(themeMgr.color(.rpm))
                                         .frame(width: 22)
                                     Text(g.title)
                                     Spacer()
@@ -98,11 +99,11 @@ struct ParamView: View {
                     // 原始数据（调试用）
                     Section {
                         NavigationLink {
-                            RawFramesView(mgr: mgr)
+                            RawFramesView(mgr: mgr, themeMgr: themeMgr)
                         } label: {
                             HStack {
                                 Image(systemName: "number.square")
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(themeMgr.color(.power))
                                 Text("原始寄存器数据")
                                 Spacer()
                                 Text("\(mgr.receivedFrameCount) 帧")
@@ -124,7 +125,7 @@ struct ParamView: View {
                     }
                 }
             }
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(themeMgr.isLight ? .light : .dark)
         }
     }
 
@@ -151,6 +152,7 @@ struct ParamView: View {
 struct ParamDetailView: View {
     let group: ParamGroup
     @ObservedObject var mgr: ControllerManager
+    @ObservedObject var themeMgr: ThemeManager
 
     var body: some View {
         List {
@@ -162,7 +164,9 @@ struct ParamDetailView: View {
                         Spacer()
                         Text(valueText(for: item))
                             .font(.system(.subheadline, design: .monospaced))
-                            .foregroundStyle(valueText(for: item) == "—" ? Color.secondary : Color.cyan)
+                            .foregroundStyle(valueText(for: item) == "—"
+                                             ? Color.secondary
+                                             : themeMgr.color(.rpm))
                             .monospacedDigit()
                     }
                 }
@@ -173,7 +177,7 @@ struct ParamDetailView: View {
         }
         .navigationTitle(group.title)
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }
 
     private func valueText(for item: ParamItem) -> String {
@@ -187,6 +191,7 @@ struct ParamDetailView: View {
 
 struct RawFramesView: View {
     @ObservedObject var mgr: ControllerManager
+    @ObservedObject var themeMgr: ThemeManager
 
     var body: some View {
         List {
@@ -201,21 +206,21 @@ struct RawFramesView: View {
                         HStack {
                             Text("帧 \(frame.id)")
                                 .font(.caption.bold())
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(themeMgr.color(.power))
                             Text(String(format: "地址 0x%02X", frame.address))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Text(hexString(frame.bytes))
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.cyan)
+                            .foregroundStyle(themeMgr.color(.rpm))
                     }
                 }
             }
         }
         .navigationTitle("原始寄存器")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }
 
     private func hexString(_ bytes: [UInt8]) -> String {

@@ -9,6 +9,7 @@ import UIKit
 struct ContentView: View {
     @StateObject private var mgr = ControllerManager.shared
     @StateObject private var bms = AntBmsManager.shared
+    @StateObject private var themeMgr = ThemeManager.shared
     @State private var showSettings = false
     @State private var showParams = false
     @State private var showBms = false
@@ -48,7 +49,8 @@ struct ContentView: View {
                     .padding()
                     .animation(.easeInOut(duration: 0.2), value: landscape)
                 }
-                .background(Color(white: 0.06).ignoresSafeArea())
+                .scrollContentBackground(.hidden)
+                .background(themeMgr.backgroundView)
                 .navigationTitle("大肥鱼控制器")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -75,7 +77,7 @@ struct ContentView: View {
                             showBms = true
                         } label: {
                             Image(systemName: "battery.100percent.bolt")
-                                .foregroundStyle(bms.connected ? Color.green : Color.primary)
+                                .foregroundStyle(bms.connected ? themeMgr.color(.ok) : themeMgr.foreground)
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -90,13 +92,13 @@ struct ContentView: View {
                     SettingsView(mgr: mgr)
                 }
                 .sheet(isPresented: $showParams) {
-                    ParamView(mgr: mgr)
+                    ParamView(mgr: mgr, themeMgr: themeMgr)
                 }
                 .sheet(isPresented: $showBms) {
-                    AntBmsView(bms: bms)
+                    AntBmsView(bms: bms, themeMgr: themeMgr)
                 }
             }
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(themeMgr.isLight ? .light : .dark)
             .onAppear {
                 // 记下用户上次选的横屏状态
                 landscapeRequested = UserDefaults.standard.bool(forKey: "forceLandscape")
@@ -150,10 +152,11 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Circle()
-                    .fill(mgr.status.isConnected ? Color.green : Color.gray)
+                    .fill(mgr.status.isConnected ? themeMgr.color(.ok) : Color.gray)
                     .frame(width: 10, height: 10)
                 Text(mgr.status.text)
                     .font(.subheadline)
+                    .foregroundStyle(themeMgr.foreground)
                 Spacer()
                 Button {
                     if mgr.status.isConnected {
@@ -168,18 +171,20 @@ struct ContentView: View {
                         .font(.subheadline.bold())
                         .padding(.horizontal, 16)
                         .padding(.vertical, 6)
-                        .background(mgr.status.isConnected ? Color.red.opacity(0.2) : Color.blue)
-                        .foregroundStyle(mgr.status.isConnected ? Color.red : Color.white)
+                        .background(mgr.status.isConnected
+                                    ? themeMgr.color(.warn).opacity(0.2)
+                                    : themeMgr.color(.rpm))
+                        .foregroundStyle(mgr.status.isConnected ? themeMgr.color(.warn) : Color.white)
                         .clipShape(Capsule())
                 }
             }
 
             // 搜索到的设备列表：已连接后自动收起
             if !mgr.status.isConnected && !mgr.discovered.isEmpty {
-                Divider().background(Color.gray.opacity(0.3))
+                Divider().background(themeMgr.secondary.opacity(0.3))
                 Text("搜索到 \(mgr.discovered.count) 个设备，点一下连接：")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themeMgr.secondary)
                 ForEach(mgr.discovered, id: \.id) { dev in
                     Button {
                         mgr.connect(to: dev.id)
@@ -187,18 +192,18 @@ struct ContentView: View {
                         HStack {
                             Image(systemName: "dot.radiowaves.left.and.right")
                                 .font(.caption)
-                                .foregroundStyle(.cyan)
+                                .foregroundStyle(themeMgr.color(.rpm))
                             Text(dev.name)
                                 .font(.subheadline)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(themeMgr.foreground)
                             Spacer()
                             Text("\(dev.rssi) dBm")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(themeMgr.secondary)
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
-                        .background(Color(white: 0.15))
+                        .background(themeMgr.isLight ? Color.black.opacity(0.06) : Color.white.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
@@ -208,13 +213,17 @@ struct ContentView: View {
             if let e = mgr.uploadError {
                 Text(e)
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(themeMgr.color(.power))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding()
-        .background(Color(white: 0.12))
+        .background(themeMgr.cardBG)
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(themeMgr.cardStroke, lineWidth: 1)
+        }
     }
 
     // MARK: - 主仪表（转速 + 功率）
@@ -225,15 +234,17 @@ struct ContentView: View {
                 title: "电机转速",
                 value: "\(Int(mgr.data.rpm))",
                 unit: "rpm",
-                color: .cyan,
-                progress: min(mgr.data.rpm / 8000, 1)
+                color: themeMgr.color(.rpm),
+                progress: min(mgr.data.rpm / 8000, 1),
+                theme: themeMgr
             )
             GaugeCard(
                 title: "实时功率",
                 value: "\(Int(mgr.data.power))",
                 unit: "W",
-                color: .orange,
-                progress: min(mgr.data.power / 5000, 1)
+                color: themeMgr.color(.power),
+                progress: min(mgr.data.power / 5000, 1),
+                theme: themeMgr
             )
         }
     }
@@ -246,17 +257,19 @@ struct ContentView: View {
                 title: "MOS 温度",
                 value: "\(mgr.data.mosTemp)",
                 unit: "°C",
-                color: mgr.data.mosTemp > 60 ? .red : .orange,
+                color: mgr.data.mosTemp > 60 ? themeMgr.color(.warn) : themeMgr.color(.mosTemp),
                 warn: mgr.data.mosTemp > 60,
-                showTriangleWarning: mgr.data.mosTemp > 60
+                showTriangleWarning: mgr.data.mosTemp > 60,
+                theme: themeMgr
             )
             StatCard(
                 title: "电机温度",
                 value: "\(mgr.data.motorTemp)",
                 unit: "°C",
-                color: mgr.data.motorTemp > 50 ? .yellow : .pink,
+                color: mgr.data.motorTemp > 50 ? themeMgr.color(.warn) : themeMgr.color(.motorTemp),
                 warn: mgr.data.motorTemp > 50,
-                showEngineWarning: mgr.data.motorTemp > 50
+                showEngineWarning: mgr.data.motorTemp > 50,
+                theme: themeMgr
             )
         }
     }
@@ -269,13 +282,15 @@ struct ContentView: View {
                 title: "电压",
                 value: String(format: "%.1f", mgr.data.voltage),
                 unit: "V",
-                color: .yellow
+                color: themeMgr.color(.voltage),
+                theme: themeMgr
             )
             StatCard(
                 title: "电流",
                 value: String(format: "%.1f", mgr.data.current),
                 unit: "A",
-                color: mgr.data.isRegen ? .green : .mint
+                color: mgr.data.isRegen ? themeMgr.color(.ok) : themeMgr.color(.current),
+                theme: themeMgr
             )
         }
         .overlay(alignment: .topTrailing) {
@@ -284,7 +299,7 @@ struct ContentView: View {
                     .font(.caption2.bold())
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color.green)
+                    .background(themeMgr.color(.ok))
                     .foregroundStyle(.black)
                     .clipShape(Capsule())
                     .padding(8)
@@ -299,21 +314,21 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Image(systemName: mgr.data.hasFault ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .font(.system(size: 14))
-                    .foregroundStyle(mgr.data.hasFault ? Color.red : Color.green)
+                    .foregroundStyle(mgr.data.hasFault ? themeMgr.color(.warn) : themeMgr.color(.ok))
 
                 Text("故障码")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themeMgr.secondary)
 
                 if mgr.data.hasFault {
                     Text(mgr.data.faultText)
                         .font(.caption.bold())
-                        .foregroundStyle(.red)
+                        .foregroundStyle(themeMgr.color(.warn))
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(mgr.data.faultFrameSeen ? "系统正常" : "没收到故障帧")
                         .font(.caption.bold())
-                        .foregroundStyle(mgr.data.faultFrameSeen ? Color.green : Color.secondary)
+                        .foregroundStyle(mgr.data.faultFrameSeen ? themeMgr.color(.ok) : themeMgr.secondary)
                 }
 
                 Spacer(minLength: 0)
@@ -321,7 +336,7 @@ struct ContentView: View {
                 if mgr.data.faultFrameSeen {
                     Text("0x\(String(format: "%04X", mgr.data.faultCode))")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(themeMgr.secondary)
                 }
             }
 
@@ -329,18 +344,18 @@ struct ContentView: View {
             if mgr.data.faultFrameSeen && !mgr.data.faultRaw.isEmpty {
                 Text(mgr.data.faultRaw)
                     .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.secondary.opacity(0.7))
+                    .foregroundStyle(themeMgr.secondary.opacity(0.7))
                     .lineLimit(2)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(mgr.data.hasFault ? Color.red.opacity(0.12) : Color(white: 0.12))
+        .background(mgr.data.hasFault ? themeMgr.color(.warn).opacity(0.12) : themeMgr.cardBG)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay {
             if mgr.data.hasFault {
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.red.opacity(0.5), lineWidth: 1)
+                    .stroke(themeMgr.color(.warn).opacity(0.5), lineWidth: 1)
             }
         }
     }
@@ -352,44 +367,45 @@ struct ContentView: View {
             // 第一行：标题 + 开关（开关方式上传）
             HStack {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .foregroundStyle(mgr.autoUpload ? Color.green : Color.gray)
+                    .foregroundStyle(mgr.autoUpload ? themeMgr.color(.ok) : Color.gray)
                 Text("数据上传")
                     .font(.subheadline.bold())
+                    .foregroundStyle(themeMgr.foreground)
                 Spacer()
                 Toggle("", isOn: $mgr.autoUpload)
                     .labelsHidden()
-                    .tint(.green)
+                    .tint(themeMgr.color(.ok))
             }
 
             Text(mgr.autoUpload ? "正在上传：每 60 秒自动传一次" : "已停止上传（打开开关开始传）")
                 .font(.caption)
-                .foregroundStyle(mgr.autoUpload ? Color.green.opacity(0.9) : Color.secondary)
+                .foregroundStyle(mgr.autoUpload ? themeMgr.color(.ok).opacity(0.9) : themeMgr.secondary)
 
             // 档位
             HStack(spacing: 12) {
                 Text("档位")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themeMgr.secondary)
                 Text("\(mgr.data.gear)")
                     .font(.title3.bold())
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(themeMgr.color(.rpm))
                 Spacer()
                 if mgr.data.isRegen {
                     Text("能量回收中")
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(themeMgr.color(.ok))
                 }
             }
 
             if let t = mgr.lastUpload {
                 Text("上次上传：\(t.formatted(date: .omitted, time: .standard))")
                     .font(.caption2)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(themeMgr.color(.ok))
             }
             if let e = mgr.uploadError {
                 Text("上传失败：\(e)")
                     .font(.caption2)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(themeMgr.color(.warn))
             }
 
             // CarPlay / 锁屏实时活动
@@ -407,7 +423,9 @@ struct ContentView: View {
                 .font(.subheadline.bold())
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(mgr.liveActivityRunning ? Color.red.opacity(0.85) : Color.green.opacity(0.85))
+                .background(mgr.liveActivityRunning
+                            ? themeMgr.color(.warn).opacity(0.85)
+                            : themeMgr.color(.ok).opacity(0.85))
                 .foregroundStyle(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
@@ -424,20 +442,19 @@ struct ContentView: View {
                 .font(.subheadline.bold())
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(Color.blue)
-                .foregroundStyle(.white)
+                .background(themeMgr.color(.current))
+                .foregroundStyle(.black)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
             .disabled(!mgr.status.isConnected)
         }
         .padding()
-        .background(Color(white: 0.12))
+        .background(themeMgr.cardBG)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay {
-            if mgr.autoUpload {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.green.opacity(0.35), lineWidth: 1)
-            }
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(mgr.autoUpload ? themeMgr.color(.ok).opacity(0.35) : themeMgr.cardStroke,
+                        lineWidth: 1)
         }
     }
 }
@@ -450,15 +467,19 @@ struct GaugeCard: View {
     let unit: String
     let color: Color
     let progress: Double
+    var theme: ThemeManager?
 
     var body: some View {
         VStack(spacing: 8) {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme?.secondary ?? .secondary)
             ZStack {
                 Circle()
-                    .stroke(Color(white: 0.2), lineWidth: 10)
+                    .stroke(theme?.isLight == true
+                            ? Color.black.opacity(0.08)
+                            : Color.white.opacity(0.12),
+                            lineWidth: 10)
                 Circle()
                     .trim(from: 0, to: progress)
                     .stroke(color, style: StrokeStyle(lineWidth: 10, lineCap: .round))
@@ -468,17 +489,22 @@ struct GaugeCard: View {
                     Text(value)
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .monospacedDigit()
+                        .foregroundStyle(theme?.foreground ?? .white)
                     Text(unit)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme?.secondary ?? .secondary)
                 }
             }
             .frame(height: 130)
         }
         .padding()
         .frame(maxWidth: .infinity)
-        .background(Color(white: 0.12))
+        .background(theme?.cardBG ?? Color(white: 0.12))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(theme?.cardStroke ?? Color.clear, lineWidth: 1)
+        }
     }
 }
 
@@ -494,13 +520,14 @@ struct StatCard: View {
     var showTriangleWarning: Bool = false
     /// 电机温度超限：黄色水温/发动机故障灯
     var showEngineWarning: Bool = false
+    var theme: ThemeManager?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme?.secondary ?? .secondary)
                 if showTriangleWarning {
                     TriangleWarningIcon()
                 }
@@ -513,19 +540,22 @@ struct StatCard: View {
                 Text(value)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(warn ? Color.red : color)
+                    .foregroundStyle(warn ? (theme?.color(.warn) ?? .red) : color)
                 Text(unit)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme?.secondary ?? .secondary)
             }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(warn ? Color.red.opacity(0.12) : Color(white: 0.12))
+        .background(warn
+                    ? (theme?.color(.warn) ?? .red).opacity(0.12)
+                    : (theme?.cardBG ?? Color(white: 0.12)))
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay {
             if warn {
-                RoundedRectangle(cornerRadius: 14).stroke(Color.red.opacity(0.5), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke((theme?.color(.warn) ?? .red).opacity(0.5), lineWidth: 1)
             }
         }
     }
@@ -538,12 +568,36 @@ struct StatCard: View {
 
 struct SettingsView: View {
     @ObservedObject var mgr: ControllerManager
+    @ObservedObject var themeMgr: ThemeManager = .shared
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
+    @State private var showAppearance = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Button {
+                        showAppearance = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "paintpalette.fill")
+                                .foregroundStyle(themeMgr.color(.rpm))
+                            Text("外观（背景 / 颜色）")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(themeMgr.isLight ? "浅色" : "深色")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("个性化")
+                }
+
                 Section {
                     TextField("服务器地址", text: $url)
                         .keyboardType(.URL)
@@ -599,6 +653,9 @@ struct SettingsView: View {
                 }
             }
             .onAppear { url = mgr.serverBaseURL }
+            .sheet(isPresented: $showAppearance) {
+                AppearanceView(themeMgr: themeMgr)
+            }
         }
     }
 
