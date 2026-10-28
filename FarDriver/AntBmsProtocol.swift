@@ -202,9 +202,16 @@ enum AntBmsCommand {
         return Data(f)
     }
 
-    /// 请求状态帧（这是主指令）
+    /// 请求状态帧
+    ///
+    /// 用官方 App 的探测指令，从 app-service.js 里挖到的原文：
+    ///   7ea1010000f55862aa55
+    /// 拆开就是 function=0x01, address=0x0000, value=0xF5
+    ///
+    /// CRC16(body[1..6], init 0xFFFF, poly 0xA001) = 0x6258
+    /// 低字节在前 → 0x58 0x62，和官方一致。
     static func requestStatus() -> Data {
-        build(function: AntFrame.status, address: 0x0000, value: 0xBE)
+        build(function: AntFrame.status, address: 0x0000, value: 0xF5)
     }
 
     /// 请求设备信息
@@ -388,8 +395,36 @@ final class AntBmsDecoder {
 
         /// 温度开始的位置 = 单体电压之后
         let tempStart = cellStart + cellCount * 2
-        /// 总电压等字段的基准 = 温度之后 + MOS温度 + 均衡温度
-        let base = tempStart + nTemps * 2 + 4
+
+        // ── 2.6 动态推算总电压的位置 ──
+        //
+        // 实测：不同帧的扩展头长度不一样
+        //   11:57 的数据长 175，总电压在 87
+        //   11:59 的数据长 173，总电压在 85
+        //
+        // 不能写死，用「单体电压合计 ≈ 总电压」来反推。
+        let cellSumMv = out.cells.reduce(0) { $0 + $1 } * 1000.0   // 转回 mV
+        var base = tempStart + nTemps * 2 + 4   // 默认布局（温度后 + MOS + 均衡）
+        var found = false
+        // 在温度区结束后的 0~8 字节范围内找
+        let searchFrom = tempStart + nTemps * 2
+        if cellSumMv > 1000 {
+            for off in stride(from: 0, through: 8, by: 2) {
+                let p = searchFrom + off
+                guard p + 1 < d.count else { break }
+                let v = readUInt16(d, p)
+                // 总电压 = 数值 / 100，允许 ±0.5V 误差
+                if abs(Double(v) / 100.0 - cellSumMv / 1000.0) < 0.5 {
+                    base = p
+                    found = true
+                    break
+                }
+            }
+        }
+        if !found {
+            // 没找到就退回默认布局
+            base = tempStart + nTemps * 2 + 4
+        }
 
         // ── 3. 温度（nTemps 个）──
         var temps: [Int] = []

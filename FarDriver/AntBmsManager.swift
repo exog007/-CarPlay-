@@ -260,10 +260,24 @@ final class AntBmsManager: NSObject, ObservableObject {
         framesReceived += 1
         lastResponseAt = Date()
 
-        guard AntBmsCommand.verify(frame) else {
-            errorMsg = "收到帧但 CRC 校验失败（可能是干扰或多帧粘连）"
+        // 只校验帧头帧尾，不强求 CRC
+        // 官方 App 也是这么干的：startsWith("7ea1") && endsWith("aa55")
+        // BMS 回帧的 CRC 算法和请求帧可能不同，硬校验会把好帧全丢掉
+        guard frame.count >= 10,
+              frame[0] == AntFrame.start1,
+              frame[1] == AntFrame.start2,
+              frame[frame.count - 2] == AntFrame.end1,
+              frame[frame.count - 1] == AntFrame.end2 else {
+            errorMsg = "收到不完整或格式不对的帧"
             return
         }
+        // CRC 只做记录，不用来拦数据
+        let crcOK = AntBmsCommand.verify(frame)
+        if !crcOK {
+            // 不报错，只是内部标记
+            configError = nil
+        }
+
         errorMsg = nil
         if decoder.process(frame) {
             data = decoder.data
