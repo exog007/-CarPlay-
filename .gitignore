@@ -1,0 +1,22 @@
+# 编译产物 / 不入库
+build/
+DerivedData/
+*.ipa
+*.app
+*.dSYM
+*.xcarchive
+Payload/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+*.pbxproj
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Swift Package
+.swiftpm/
+.build/
