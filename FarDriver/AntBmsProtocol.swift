@@ -327,132 +327,135 @@ final class AntBmsDecoder {
     ///   84+off    2     单体平均电压            ×0.001 V
     ///
     private func parseStatus(_ frame: [UInt8]) -> Bool {
+        // 帧结构（实测 ANTBLE24CBUB）：
+        //   7E A1 11 00 00 AA | <数据> | CRC CRC | AA 55
+        //   └── 6 字节头 ──┘
+        // 所以数据从 [6] 开始，到倒数第 4 字节结束
         let dataEnd = frame.count - 4
-        guard dataEnd > 3 else { return false }
-        let d = Array(frame[3..<dataEnd])
+        guard dataEnd > 6 else { return false }
+        let d = Array(frame[6..<dataEnd])
         guard d.count >= 40 else { return false }
 
         var out = AntBmsData()
         out.updatedAt = Date()
 
-        // ── 1. 先确定串数 ──
-        // 单体电压从偏移 34 开始，每节 2 字节。
-        // 帧总长减去固定尾部，反推能装几节。
-        // 也可用 BMS 配置里的 cellNumber（如果读到了）。
+        // ── 1. 定串数 ──
+        // 实测：单体电压从偏移 33 开始
+        let cellStart = 33
         var cellCount = 0
         if config.cellNumber > 0 {
             cellCount = config.cellNumber
         }
 
+        // 扫描推断：从 33 开始数连续的合理单体电压（3.0~4.5V）
+        if cellCount == 0 || d.count < cellStart + cellCount * 2 {
+            var guess = 0
+            while guess < 40 {
+                let off = cellStart + guess * 2
+                if off + 1 >= d.count { break }
+                let mv = readUInt16(d, off)
+                if mv >= 3000 && mv <= 4500 { guess += 1 } else { break }
+            }
+            if guess >= 1 { cellCount = guess }
+        }
+
+        guard cellCount > 0 else { return false }
+
         // ── 2. 单体电压 ──
-        if cellCount > 0, d.count >= 34 + cellCount * 2 {
+        if d.count >= cellStart + cellCount * 2 {
             var cells: [Double] = []
             for i in 0..<cellCount {
-                let mv = readUInt16(d, 34 + i * 2)
+                let mv = readUInt16(d, cellStart + i * 2)
                 cells.append(mv >= 1000 && mv <= 5000 ? Double(mv) / 1000.0 : 0)
             }
             out.cells = cells
             out.cellCount = cellCount
         }
 
-        // 串数未知时，用「帧里能找到多少合理的单体电压」来试
-        if cellCount == 0 {
-            var guess = 0
-            var i = 0
-            while 34 + i * 2 + 1 < d.count && guess < 40 {
-                let mv = readUInt16(d, 34 + i * 2)
-                if mv >= 1000 && mv <= 5000 {
-                    guess += 1
-                    i += 1
-                } else {
-                    break
-                }
-            }
-            if guess > 0, d.count >= 34 + guess * 2 + 100 {
-                cellCount = guess
-                var cells: [Double] = []
-                for k in 0..<cellCount {
-                    cells.append(Double(readUInt16(d, 34 + k * 2)) / 1000.0)
-                }
-                out.cells = cells
-                out.cellCount = cellCount
-            }
-        }
-
-        guard cellCount > 0 else { return false }
-
-        /// 单体电压之后所有字段的偏移
-        let off = 34 + cellCount * 2
+        /// 温度开始的位置 = 单体电压之后
+        let tempStart = cellStart + cellCount * 2
+        /// 总电压等字段的基准偏移（社区公式里的 offset）
+        /// 实测：总电压在 tempStart + 12
+        let base = tempStart + 12
 
         // ── 3. 温度（4 个传感器 + MOS + 均衡器）──
         var temps: [Int] = []
         for k in 0..<4 {
-            let t = Int(Int16(bitPattern: readUInt16(d, off + k * 2)))
+            let off = tempStart + k * 2
+            guard off + 1 < d.count else { break }
+            let t = Int(Int16(bitPattern: readUInt16(d, off)))
             if t > -40 && t < 120 { temps.append(t) }
         }
         if !temps.isEmpty { out.temps = temps }
-        let mosT = Int(Int16(bitPattern: readUInt16(d, off + 8)))
-        if mosT > -40 && mosT < 120 { out.mosTemp = mosT }
-        else { out.mosTemp = temps.first ?? 0 }
+        let mosOff = tempStart + 8
+        if mosOff + 1 < d.count {
+            let mosT = Int(Int16(bitPattern: readUInt16(d, mosOff)))
+            if mosT > -40 && mosT < 120 { out.mosTemp = mosT }
+            else { out.mosTemp = temps.first ?? 0 }
+        } else {
+            out.mosTemp = temps.first ?? 0
+        }
 
-        // ── 4. 总电压（offset + 38 相对位置，即 34+off）──
-        // 注意：社区代码里是 ant_get_16bit(38 + offset)，而 offset = 串数*2
-        // 这里的 off = 34 + 串数*2，所以 base = off - 34
-        let base = off - 34
-        let v = readUInt16(d, base + 38)
-        if v > 0 && v < 20000 { out.totalVoltage = Double(v) / 100.0 }
+        // ── 4. 总电压（×0.01V）──
+        if base + 1 < d.count {
+            let v = readUInt16(d, base)
+            if v > 0 && v < 20000 { out.totalVoltage = Double(v) / 100.0 }
+        }
 
-        // ── 5. 电流（int16，×0.1A，负=放电）──
-        let a = Int16(bitPattern: readUInt16(d, base + 40))
-        if abs(Int(a)) < 5000 { out.current = Double(a) / 10.0 }
+        // ── 5. 电流（int16 ×0.1A，负=放电）──
+        if base + 3 < d.count {
+            let a = Int16(bitPattern: readUInt16(d, base + 2))
+            if abs(Int(a)) < 5000 { out.current = Double(a) / 10.0 }
+        }
 
         // ── 6. SOC（×1 %）──
-        let soc = Int(readUInt16(d, base + 42))
-        if soc >= 0 && soc <= 100 { out.soc = soc }
+        if base + 5 < d.count {
+            let soc = Int(readUInt16(d, base + 4))
+            if soc >= 0 && soc <= 100 { out.soc = soc }
+        }
 
-        // ── 7. BMS 自己的健康度（先存着，界面按需求不一定用）──
-        let bmsSoh = Int(readUInt16(d, base + 44))
-        if bmsSoh >= 0 && bmsSoh <= 100 { out.bmsSoh = bmsSoh }
+        // ── 7. BMS 自己的健康度（仅参考）──
+        if base + 7 < d.count {
+            let bmsSoh = Int(readUInt16(d, base + 6))
+            if bmsSoh >= 0 && bmsSoh <= 100 { out.bmsSoh = bmsSoh }
+        }
 
         // ── 8. MOS 状态 ──
-        if base + 47 < d.count {
-            let chgMos = d[base + 46]
-            let dsgMos = d[base + 47]
+        if base + 8 < d.count {
+            let chgMos = d[base + 8]
+            let dsgMos = d[base + 9]
             out.isCharging = (chgMos == 0x01)
             out.isDischarging = (dsgMos == 0x01)
         }
 
         // ── 9. 容量（uint32 × 0.000001 → Ah）──
-        if base + 54 + 3 < d.count {
-            let capRaw = readUInt32(d, base + 50)
-            let capAh = Double(capRaw) / 1_000_000.0
+        if base + 15 < d.count {
+            let capAh = Double(readUInt32(d, base + 12)) / 1_000_000.0
             if capAh > 0 && capAh < 10000 { out.capacityTotal = capAh }
         }
-        if base + 58 + 3 < d.count {
-            let remRaw = readUInt32(d, base + 54)
-            let remAh = Double(remRaw) / 1_000_000.0
+        if base + 19 < d.count {
+            let remAh = Double(readUInt32(d, base + 16)) / 1_000_000.0
             if remAh >= 0 && remAh < 10000 { out.capacityRemaining = remAh }
         }
 
         // ── 10. 累计循环容量（uint32 × 0.001 → Ah）⭐ ──
-        if base + 62 + 3 < d.count {
-            let cycRaw = readUInt32(d, base + 58)
-            let cycAh = Double(cycRaw) / 1000.0
+        // 在容量后面：base+20
+        if base + 23 < d.count {
+            let cycAh = Double(readUInt32(d, base + 20)) / 1000.0
             if cycAh >= 0 && cycAh < 10_000_000 {
                 out.totalCycleCapacity = cycAh
             }
         }
 
         // ── 11. 循环次数 = 累计循环容量 ÷ 额定容量 ──
-        // 额定容量优先用 BMS 配置里的，其次用当前容量
         let ratedCap = config.capacity ?? (out.capacityTotal > 0 ? out.capacityTotal : 0)
-        if ratedCap > 0 {
+        if ratedCap > 0, out.totalCycleCapacity > 0 {
             out.cycles = Int((out.totalCycleCapacity / ratedCap).rounded())
         }
 
-        // ── 12. 均衡状态 ──
-        if base + 70 + 3 < d.count {
-            let mask = readUInt32(d, base + 70)
+        // ── 12. 均衡状态（base+32）──
+        if base + 35 < d.count {
+            let mask = readUInt32(d, base + 32)
             out.balancingActive = mask != 0
             var bal: [Bool] = []
             for i in 0..<cellCount {
@@ -461,11 +464,12 @@ final class AntBmsDecoder {
             out.balancing = bal
         }
 
-        // ── 13. 单体极值（BMS 自己算好的，比我们算的准）──
-        let maxV = readUInt16(d, base + 74)
-        let minV = readUInt16(d, base + 78)
-        let maxIdx = readUInt16(d, base + 76)
-        let minIdx = readUInt16(d, base + 80)
+        // ── 13. 单体极值（base+36 起，BMS 自己算好的）──
+        var maxV: UInt16 = 0, minV: UInt16 = 0, maxIdx: UInt16 = 0, minIdx: UInt16 = 0
+        if base + 37 < d.count { maxV = readUInt16(d, base + 36) }
+        if base + 39 < d.count { maxIdx = readUInt16(d, base + 38) }
+        if base + 41 < d.count { minV = readUInt16(d, base + 40) }
+        if base + 43 < d.count { minIdx = readUInt16(d, base + 42) }
         if maxV >= 1000 && maxV <= 5000 { out.maxCellFromBms = Double(maxV) / 1000.0 }
         if minV >= 1000 && minV <= 5000 { out.minCellFromBms = Double(minV) / 1000.0 }
         if maxIdx <= 64 { out.maxCellIndexFromBms = Int(maxIdx) }
