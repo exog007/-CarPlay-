@@ -26,9 +26,6 @@ struct AntBmsView: View {
         BatteryChemistry(rawValue: chemistryRaw) ?? .ncm
     }
 
-    /// 手动设的单体满电电压（BMS 读不到时兜底，0 = 没设）
-    @AppStorage("manualCellFullVoltage") private var manualCellFull: Double = 0
-
     // MARK: - 健康度
 
     private var soh: Double? {
@@ -48,14 +45,29 @@ struct AntBmsView: View {
 
     // MARK: - 状态
 
+    /// 充放电状态
+    ///
+    /// 只看电流正负，不看 MOS 开关状态。
+    /// MOS 是「能力开关」，不是「正在发生」——充放电 MOS 都开着是正常的，
+    /// 不代表正在充电。官方 App 也是按电流判断的。
+    ///
+    /// 电流 > 1A  → 充电中
+    /// 电流 < -1A → 放电中
+    /// 其它       → 待机
     private var stateText: (String, Color, String) {
-        if bms.data.isCharging || bms.smoothedCurrent > 0.5 {
+        let cur = bms.smoothedCurrent
+        if cur > 1.0 {
             return ("充电中", themeMgr.color(.ok), "bolt.fill")
-        } else if bms.data.isDischarging || bms.smoothedCurrent < -0.5 {
+        } else if cur < -1.0 {
             return ("放电中", themeMgr.color(.power), "bolt.slash.fill")
         }
         return ("待机", themeMgr.color(.warn), "pause.circle.fill")
     }
+
+    /// 充电 MOS 是否开启（这是能力，不是状态）
+    private var chargeMOSOn: Bool { bms.data.isCharging }
+    /// 放电 MOS 是否开启
+    private var dischargeMOSOn: Bool { bms.data.isDischarging }
 
     /// BMS 报的电池类型，没有就用用户选的
     private var chemistryLabel: String {
@@ -248,19 +260,19 @@ struct AntBmsView: View {
 
                     Divider().background(themeMgr.secondary.opacity(0.2))
 
-                    // 第三行：状态 / 充电MOS / 放电MOS
+                    // 第三行：状态（按电流）/ 充电MOS开关 / 放电MOS开关
                     HStack(spacing: 0) {
                         gridCell("状态",
                                  stateText.0,
                                  "", stateText.1)
-                        gridCell("充电",
-                                 bms.data.isCharging ? "开" : "关",
+                        gridCell("充电MOS",
+                                 chargeMOSOn ? "开" : "关",
                                  "",
-                                 bms.data.isCharging ? themeMgr.color(.ok) : themeMgr.secondary)
-                        gridCell("放电",
-                                 bms.data.isDischarging ? "开" : "关",
+                                 chargeMOSOn ? themeMgr.color(.ok) : themeMgr.secondary)
+                        gridCell("放电MOS",
+                                 dischargeMOSOn ? "开" : "关",
                                  "",
-                                 bms.data.isDischarging ? themeMgr.color(.power) : themeMgr.secondary)
+                                 dischargeMOSOn ? themeMgr.color(.power) : themeMgr.secondary)
                     }
                     .padding(.top, 10)
                 }
@@ -687,29 +699,6 @@ struct AntBmsView: View {
             if bms.bmsConfig.cellNumber > 0 {
                 configLine("串数", "\(bms.bmsConfig.cellNumber) S")
             }
-
-            // 满电电压来源
-            Text("满电电压来源：\(cellFullVoltageSource)")
-                .font(.caption2)
-                .foregroundStyle(themeMgr.secondary)
-
-            // 读不到就手动填
-            if bms.bmsConfig.cellFullVoltage == nil {
-                HStack {
-                    Text("单体满电电压")
-                        .font(.caption)
-                        .foregroundStyle(themeMgr.foreground)
-                    Spacer()
-                    TextField("4.20", value: $manualCellFull, format: .number)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 70)
-                        .textFieldStyle(.roundedBorder)
-                    Text("V")
-                        .font(.caption2)
-                        .foregroundStyle(themeMgr.secondary)
-                }
-            }
         }
         .padding(12)
         .background(themeMgr.cardBG)
@@ -718,12 +707,6 @@ struct AntBmsView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(themeMgr.cardStroke, lineWidth: 1)
         }
-    }
-
-    private var cellFullVoltageSource: String {
-        if bms.bmsConfig.cellFullVoltage != nil { return "BMS 自动读取" }
-        if manualCellFull > 2.0 { return "手动设置" }
-        return "未设置"
     }
 
     private func configLine(_ title: String, _ value: String) -> some View {

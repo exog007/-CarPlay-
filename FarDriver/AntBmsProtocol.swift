@@ -299,6 +299,10 @@ final class AntBmsDecoder {
     /// 从 BMS 读回来的配置
     private(set) var config = AntBmsConfig.empty
 
+    /// 上次成功解析出的串数（缓存）
+    /// 串数不会变，用它来锁定单体电压的扫描结果，比每次硬扫可靠得多
+    var lastGoodCellCount: Int = 0
+
     /// 解析一个完整帧
     /// - Returns: 解析出有效数据就返回 true
     @discardableResult
@@ -373,34 +377,90 @@ final class AntBmsDecoder {
         // 实测：不同帧的头部长度会变
         //   数据长 175 → 单体起点 33
         //   数据长 173 → 单体起点 33
-        //   数据长 ? → 单体起点 39（前面多 3 个空槽）
+        //   数据长 ?   → 单体起点 39（前面多 3 个空槽）
         //
-        // 所以不能写死起点，用「最长的连续合理单体电压序列」来定位。
+        // 光找「最长连续序列」不够 —— 骑行时会把后面的温度/容量数据也当成电压，
+        // 扫出 25 串、压差 1V 这种物理上不可能的结果。
+        //
+        // 所以用三个条件一起筛选：
+        //   ① 连续合理值数量多（至少 5 节）
+        //   ② 单体质本身要集中（压差 < 0.6V，正常电池都满足）
+        //   ③ 如果 BMS 配置报了串数，优先采用和它一致的
         var cellCount = 0
-        var cellStart = 33
+        var cellStart = 30
 
-        // 在 20~50 范围内扫，找连续合理值最多的一段
-        var bestStart = -1
-        var bestCount = 0
+        struct Candidate {
+            let start: Int
+            let count: Int
+            let spread: Double   // 单体压差
+        }
+        var candidates: [Candidate] = []
+
         for start in 20...50 {
-            // 起点必须从偶数偏移开始（单体电压 2 字节对齐）
             let cnt = countValidCells(d, from: start)
-            if cnt > bestCount {
-                bestCount = cnt
-                bestStart = start
+            guard cnt >= 5 else { continue }
+            // 算这一段的压差
+            var lo = 99999, hi = 0
+            for k in 0..<cnt {
+                let off = start + k * 2
+                if off + 1 >= d.count { break }
+                let hiByte = d[off + 1] & 0x1F
+                let mv = Int(d[off]) | (Int(hiByte) << 8)
+                lo = min(lo, mv)
+                hi = max(hi, mv)
+            }
+            let spread = lo == 99999 ? 99999.0 : Double(hi - lo) / 1000.0
+            candidates.append(Candidate(start: start, count: cnt, spread: spread))
+        }
+
+        // 优先选：压差正常（< 0.6V）且节数最多的
+        let normal = candidates.filter { $0.spread < 0.6 }
+        if let best = normal.max(by: { $0.count < $1.count }) {
+            cellStart = best.start
+            cellCount = best.count
+        } else if let best = candidates.max(by: { $0.count < $1.count }) {
+            // 全都不正常，退回最长的
+            cellStart = best.start
+            cellCount = best.count
+        }
+
+        // ── 方案 A：BMS 配置报了串数，就按它锁定 ──
+        // 这是最可靠的信息源，串数固定不变
+        if config.cellNumber > 0 {
+            let target = config.cellNumber
+            // 找出所有能容纳 target 节的起点，选压差最小的
+            let fits = candidates.filter { $0.count >= target }
+            if let best = fits.min(by: { $0.spread < $1.spread }) {
+                cellStart = best.start
+                cellCount = target
             }
         }
-        if bestStart >= 0 && bestCount >= 3 {
-            cellStart = bestStart
-            cellCount = bestCount
+        // ── 方案 B：用上次成功解析出来的串数（缓存）──
+        else if lastGoodCellCount > 0 {
+            let target = lastGoodCellCount
+            let fits = candidates.filter { $0.count >= target }
+            if let best = fits.min(by: { $0.spread < $1.spread }) {
+                cellStart = best.start
+                cellCount = target
+            }
         }
-
-        // 如果 BMS 配置里报了串数，且和扫描结果一致，就用配置的
-        if config.cellNumber > 0, config.cellNumber == bestCount {
-            cellCount = config.cellNumber
+        // ── 方案 C：完全靠扫描，选压差正常且最长的 ──
+        else {
+            let normal = candidates.filter { $0.spread < 0.6 }
+            if let best = normal.max(by: { $0.count < $1.count }) {
+                cellStart = best.start
+                cellCount = best.count
+            } else if let best = candidates.max(by: { $0.count < $1.count }) {
+                cellStart = best.start
+                cellCount = best.count
+            }
         }
 
         guard cellCount > 0 else { return false }
+        // 记住这次的结果，下次优先用（串数不会变）
+        if cellCount >= 3 && cellCount <= 40 {
+            lastGoodCellCount = cellCount
+        }
 
         // ── 2. 单体电压 ──
         if d.count >= cellStart + cellCount * 2 {
