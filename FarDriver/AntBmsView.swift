@@ -612,6 +612,22 @@ struct AntBmsView: View {
                             .foregroundStyle(level.color)
                     }
 
+                    // 蚂蚁 BMS 原始数据：累计循环容量
+                    if bms.data.totalCycleCapacity > 0 {
+                        HStack {
+                            Text("BMS 累计循环容量")
+                                .font(.caption2)
+                                .foregroundStyle(themeMgr.secondary)
+                            Spacer()
+                            Text(String(format: "%.0f Ah ÷ %.0f Ah = %d 次",
+                                        bms.data.totalCycleCapacity,
+                                        bms.bmsConfig.capacity ?? bms.data.capacityTotal,
+                                        bms.data.cycles))
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+                    }
+
                     // 预警提示
                     if let msg = level.message {
                         HStack(alignment: .top, spacing: 8) {
