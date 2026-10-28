@@ -66,21 +66,18 @@ enum FarDriverFaultCodes {
     ]
 
     /// 按位解析：bit N == 1 表示「故障 N」
-    /// - Parameter mask: 控制器上报的原始值
+    /// - Parameter mask: 控制器上报的原始值（最多 19 位，用 UInt32 装）
     /// - Returns: 用「、」连接的描述；无故障返回空字符串
-    static func describe(bits mask: UInt16) -> String {
+    static func describe(bits mask: UInt32) -> String {
         guard mask != 0 else { return "" }
         var found: [String] = []
+        let m = Int(mask)
         // 编号 1...18（bit 0 是「系统正常」，不当作故障）
-        for n in 1...18 where (mask & (1 << UInt16(n))) != 0 {
+        for n in 1...18 where (m & (1 << n)) != 0 {
             if let t = table[n] { found.append(t) }
         }
         if found.isEmpty {
-            // 只有 bit 0 置位，或者高位有未知位
-            let unknown = UInt16(mask & ~UInt16(0x7FFFF)) // 19 位以上
-            if unknown != 0 {
-                return "未定义故障位(0x\(String(unknown, radix: 16, uppercase: true)))"
-            }
+            // 只有 bit 0 置位（= 系统正常），没有别的故障
             return ""
         }
         return found.joined(separator: "、")
@@ -93,9 +90,4 @@ enum FarDriverFaultCodes {
         return table[n] ?? "未定义故障(\(n))"
     }
 
-    /// 按位解析：至少有一个明确的故障位
-    static func hasFault(bits mask: UInt16) -> Bool {
-        // 只看 bit 1...18，bit 0 不算故障
-        return (mask & UInt16(0x7FFFE)) != 0
-    }
 }

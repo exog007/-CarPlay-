@@ -111,12 +111,11 @@ final class FarDriverDecoder {
             // 故障码帧
             // 官方故障表来自 MotorNet6.dll：第 0 项「系统正常」，1...18 是各故障
             // 位定义：bit N == 1 表示「故障 N」（bit 0 不算故障）
-            let lo = UInt16(p[0])
-            let hi = UInt16(p[1])
-            let code = lo | (hi << 8)
-            data.faultCode = Int(code)
+            // 最多到 bit 18，所以要 3 个字节才装得下
+            let code32 = UInt32(p[0]) | (UInt32(p[1]) << 8) | (UInt32(p[2]) << 16)
+            data.faultCode = Int(code32)
             data.faultFrameSeen = true
-            data.faultText = FarDriverFaultCodes.describe(bits: code)
+            data.faultText = FarDriverFaultCodes.describe(bits: code32)
             // 保留原始字节，方便对照官方 App 排查
             data.faultRaw = String(format: "%02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X",
                                    p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
