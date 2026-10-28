@@ -11,7 +11,6 @@ struct ContentView: View {
     @StateObject private var bms = AntBmsManager.shared
     @StateObject private var themeMgr = ThemeManager.shared
     @State private var showSettings = false
-    @State private var showParams = false
     @State private var showBms = false
     @State private var landscapeRequested = false
 
@@ -32,18 +31,14 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity)
                                 VStack(spacing: 16) {
                                     tempRow
-                                    faultRow
-                                    uploadCard
                                 }
                                 .frame(maxWidth: .infinity)
                             }
                         } else {
-                            // 竖屏：原来的单列
+                            // 竖屏：单列
                             mainGauges
                             tempRow
                             batteryRow
-                            faultRow
-                            uploadCard
                         }
                     }
                     .padding()
@@ -61,14 +56,6 @@ struct ContentView: View {
                             Image(systemName: landscape
                                   ? "rectangle.portrait.rotate"
                                   : "rectangle.landscape.rotate")
-                        }
-                    }
-                    // 二级菜单：控制器参数
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            showParams = true
-                        } label: {
-                            Image(systemName: "slider.horizontal.3")
                         }
                     }
                     // 蚂蚁 BMS
@@ -90,9 +77,6 @@ struct ContentView: View {
                 }
                 .sheet(isPresented: $showSettings) {
                     SettingsView(mgr: mgr)
-                }
-                .sheet(isPresented: $showParams) {
-                    ParamView(mgr: mgr, themeMgr: themeMgr)
                 }
                 .sheet(isPresented: $showBms) {
                     AntBmsView(bms: bms, themeMgr: themeMgr)
@@ -307,156 +291,6 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 故障码
-
-    private var faultRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: mgr.data.hasFault ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(mgr.data.hasFault ? themeMgr.color(.warn) : themeMgr.color(.ok))
-
-                Text("故障码")
-                    .font(.caption)
-                    .foregroundStyle(themeMgr.secondary)
-
-                if mgr.data.hasFault {
-                    Text(mgr.data.faultText)
-                        .font(.caption.bold())
-                        .foregroundStyle(themeMgr.color(.warn))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text(mgr.data.faultFrameSeen ? "系统正常" : "没收到故障帧")
-                        .font(.caption.bold())
-                        .foregroundStyle(mgr.data.faultFrameSeen ? themeMgr.color(.ok) : themeMgr.secondary)
-                }
-
-                Spacer(minLength: 0)
-
-                if mgr.data.faultFrameSeen {
-                    Text("0x\(String(format: "%04X", mgr.data.faultCode))")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(themeMgr.secondary)
-                }
-            }
-
-            // 调试行：原始字节（方便和官方 App 对照）
-            if mgr.data.faultFrameSeen && !mgr.data.faultRaw.isEmpty {
-                Text(mgr.data.faultRaw)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(themeMgr.secondary.opacity(0.7))
-                    .lineLimit(2)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(mgr.data.hasFault ? themeMgr.color(.warn).opacity(0.12) : themeMgr.cardBG)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            if mgr.data.hasFault {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(themeMgr.color(.warn).opacity(0.5), lineWidth: 1)
-            }
-        }
-    }
-
-    // MARK: - 上传状态
-
-    private var uploadCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 第一行：标题 + 开关（开关方式上传）
-            HStack {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .foregroundStyle(mgr.autoUpload ? themeMgr.color(.ok) : Color.gray)
-                Text("数据上传")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(themeMgr.foreground)
-                Spacer()
-                Toggle("", isOn: $mgr.autoUpload)
-                    .labelsHidden()
-                    .tint(themeMgr.color(.ok))
-            }
-
-            Text(mgr.autoUpload ? "正在上传：每 60 秒自动传一次" : "已停止上传（打开开关开始传）")
-                .font(.caption)
-                .foregroundStyle(mgr.autoUpload ? themeMgr.color(.ok).opacity(0.9) : themeMgr.secondary)
-
-            // 档位
-            HStack(spacing: 12) {
-                Text("档位")
-                    .font(.caption)
-                    .foregroundStyle(themeMgr.secondary)
-                Text("\(mgr.data.gear)")
-                    .font(.title3.bold())
-                    .foregroundStyle(themeMgr.color(.rpm))
-                Spacer()
-                if mgr.data.isRegen {
-                    Text("能量回收中")
-                        .font(.caption)
-                        .foregroundStyle(themeMgr.color(.ok))
-                }
-            }
-
-            if let t = mgr.lastUpload {
-                Text("上次上传：\(t.formatted(date: .omitted, time: .standard))")
-                    .font(.caption2)
-                    .foregroundStyle(themeMgr.color(.ok))
-            }
-            if let e = mgr.uploadError {
-                Text("上传失败：\(e)")
-                    .font(.caption2)
-                    .foregroundStyle(themeMgr.color(.warn))
-            }
-
-            // CarPlay / 锁屏实时活动
-            Button {
-                if mgr.liveActivityRunning {
-                    mgr.stopLiveActivity()
-                } else {
-                    mgr.startLiveActivity()
-                }
-            } label: {
-                HStack {
-                    Image(systemName: mgr.liveActivityRunning ? "stop.circle.fill" : "car.fill")
-                    Text(mgr.liveActivityRunning ? "停止 CarPlay 显示" : "在 CarPlay 显示")
-                }
-                .font(.subheadline.bold())
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(mgr.liveActivityRunning
-                            ? themeMgr.color(.warn).opacity(0.85)
-                            : themeMgr.color(.ok).opacity(0.85))
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .disabled(!mgr.status.isConnected)
-
-            // 手动补传一次：开关关掉也能点
-            Button {
-                mgr.upload()
-            } label: {
-                HStack {
-                    Image(systemName: "arrow.up.circle.fill")
-                    Text("立刻上传一次")
-                }
-                .font(.subheadline.bold())
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(themeMgr.color(.current))
-                .foregroundStyle(.black)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .disabled(!mgr.status.isConnected)
-        }
-        .padding()
-        .background(themeMgr.cardBG)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(mgr.autoUpload ? themeMgr.color(.ok).opacity(0.35) : themeMgr.cardStroke,
-                        lineWidth: 1)
-        }
-    }
 }
 
 // MARK: - 仪表卡

@@ -120,61 +120,6 @@ final class ControllerManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 自学习
-
-    private(set) var selfLearnActive = false
-
-    /// 发送「进入自学习」
-    /// - Parameter completion: 指令是否成功发出（不代表控制器已开始动作）
-    func startSelfLearn(completion: @escaping (Bool) -> Void) {
-        guard let p = peripheral, let c = characteristic, status.isConnected else {
-            uploadError = "控制器没连上"
-            completion(false)
-            return
-        }
-        selfLearnActive = true
-        let packet = FarDriverCommand.enterSelfLearn()
-        send(packet, to: c, peripheral: p, label: "进入自学习", completion: completion)
-    }
-
-    /// 发送「取消自学」
-    /// - Returns: 指令是否成功发出
-    @discardableResult
-    func stopSelfLearn() -> Bool {
-        selfLearnActive = false
-        guard let p = peripheral, let c = characteristic, status.isConnected else {
-            uploadError = "控制器没连上，停止指令没发出"
-            return false
-        }
-        var ok = false
-        send(FarDriverCommand.exitSelfLearn(), to: c, peripheral: p, label: "取消自学") { success in
-            ok = success
-        }
-        return ok
-    }
-
-    /// 发送一条 16 字节指令
-    private func send(_ packet: Data,
-                      to char: CBCharacteristic,
-                      peripheral: CBPeripheral,
-                      label: String,
-                      completion: @escaping (Bool) -> Void) {
-        let canWrite = char.properties.contains(.write)
-        let canWriteNoResp = char.properties.contains(.writeWithoutResponse)
-        guard canWrite || canWriteNoResp else {
-            uploadError = "\(label)：这个蓝牙特征不支持写入"
-            completion(false)
-            return
-        }
-        let writeType: CBCharacteristicWriteType = canWrite ? .withResponse : .withoutResponse
-        peripheral.writeValue(packet, for: char, type: writeType)
-        uploadError = nil
-        lastCommandLog = "\(label)：\(packet.map { String(format: "%02X", $0) }.joined(separator: " "))"
-        completion(true)
-    }
-
-    /// 最近一次发送的指令（调试用）
-    @Published private(set) var lastCommandLog: String?
 
     // MARK: - Live Activity（CarPlay 显示）
 
