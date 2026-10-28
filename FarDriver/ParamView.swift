@@ -14,90 +14,112 @@ struct ParamView: View {
 
     /// 精简模式 / 专业模式
     @State private var expertMode = false
-    @State private var selectedGroup: ParamGroup?
 
     private var groups: [ParamGroup] {
         expertMode ? ControllerParams.expertGroups : ControllerParams.simpleGroups
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                // 模式切换
-                Section {
-                    Picker("模式", selection: $expertMode) {
-                        Text("精简模式").tag(false)
-                        Text("专业模式").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                } footer: {
-                    Text(expertMode
-                         ? "专业模式：显示全部参数分组（只读）"
-                         : "精简模式：只显示常用参数（只读）")
-                }
-
-                // 连接状态提示
-                if !mgr.status.isConnected {
+        PasswordGate(title: "控制器参数") {
+            NavigationStack {
+                List {
+                    // 模式切换
                     Section {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                            Text("还没连上控制器，先去主页连接")
-                                .font(.caption)
+                        Picker("模式", selection: $expertMode) {
+                            Text("精简模式").tag(false)
+                            Text("专业模式").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                    } footer: {
+                        Text(expertMode
+                             ? "专业模式：显示全部参数分组（只读）"
+                             : "精简模式：只显示常用参数（只读）")
+                    }
+
+                    // 连接状态提示
+                    if !mgr.status.isConnected {
+                        Section {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text("还没连上控制器，先去主页连接")
+                                    .font(.caption)
+                            }
                         }
                     }
-                }
 
-                // 参数分组
-                Section("参数分组") {
-                    ForEach(groups) { g in
+                    // 自学习入口
+                    Section {
                         NavigationLink {
-                            ParamDetailView(group: g, mgr: mgr)
+                            SelfLearnView(mgr: mgr)
                         } label: {
                             HStack {
-                                Image(systemName: iconFor(g.title))
-                                    .foregroundStyle(.cyan)
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .foregroundStyle(.orange)
                                     .frame(width: 22)
-                                Text(g.title)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("电机自学习")
+                                    Text("相序 / 角度自动识别")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("调试")
+                    }
+
+                    // 参数分组
+                    Section("参数分组") {
+                        ForEach(groups) { g in
+                            NavigationLink {
+                                ParamDetailView(group: g, mgr: mgr)
+                            } label: {
+                                HStack {
+                                    Image(systemName: iconFor(g.title))
+                                        .foregroundStyle(.cyan)
+                                        .frame(width: 22)
+                                    Text(g.title)
+                                    Spacer()
+                                    Text("\(g.items.count) 项")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+
+                    // 原始数据（调试用）
+                    Section {
+                        NavigationLink {
+                            RawFramesView(mgr: mgr)
+                        } label: {
+                            HStack {
+                                Image(systemName: "number.square")
+                                    .foregroundStyle(.orange)
+                                Text("原始寄存器数据")
                                 Spacer()
-                                Text("\(g.items.count) 项")
+                                Text("\(mgr.receivedFrameCount) 帧")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    } header: {
+                        Text("调试")
+                    } footer: {
+                        Text("查看控制器直接上报的原始字节，用来对照官方 App 排查")
                     }
                 }
-
-                // 原始数据（调试用）
-                Section {
-                    NavigationLink {
-                        RawFramesView(mgr: mgr)
-                    } label: {
-                        HStack {
-                            Image(systemName: "number.square")
-                                .foregroundStyle(.orange)
-                            Text("原始寄存器数据")
-                            Spacer()
-                            Text("\(mgr.receivedFrameCount) 帧")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                .navigationTitle("控制器参数")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { dismiss() }
                     }
-                } header: {
-                    Text("调试")
-                } footer: {
-                    Text("查看控制器直接上报的原始字节，用来对照官方 App 排查")
                 }
             }
-            .navigationTitle("控制器参数")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
-                }
-            }
+            .preferredColorScheme(.dark)
         }
-        .preferredColorScheme(.dark)
     }
 
     private func iconFor(_ title: String) -> String {
