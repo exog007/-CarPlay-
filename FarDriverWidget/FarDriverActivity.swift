@@ -47,8 +47,8 @@ struct LockScreenLiveActivityView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
+                    CellView(icon: "gauge.with.needle", value: "\(Int(s.rpm))", unit: "rpm", color: Color.cyan)
                     CellView(icon: "bolt.fill", value: "\(Int(s.power))", unit: "W", color: Color.orange)
-                    CellView(icon: "gauge.with.needle", value: "\(Int(s.speed))", unit: "km/h", color: Color.purple)
                 }
                 HStack(spacing: 12) {
                     CellView(icon: "thermometer.medium", value: "\(s.mosTemp)°", unit: "", color: tempColor(s.mosTemp, warnAt: 75))
@@ -146,60 +146,67 @@ struct FarDriverLiveActivity: Widget {
             LockScreenLiveActivityView(context: context)
         } dynamicIsland: { context in
             DynamicIsland {
+                // 展开：只显示电压 + MOS 温度，大字号
                 DynamicIslandExpandedRegion(.leading) {
-                    VStack(spacing: 1) {
-                        Text("\(Int(context.state.rpm))")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                        Text("RPM")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.secondary)
-                    }
-                }
-                DynamicIslandExpandedRegion(.trailing) {
-                    VStack(spacing: 1) {
-                        Text("\(Int(context.state.speed))")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(Color.purple)
-                        Text("KM/H")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.secondary)
-                    }
-                }
-                DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 2) {
-                        Text("\(Int(context.state.power))W")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(Color.orange)
-                        Text("档位 \(context.state.gear)")
+                        HStack(spacing: 3) {
+                            Image(systemName: "battery.75")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.yellow.opacity(0.9))
+                            Text(String(format: "%.1f", context.state.voltage))
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(Color.yellow)
+                            Text("V")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.secondary)
+                        }
+                        Text("电压")
                             .font(.system(size: 9))
                             .foregroundStyle(Color.secondary)
                     }
+                    .padding(.leading, 4)
                 }
-                DynamicIslandExpandedRegion(.bottom) {
-                    ExpandedBottomRow(
-                        mosTemp: context.state.mosTemp,
-                        motorTemp: context.state.motorTemp,
-                        voltage: context.state.voltage,
-                        regen: context.state.isRegen
-                    )
+                DynamicIslandExpandedRegion(.trailing) {
+                    VStack(spacing: 2) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "thermometer.medium")
+                                .font(.system(size: 12))
+                                .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75).opacity(0.9))
+                            Text("\(context.state.mosTemp)")
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                            Text("°C")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.secondary)
+                        }
+                        Text("MOS 温度")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.secondary)
+                    }
+                    .padding(.trailing, 4)
                 }
             } compactLeading: {
                 HStack(spacing: 2) {
-                    Image(systemName: "gauge.with.needle")
+                    Image(systemName: "battery.75")
                         .font(.system(size: 10))
-                        .foregroundStyle(Color.cyan)
-                    Text("\(Int(context.state.rpm))")
+                        .foregroundStyle(Color.yellow)
+                    Text(String(format: "%.0f", context.state.voltage))
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .monospacedDigit()
+                        .foregroundStyle(Color.yellow)
                 }
             } compactTrailing: {
-                Text("\(context.state.mosTemp)°")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                HStack(spacing: 1) {
+                    Image(systemName: "thermometer.medium")
+                        .font(.system(size: 9))
+                        .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                    Text("\(context.state.mosTemp)°")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                }
             } minimal: {
                 Image(systemName: "bolt.car.fill")
                     .font(.system(size: 12))

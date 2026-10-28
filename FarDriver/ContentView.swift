@@ -44,27 +44,69 @@ struct ContentView: View {
     // MARK: - 状态卡片
 
     private var statusCard: some View {
-        HStack {
-            Circle()
-                .fill(mgr.status.isConnected ? Color.green : Color.gray)
-                .frame(width: 10, height: 10)
-            Text(mgr.status.text)
-                .font(.subheadline)
-            Spacer()
-            Button {
-                if mgr.status.isConnected {
-                    mgr.disconnect()
-                } else {
-                    mgr.startScan()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Circle()
+                    .fill(mgr.status.isConnected ? Color.green : Color.gray)
+                    .frame(width: 10, height: 10)
+                Text(mgr.status.text)
+                    .font(.subheadline)
+                Spacer()
+                Button {
+                    if mgr.status.isConnected {
+                        mgr.disconnect()
+                    } else if mgr.status == .scanning {
+                        mgr.stopScan()
+                    } else {
+                        mgr.startScan()
+                    }
+                } label: {
+                    Text(mgr.status.isConnected ? "断开" : (mgr.status == .scanning ? "停止" : "搜索蓝牙"))
+                        .font(.subheadline.bold())
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .background(mgr.status.isConnected ? Color.red.opacity(0.2) : Color.blue)
+                        .foregroundStyle(mgr.status.isConnected ? Color.red : Color.white)
+                        .clipShape(Capsule())
                 }
-            } label: {
-                Text(mgr.status.isConnected ? "断开" : "连接")
-                    .font(.subheadline.bold())
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(mgr.status.isConnected ? Color.red.opacity(0.2) : Color.blue)
-                    .foregroundStyle(mgr.status.isConnected ? Color.red : Color.white)
-                    .clipShape(Capsule())
+            }
+
+            // 搜索到的设备列表
+            if !mgr.discovered.isEmpty {
+                Divider().background(Color.gray.opacity(0.3))
+                Text("搜索到 \(mgr.discovered.count) 个设备，点一下连接：")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(mgr.discovered, id: \.id) { dev in
+                    Button {
+                        mgr.connect(to: dev.id)
+                    } label: {
+                        HStack {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                                .font(.caption)
+                                .foregroundStyle(.cyan)
+                            Text(dev.name)
+                                .font(.subheadline)
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Text("\(dev.rssi) dBm")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(Color(white: 0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+
+            // 错误信息
+            if let e = mgr.uploadError {
+                Text(e)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding()
@@ -72,23 +114,23 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    // MARK: - 主仪表（转速 + 时速）
+    // MARK: - 主仪表（转速 + 功率）
 
     private var mainGauges: some View {
         HStack(spacing: 12) {
             GaugeCard(
-                title: "转速",
+                title: "电机转速",
                 value: "\(Int(mgr.data.rpm))",
                 unit: "rpm",
                 color: .cyan,
                 progress: min(mgr.data.rpm / 8000, 1)
             )
             GaugeCard(
-                title: "时速",
-                value: String(format: "%.0f", mgr.data.speed),
-                unit: "km/h",
-                color: .purple,
-                progress: min(mgr.data.speed / 120, 1)
+                title: "实时功率",
+                value: "\(Int(mgr.data.power))",
+                unit: "W",
+                color: .orange,
+                progress: min(mgr.data.power / 5000, 1)
             )
         }
     }
@@ -160,16 +202,18 @@ struct ContentView: View {
             }
 
             HStack(spacing: 12) {
-                Text("功率")
+                Text("档位")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("\(Int(mgr.data.power)) W")
+                Text("\(mgr.data.gear)")
                     .font(.title3.bold())
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.cyan)
                 Spacer()
-                Text("档位 \(mgr.data.gear)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if mgr.data.isRegen {
+                    Text("能量回收中")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
             }
 
             if let t = mgr.lastUpload {

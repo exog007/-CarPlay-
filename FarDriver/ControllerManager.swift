@@ -145,20 +145,48 @@ final class ControllerManager: NSObject, ObservableObject {
 
     // MARK: - 连接控制
 
+    /// 发现的设备列表（给用户手动选）
+    @Published private(set) var discovered: [(id: UUID, name: String, rssi: Int)] = []
+
     func startScan() {
         guard central.state == .poweredOn else {
             status = central.state == .unauthorized ? .unauthorized : .bluetoothOff
+            uploadError = "蓝牙不可用，状态：\(central.state.rawValue)"
             return
         }
+        discovered.removeAll()
         status = .scanning
-        central.scanForPeripherals(withServices: [FarDriverBLE.serviceUUID], options: nil)
+        uploadError = nil
+        // 不指定 service UUID，扫描所有设备，兼容性更好
+        central.scanForPeripherals(withServices: nil,
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
 
-        // 15 秒没找到就停
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
-            guard let self = self, self.status == .scanning else { return }
-            self.central.stopScan()
-            self.status = .disconnected
+        // 20 秒后停止
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self = self else { return }
+            if self.status == .scanning {
+                self.central.stopScan()
+                if self.discovered.isEmpty {
+                    self.status = .disconnected
+                    self.uploadError = "20 秒内没搜到任何蓝牙设备。请确认：1) 控制器已通电 2) 远驱官方 App 已完全关闭 3) 手机蓝牙已开"
+                } else {
+                    self.status = .idle
+                }
+            }
         }
+    }
+
+    /// 手动连接某个设备
+    func connect(to id: UUID) {
+        guard let p = central.retrievePeripherals(withIdentifiers: [id]).first else {
+            uploadError = "设备已不可用，请重新扫描"
+            return
+        }
+        central.stopScan()
+        self.peripheral = p
+        p.delegate = self
+        status = .connecting
+        central.connect(p, options: nil)
     }
 
     func stopScan() {
@@ -271,19 +299,23 @@ extension ControllerManager: CBCentralManagerDelegate {
                         didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any],
                         rssi RSSI: NSNumber) {
-        // 找到第一个就停下连它
-        central.stopScan()
-        self.peripheral = peripheral
-        peripheral.delegate = self
-        status = .connecting
-        central.connect(peripheral, options: nil)
+        let name = peripheral.name
+            ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+            ?? "未知设备"
+
+        // 已经记录过就跳过
+        if discovered.contains(where: { $0.id == peripheral.identifier }) { return }
+
+        // 只记录，不自动连接，由用户自己选
+        discovered.append((id: peripheral.identifier, name: name, rssi: RSSI.intValue))
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let name = peripheral.name ?? "FarDriver"
         lastDeviceName = name
         status = .connected(name: name)
-        peripheral.discoverServices([FarDriverBLE.serviceUUID])
+        // 发现所有服务，不限定 UUID
+        peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager,
@@ -317,9 +349,27 @@ extension ControllerManager: CBCentralManagerDelegate {
 extension ControllerManager: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let services = peripheral.services else { return }
+        guard let services = peripheral.services else {
+            uploadError = "没发现服务：\(error?.localizedDescription ?? "未知")"
+            return
+        }
+        if services.isEmpty {
+            uploadError = "设备没有任何服务，可能不是控制器"
+            return
+        }
+        // 优先找 FFE0，找不到就遍历所有服务的特征
+        var found = false
         for s in services where s.uuid == FarDriverBLE.serviceUUID {
-            peripheral.discoverCharacteristics([FarDriverBLE.characteristicUUID], for: s)
+            found = true
+            peripheral.discoverCharacteristics(nil, for: s)
+        }
+        if !found {
+            // 没有 FFE0，把所有服务都列出来（可能是别的 UUID）
+            let names = services.map { $0.uuid.uuidString }.joined(separator: ", ")
+            uploadError = "没找到 FFE0 服务，该设备提供：\(names)"
+            for s in services {
+                peripheral.discoverCharacteristics(nil, for: s)
+            }
         }
     }
 
@@ -327,13 +377,17 @@ extension ControllerManager: CBPeripheralDelegate {
                     didDiscoverCharacteristicsFor service: CBService,
                     error: Error?) {
         guard let chars = service.characteristics else { return }
-        for c in chars where c.uuid == FarDriverBLE.characteristicUUID {
-            characteristic = c
-            if c.properties.contains(.notify) {
-                peripheral.setNotifyValue(true, for: c)
-            }
-            if c.properties.contains(.read) {
-                peripheral.readValue(for: c)
+        for c in chars {
+            // 优先 FFEC，没有就找任何支持 notify 的
+            let isTarget = c.uuid == FarDriverBLE.characteristicUUID
+            if isTarget || (characteristic == nil && c.properties.contains(.notify)) {
+                characteristic = c
+                if c.properties.contains(.notify) || c.properties.contains(.indicate) {
+                    peripheral.setNotifyValue(true, for: c)
+                }
+                if c.properties.contains(.read) {
+                    peripheral.readValue(for: c)
+                }
             }
         }
     }
