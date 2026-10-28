@@ -51,8 +51,8 @@ struct LockScreenLiveActivityView: View {
                     CellView(icon: "bolt.fill", value: "\(Int(s.power))", unit: "W", color: Color.orange)
                 }
                 HStack(spacing: 12) {
-                    CellView(icon: "thermometer.medium", value: "\(s.mosTemp)°", unit: "", color: tempColor(s.mosTemp, warnAt: 75))
-                    CellView(icon: "engine.combustion", value: "\(s.motorTemp)°", unit: "", color: tempColor(s.motorTemp, warnAt: 110))
+                    CellView(icon: "thermometer.medium", value: "\(s.mosTemp)°", unit: "", color: tempColor(s.mosTemp, warnAt: 60))
+                    CellView(icon: "engine.combustion", value: "\(s.motorTemp)°", unit: "", color: tempColor(s.motorTemp, warnAt: 50))
                 }
                 HStack(spacing: 12) {
                     CellView(icon: "battery.75", value: String(format: "%.0f", s.voltage), unit: "V", color: Color.yellow)
@@ -110,7 +110,7 @@ struct ExpandedBottomRow: View {
                 Text("\(mosTemp)°")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(tempColor(mosTemp, warnAt: 75))
+                    .foregroundStyle(tempColor(mosTemp, warnAt: 60))
             }
             HStack(spacing: 3) {
                 Text("电机")
@@ -119,7 +119,7 @@ struct ExpandedBottomRow: View {
                 Text("\(motorTemp)°")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(tempColor(motorTemp, warnAt: 110))
+                    .foregroundStyle(tempColor(motorTemp, warnAt: 50))
             }
             HStack(spacing: 3) {
                 Image(systemName: "battery.75")
@@ -172,14 +172,17 @@ struct FarDriverLiveActivity: Widget {
                         HStack(spacing: 3) {
                             Image(systemName: "thermometer.medium")
                                 .font(.system(size: 12))
-                                .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75).opacity(0.9))
+                                .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 60).opacity(0.9))
                             Text("\(context.state.mosTemp)")
                                 .font(.system(size: 24, weight: .bold, design: .rounded))
                                 .monospacedDigit()
-                                .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                                .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 60))
                             Text("°C")
                                 .font(.system(size: 11))
                                 .foregroundStyle(Color.secondary)
+                            if context.state.mosTemp > 60 {
+                                TriangleWarningIcon(size: 14)
+                            }
                         }
                         Text("MOS 温度")
                             .font(.system(size: 9))
@@ -201,11 +204,11 @@ struct FarDriverLiveActivity: Widget {
                 HStack(spacing: 1) {
                     Image(systemName: "thermometer.medium")
                         .font(.system(size: 9))
-                        .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                        .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 60))
                     Text("\(context.state.mosTemp)°")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 75))
+                        .foregroundStyle(tempColor(context.state.mosTemp, warnAt: 60))
                 }
             } minimal: {
                 Image(systemName: "bolt.car.fill")

@@ -18,6 +18,7 @@ struct ContentView: View {
                     mainGauges
                     tempRow
                     batteryRow
+                    faultRow
                     uploadCard
                 }
                 .padding()
@@ -143,15 +144,17 @@ struct ContentView: View {
                 title: "MOS 温度",
                 value: "\(mgr.data.mosTemp)",
                 unit: "°C",
-                color: mgr.data.mosTemp > 75 ? .red : .orange,
-                warn: mgr.data.mosTemp > 75
+                color: mgr.data.mosTemp > 60 ? .red : .orange,
+                warn: mgr.data.mosTemp > 60,
+                showTriangleWarning: mgr.data.mosTemp > 60
             )
             StatCard(
                 title: "电机温度",
                 value: "\(mgr.data.motorTemp)",
                 unit: "°C",
-                color: mgr.data.motorTemp > 110 ? .red : .pink,
-                warn: mgr.data.motorTemp > 110
+                color: mgr.data.motorTemp > 50 ? .yellow : .pink,
+                warn: mgr.data.motorTemp > 50,
+                showEngineWarning: mgr.data.motorTemp > 50
             )
         }
     }
@@ -183,6 +186,50 @@ struct ContentView: View {
                     .foregroundStyle(.black)
                     .clipShape(Capsule())
                     .padding(8)
+            }
+        }
+    }
+
+    // MARK: - 故障码
+
+    private var faultRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: mgr.data.hasFault ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(mgr.data.hasFault ? Color.red : Color.green)
+
+            Text("故障码")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if mgr.data.hasFault {
+                Text(mgr.data.faultText.isEmpty
+                     ? "0x\(String(mgr.data.faultCode, radix: 16, uppercase: true))"
+                     : mgr.data.faultText)
+                    .font(.caption.bold())
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("无")
+                    .font(.caption.bold())
+                    .foregroundStyle(.green)
+            }
+
+            Spacer(minLength: 0)
+
+            Text("P\(String(format: "%04X", mgr.data.faultCode))")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(mgr.data.hasFault ? Color.red.opacity(0.12) : Color(white: 0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            if mgr.data.hasFault {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.red.opacity(0.5), lineWidth: 1)
             }
         }
     }
@@ -318,12 +365,25 @@ struct StatCard: View {
     let unit: String
     let color: Color
     var warn: Bool = false
+    /// MOS 温度超限：红三角 + 白色感叹号
+    var showTriangleWarning: Bool = false
+    /// 电机温度超限：黄色水温/发动机故障灯
+    var showEngineWarning: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if showTriangleWarning {
+                    TriangleWarningIcon()
+                }
+                if showEngineWarning {
+                    EngineWarningIcon()
+                }
+                Spacer(minLength: 0)
+            }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
@@ -345,6 +405,9 @@ struct StatCard: View {
         }
     }
 }
+
+
+
 
 // MARK: - 设置
 

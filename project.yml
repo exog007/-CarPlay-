@@ -59,6 +59,8 @@ targets:
       - path: FarDriver/FarDriverProtocol.swift
       - path: FarDriver/SharedStore.swift
       - path: FarDriver/FarDriverAttributes.swift
+      - path: FarDriver/WarningIcons.swift
+      - path: FarDriver/FarDriverFaultCodes.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.exog007.fardriver.widget

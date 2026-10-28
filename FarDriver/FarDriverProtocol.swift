@@ -24,7 +24,12 @@ struct ControllerData: Codable, Equatable {
     var motorTemp: Int = 0           // 电机温度 °C
     var soc: Int = 0                 // 电量 %
     var isRegen: Bool = false        // 动能回收中
+    var faultCode: Int = 0           // 故障码原始值（0 = 无故障）
+    var faultText: String = ""       // 故障描述（多故障用英文逗号分隔）
     var updatedAt: Date = Date()
+
+    /// 有没有故障
+    var hasFault: Bool { faultCode != 0 || !faultText.isEmpty }
 
     /// 能算功率就自动算
     mutating func recomputePower() {
@@ -99,6 +104,13 @@ final class FarDriverDecoder {
             let mt = Int16(bitPattern: (UInt16(p[1]) << 8) | UInt16(p[0]))
             if mt > -20 && mt < 200 { data.motorTemp = Int(mt) }
             data.soc = Int(p[3])
+
+        case 0xC4:
+            // 故障码（远驱协议里 0xC4 段的 bit 位）
+            // 具体位定义未公开，先原样保留原始值
+            let code = UInt16(p[0]) | (UInt16(p[1]) << 8)
+            data.faultCode = Int(code)
+            data.faultText = FarDriverFaultCodes.describe(bits: code)
 
         default:
             break
