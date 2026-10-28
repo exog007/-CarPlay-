@@ -116,7 +116,9 @@ struct AntBmsData: Equatable {
     /// 平均
     var avgCell: Double { cells.isEmpty ? 0 : cells.reduce(0, +) / Double(cells.count) }
 
-    var hasData: Bool { cellCount > 0 && totalVoltage > 0 }
+    /// 有没有可显示的数据
+    /// 只要有单体电压就认为有数据（总电压可能因偏移错而读不到，不该因此整页空白）
+    var hasData: Bool { cellCount > 0 && !cells.isEmpty }
 
     static let empty = AntBmsData()
 }
@@ -366,24 +368,36 @@ final class AntBmsDecoder {
         /// 每节的均衡标志（来自单体电压字节的高 3 位）
         var balFlags: [Bool] = []
 
-        // ── 1. 定串数 ──
-        // 实测：单体电压从偏移 33 开始
-        let cellStart = 33
+        // ── 1. 定串数 + 单体电压起点 ──
+        //
+        // 实测：不同帧的头部长度会变
+        //   数据长 175 → 单体起点 33
+        //   数据长 173 → 单体起点 33
+        //   数据长 ? → 单体起点 39（前面多 3 个空槽）
+        //
+        // 所以不能写死起点，用「最长的连续合理单体电压序列」来定位。
         var cellCount = 0
-        if config.cellNumber > 0 {
-            cellCount = config.cellNumber
+        var cellStart = 33
+
+        // 在 20~50 范围内扫，找连续合理值最多的一段
+        var bestStart = -1
+        var bestCount = 0
+        for start in 20...50 {
+            // 起点必须从偶数偏移开始（单体电压 2 字节对齐）
+            let cnt = countValidCells(d, from: start)
+            if cnt > bestCount {
+                bestCount = cnt
+                bestStart = start
+            }
+        }
+        if bestStart >= 0 && bestCount >= 3 {
+            cellStart = bestStart
+            cellCount = bestCount
         }
 
-        // 扫描推断：从 33 开始数连续的合理单体电压（3.0~4.5V）
-        if cellCount == 0 || d.count < cellStart + cellCount * 2 {
-            var guess = 0
-            while guess < 40 {
-                let off = cellStart + guess * 2
-                if off + 1 >= d.count { break }
-                let mv = readUInt16(d, off)
-                if mv >= 3000 && mv <= 4500 { guess += 1 } else { break }
-            }
-            if guess >= 1 { cellCount = guess }
+        // 如果 BMS 配置里报了串数，且和扫描结果一致，就用配置的
+        if config.cellNumber > 0, config.cellNumber == bestCount {
+            cellCount = config.cellNumber
         }
 
         guard cellCount > 0 else { return false }
@@ -417,17 +431,17 @@ final class AntBmsDecoder {
         // ── 2.6 动态推算总电压的位置 ──
         //
         // 实测：不同帧的扩展头长度不一样
-        //   11:57 的数据长 175，总电压在 87
-        //   11:59 的数据长 173，总电压在 85
+        //   数据长 175 → 总电压在 87
+        //   数据长 173 → 总电压在 85
         //
         // 不能写死，用「单体电压合计 ≈ 总电压」来反推。
         let cellSumMv = out.cells.reduce(0) { $0 + $1 } * 1000.0   // 转回 mV
-        var base = tempStart + nTemps * 2 + 4   // 默认布局（温度后 + MOS + 均衡）
+        var base = tempStart + nTemps * 2 + 4   // 默认布局
         var found = false
-        // 在温度区结束后的 0~8 字节范围内找
+        // 从温度区结束开始，往后找 32 字节（放宽范围）
         let searchFrom = tempStart + nTemps * 2
         if cellSumMv > 1000 {
-            for off in stride(from: 0, through: 8, by: 2) {
+            for off in stride(from: 0, through: 32, by: 2) {
                 let p = searchFrom + off
                 guard p + 1 < d.count else { break }
                 let v = readUInt16(d, p)
@@ -440,7 +454,7 @@ final class AntBmsDecoder {
             }
         }
         if !found {
-            // 没找到就退回默认布局
+            // 实在找不到就退回默认布局
             base = tempStart + nTemps * 2 + 4
         }
 
@@ -467,6 +481,12 @@ final class AntBmsDecoder {
         if base + 1 < d.count {
             let v = readUInt16(d, base)
             if v > 0 && v < 20000 { out.totalVoltage = Double(v) / 100.0 }
+        }
+        // 兜底：总电压没读到（或者离谱），就用单体电压合计
+        if out.totalVoltage <= 0 || abs(out.totalVoltage * 1000 - cellSumMv) > 5000 {
+            if cellSumMv > 1000 {
+                out.totalVoltage = cellSumMv / 1000.0
+            }
         }
 
         // ── 5. 电流（int16 ×0.1A，负=放电）──
@@ -722,6 +742,25 @@ final class AntBmsDecoder {
     }
 
     // MARK: - 小工具
+
+    /// 从某个偏移开始，数连续的合理单体电压（3.0~4.5V）有多少节
+    /// 单体电压每节 2 字节，高 3 位是均衡标志，要掩掉
+    private func countValidCells(_ d: [UInt8], from start: Int) -> Int {
+        var count = 0
+        while count < 40 {
+            let off = start + count * 2
+            guard off + 1 < d.count else { break }
+            let lo = d[off]
+            let hi = d[off + 1] & 0x1F
+            let mv = Int(lo) | (Int(hi) << 8)
+            if mv >= 3000 && mv <= 4500 {
+                count += 1
+            } else {
+                break
+            }
+        }
+        return count
+    }
 
     private func readUInt16(_ d: [UInt8], _ offset: Int) -> UInt16 {
         guard offset + 1 < d.count else { return 0 }
