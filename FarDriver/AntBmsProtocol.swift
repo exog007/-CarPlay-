@@ -88,6 +88,24 @@ struct AntBmsData: Equatable {
     var maxCellIndexFromBms: Int = 0
     var minCellIndexFromBms: Int = 0
 
+    // ── BMS 自己算好的剩余时间（分钟）──
+    // 官方 App 直接显示这两个值，比按电流估算准
+    var chargeRemainMin: Int = 0
+    var dischargeRemainMin: Int = 0
+    // 电池类型：0xFAF1=三元锂 0xFAF2=磷酸铁锂 0xFAF3=钛酸锂
+    var chemistryCode: Int = 0
+
+    /// 电池类型名
+    var chemistryName: String {
+        switch chemistryCode {
+        case 0xFAF1: return "三元锂"
+        case 0xFAF2: return "磷酸铁锂"
+        case 0xFAF3: return "钛酸锂"
+        case 0xFAF4: return "自定义"
+        default:     return chemistryCode == 0 ? "未知" : String(format: "0x%04X", chemistryCode)
+        }
+    }
+
     /// 最高单体
     var maxCell: Double { cells.max() ?? 0 }
     var minCell: Double { cells.min() ?? 0 }
@@ -523,6 +541,24 @@ final class AntBmsDecoder {
         if minV >= 1000 && minV <= 5000 { out.minCellFromBms = Double(minV) / 1000.0 }
         if maxIdx <= 64 { out.maxCellIndexFromBms = Int(maxIdx) }
         if minIdx <= 64 { out.minCellIndexFromBms = Int(minIdx) }
+
+        // ── 14. 剩余时间（BMS 自己算的，官方 App 直接显示）──
+        // 实测：两帧都是 126 分钟充电剩余，和满电状态吻合
+        if base + 51 < d.count {
+            let t = Int(readUInt16(d, base + 50))
+            // 1440 分钟（24 小时）以内才认
+            if t >= 0 && t <= 1440 { out.chargeRemainMin = t }
+        }
+        if base + 53 < d.count {
+            let t = Int(readUInt16(d, base + 52))
+            if t >= 0 && t <= 1440 { out.dischargeRemainMin = t }
+        }
+
+        // ── 15. 电池类型（0xFAF1 三元锂 / 0xFAF2 铁锂 / 0xFAF3 钛酸锂）──
+        if base + 57 < d.count {
+            let t = Int(readUInt16(d, base + 56))
+            if t >= 0xFAF0 && t <= 0xFAFF { out.chemistryCode = t }
+        }
 
         data = out
         return true
