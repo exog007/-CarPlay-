@@ -96,7 +96,6 @@ struct AntBmsView: View {
                         statusCard        // ③ 状态提示
                         temperatureCard   // ④ 温度
                         cellsCard         // ⑤ 单体电压网格
-                        configCard        // BMS 配置
                         adviceCard        // 充电建议
                     }
                     debugCard
@@ -681,69 +680,6 @@ struct AntBmsView: View {
                 .fill(invalid ? Color.clear
                       : (isMax || isMin ? c.opacity(0.10) : Color.clear))
         )
-    }
-
-    // MARK: - BMS 配置
-
-    private var configCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: bms.bmsConfig.isEmpty
-                      ? "exclamationmark.triangle.fill"
-                      : "checkmark.seal.fill")
-                    .font(.caption)
-                    .foregroundStyle(bms.bmsConfig.isEmpty
-                                     ? themeMgr.color(.warn)
-                                     : themeMgr.color(.ok))
-                Text(bms.bmsConfig.isEmpty ? "没读到 BMS 配置" : "BMS 配置")
-                    .font(.caption.bold())
-                    .foregroundStyle(themeMgr.foreground)
-                Spacer()
-                Button("重读") { bms.reloadConfig() }
-                    .font(.caption)
-            }
-
-            if let e = bms.configError {
-                Text(e)
-                    .font(.caption2)
-                    .foregroundStyle(themeMgr.color(.warn))
-            }
-
-            if bms.bmsConfig.cellOvervoltageProtection > 0 {
-                configLine("单体过压保护",
-                           String(format: "%.3f V", bms.bmsConfig.cellOvervoltageProtection))
-            }
-            if bms.bmsConfig.packOvervoltageProtection > 0 {
-                configLine("整包过压保护",
-                           String(format: "%.1f V", bms.bmsConfig.packOvervoltageProtection))
-            }
-            if bms.bmsConfig.cellUndervoltageProtection > 0 {
-                configLine("单体欠压保护",
-                           String(format: "%.3f V", bms.bmsConfig.cellUndervoltageProtection))
-            }
-            if bms.bmsConfig.cellNumber > 0 {
-                configLine("串数", "\(bms.bmsConfig.cellNumber) S")
-            }
-        }
-        .padding(12)
-        .background(themeMgr.cardBG)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(themeMgr.cardStroke, lineWidth: 1)
-        }
-    }
-
-    private func configLine(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(themeMgr.secondary)
-            Spacer()
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(themeMgr.color(.rpm))
-        }
     }
 
     // MARK: - 充电建议
