@@ -11,17 +11,50 @@ struct AntBmsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showCells = true
 
+    /// 电池化学类型（存在本地，可切换）
+    @AppStorage("batteryChemistry") private var chemistryRaw: String = BatteryChemistry.ncm.rawValue
+    private var chemistry: BatteryChemistry {
+        BatteryChemistry(rawValue: chemistryRaw) ?? .ncm
+    }
+
+    /// 健康度（读不到循环次数就是 nil）
+    private var soh: Double? {
+        guard bms.data.cycles > 0 else { return nil }
+        return BatteryHealth.soh(cycles: bms.data.cycles, chemistry: chemistry)
+    }
+
+    private var healthLevel: HealthLevel? {
+        guard let s = soh else { return nil }
+        return HealthLevel.from(soh: s)
+    }
+
+    /// 充电中 / 放电中 / 待机
+    private var stateText: (String, Color, String) {
+        if bms.data.isCharging || bms.smoothedCurrent > 0.5 {
+            return ("充电中", themeMgr.color(.ok), "bolt.fill")
+        } else if bms.data.isDischarging || bms.smoothedCurrent < -0.5 {
+            return ("放电中", themeMgr.color(.power), "bolt.slash.fill")
+        }
+        return ("待机", themeMgr.color(.warn), "pause.circle.fill")
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 connectionSection
                 if bms.connected {
-                    summarySection
                     if bms.data.hasData {
+                        socSection
+                        chargeSection
+                        summarySection
+                        healthSection
+                        chargingAdviceSection
                         if !bms.data.cells.isEmpty {
                             cellsSection
                         }
                         tempSection
+                    } else {
+                        summarySection
                     }
                     debugSection
                 }
@@ -32,9 +65,6 @@ struct AntBmsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
-            }
-            .onDisappear {
-                // 不主动断开，让它在后台继续读
             }
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
@@ -109,6 +139,348 @@ struct AntBmsView: View {
         }
     }
 
+    // MARK: - SOC 进度条
+
+    private var socSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                // 状态 + 百分比
+                HStack {
+                    Image(systemName: stateText.2)
+                        .foregroundStyle(stateText.1)
+                    Text(stateText.0)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(stateText.1)
+                    Spacer()
+                    Text("\(bms.data.soc)")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(socColor)
+                    Text("%")
+                        .font(.caption)
+                        .foregroundStyle(themeMgr.secondary)
+                }
+
+                // 进度条
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(themeMgr.isLight
+                                  ? Color.black.opacity(0.08)
+                                  : Color.white.opacity(0.12))
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(LinearGradient(colors: [socColor.opacity(0.7), socColor],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(4, geo.size.width * Double(bms.data.soc) / 100.0))
+                    }
+                }
+                .frame(height: 16)
+
+                // 关键刻度标记
+                HStack(spacing: 0) {
+                    Text("0%").font(.system(size: 8)).foregroundStyle(themeMgr.secondary)
+                    Spacer()
+                    Text("10%").font(.system(size: 8))
+                        .foregroundStyle(bms.data.soc <= 10 ? themeMgr.color(.warn) : themeMgr.secondary)
+                        .offset(x: -20)
+                    Spacer()
+                    Text("20%").font(.system(size: 8))
+                        .foregroundStyle(bms.data.soc <= 20 ? themeMgr.color(.power) : themeMgr.secondary)
+                    Spacer()
+                    Text("80%").font(.system(size: 8))
+                        .foregroundStyle(bms.data.soc >= 80 ? themeMgr.color(.ok) : themeMgr.secondary)
+                        .offset(x: 12)
+                    Spacer()
+                    Text("100%").font(.system(size: 8)).foregroundStyle(themeMgr.secondary)
+                }
+            }
+            .padding(.vertical, 6)
+        } header: {
+            Text("电量")
+        }
+    }
+
+    private var socColor: Color {
+        if bms.data.soc <= 10 { return themeMgr.color(.warn) }
+        if bms.data.soc <= 20 { return themeMgr.color(.power) }
+        if bms.data.soc >= 80 { return themeMgr.color(.ok) }
+        return themeMgr.color(.rpm)
+    }
+
+    // MARK: - 充放电剩余时间
+
+    private var chargeSection: some View {
+        Section {
+            // 电压 / 电流 / 功率
+            HStack(spacing: 0) {
+                tripleCell("电压", String(format: "%.1f", bms.data.totalVoltage), "V", themeMgr.color(.voltage))
+                Divider().frame(height: 32)
+                tripleCell("电流", String(format: "%.1f", bms.smoothedCurrent), "A", themeMgr.color(.current))
+                Divider().frame(height: 32)
+                tripleCell("功率", "\(Int(abs(bms.data.power)))", "W", themeMgr.color(.power))
+            }
+            .padding(.vertical, 4)
+
+            // 时间估算
+            if let est = chargeEstimate() {
+                HStack {
+                    Image(systemName: "clock")
+                        .foregroundStyle(themeMgr.color(.ok))
+                    Text("预计剩余")
+                        .font(.caption)
+                        .foregroundStyle(themeMgr.secondary)
+                    Spacer()
+                    Text(ChargeEstimator.format(est.remainingSeconds))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(themeMgr.color(.ok))
+                }
+                if let note = est.note {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.color(.power))
+                }
+            } else if let est = dischargeEstimate() {
+                HStack {
+                    Image(systemName: "clock")
+                        .foregroundStyle(themeMgr.color(.power))
+                    Text("预计可骑")
+                        .font(.caption)
+                        .foregroundStyle(themeMgr.secondary)
+                    Spacer()
+                    Text(ChargeEstimator.format(est.remainingSeconds))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(themeMgr.color(.power))
+                }
+                if let note = est.note {
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.secondary)
+                }
+            } else {
+                Text("时间是按电流估的，需要 BMS 报出 SOC 和容量")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
+            }
+        } header: {
+            Text("实时读数")
+        }
+    }
+
+    private func tripleCell(_ title: String, _ value: String, _ unit: String, _ c: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundStyle(themeMgr.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(value)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(c)
+                Text(unit)
+                    .font(.system(size: 9))
+                    .foregroundStyle(themeMgr.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func chargeEstimate() -> ChargeEstimator.Result? {
+        guard bms.smoothedCurrent > 0.5 else { return nil }
+        return ChargeEstimator.chargeRemaining(
+            soc: bms.data.soc,
+            capacityTotal: bms.data.capacityTotal,
+            currentA: bms.smoothedCurrent,
+            fullCurrentA: bms.fullChargeCurrent
+        )
+    }
+
+    private func dischargeEstimate() -> ChargeEstimator.Result? {
+        guard bms.smoothedCurrent < -0.5 else { return nil }
+        return ChargeEstimator.dischargeRemaining(
+            soc: bms.data.soc,
+            capacityTotal: bms.data.capacityTotal,
+            currentA: bms.smoothedCurrent
+        )
+    }
+
+    // MARK: - 健康度
+
+    private var healthSection: some View {
+        Section {
+            if let s = soh, let level = healthLevel {
+                VStack(alignment: .leading, spacing: 10) {
+                    // 健康度大数字
+                    HStack(alignment: .firstTextBaseline) {
+                        if level.showsTriangle {
+                            Image(systemName: level.triangleIcon)
+                                .font(.system(size: 18))
+                                .foregroundStyle(level.color)
+                        }
+                        Text("健康度")
+                            .font(.subheadline)
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.1f", s))
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(level.color)
+                        Text("%")
+                            .font(.caption)
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+
+                    // 健康度条（只看 50~100 区间，更直观）
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(themeMgr.isLight
+                                      ? Color.black.opacity(0.08)
+                                      : Color.white.opacity(0.12))
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(level.color)
+                                .frame(width: max(4, geo.size.width * max(0, (s - 50) / 50.0)))
+                        }
+                    }
+                    .frame(height: 10)
+
+                    // 底部说明
+                    HStack {
+                        Text("循环 \(bms.data.cycles) / 寿命 \(chemistry.designCycles) 次")
+                            .font(.caption2)
+                            .foregroundStyle(themeMgr.secondary)
+                        Spacer()
+                        Text("\(chemistry.rawValue) · 80% 安全线")
+                            .font(.caption2)
+                            .foregroundStyle(level.color)
+                    }
+
+                    // 预警提示
+                    if let msg = level.message {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: level.triangleIcon)
+                                .font(.system(size: 16))
+                                .foregroundStyle(level.color)
+                            Text(msg)
+                                .font(.caption)
+                                .foregroundStyle(level.color)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(level.color.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+                .padding(.vertical, 4)
+
+                // 距离告警还剩多少次
+                if level != .critical {
+                    HStack {
+                        Text("距 70% 还剩")
+                        Spacer()
+                        Text("\(BatteryHealth.cyclesLeftToCritical(cycles: bms.data.cycles, chemistry: chemistry)) 次循环")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                }
+
+                // 化学类型切换
+                Picker("电池类型", selection: $chemistryRaw) {
+                    ForEach(BatteryChemistry.allCases, id: \.rawValue) { c in
+                        Text("\(c.rawValue)（\(c.designCycles) 次）").tag(c.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("健康度")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text("—")
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Text("BMS 没有报出循环次数，算不了健康度。\n可以去蚂蚁 App 里看一眼循环次数。")
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.color(.power))
+                }
+            }
+        } header: {
+            Text("电池健康度")
+        } footer: {
+            Text("健康度按循环次数推算：健康度 = 100% − (循环次数 ÷ 寿命循环次数) × 20%。这是理论值，实际容量衰减可能略有差异。")
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - 充电建议
+
+    private var chargingAdviceSection: some View {
+        Section {
+            ForEach(Array(chemistry.chargingAdvice.enumerated()), id: \.offset) { i, advice in
+                HStack(spacing: 8) {
+                    Image(systemName: adviceIcon(i))
+                        .font(.system(size: 13))
+                        .foregroundStyle(adviceColor(i))
+                        .frame(width: 18)
+                    Text(advice)
+                        .font(.caption)
+                        .foregroundStyle(adviceColor(i))
+                    Spacer()
+                    if adviceIsActive(i) {
+                        Text("现在")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(adviceColor(i))
+                            .foregroundStyle(.black)
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.caption2)
+                Text("避免老化鼓包等严重影响")
+                    .font(.caption2)
+            }
+            .foregroundStyle(themeMgr.secondary)
+            .padding(.top, 4)
+        } header: {
+            Label("\(chemistry.rawValue)充电建议", systemImage: "lightbulb.fill")
+        }
+    }
+
+    /// 第 i 条建议是否命中当前 SOC
+    private func adviceIsActive(_ i: Int) -> Bool {
+        let soc = bms.data.soc
+        switch i {
+        case 0: return soc >= 80       // 充到 80% 了
+        case 1: return soc <= 20       // 到 20% 了
+        case 2: return soc <= 10       // 到 10% 了
+        default: return false
+        }
+    }
+
+    private func adviceColor(_ i: Int) -> Color {
+        let active = adviceIsActive(i)
+        switch i {
+        case 2: return active ? themeMgr.color(.warn) : themeMgr.secondary
+        case 1: return active ? themeMgr.color(.power) : themeMgr.secondary
+        default: return active ? themeMgr.color(.ok) : themeMgr.secondary
+        }
+    }
+
+    private func adviceIcon(_ i: Int) -> String {
+        switch i {
+        case 0: return "battery.75percent"
+        case 1: return "battery.25percent"
+        default: return "battery.0percent"
+        }
+    }
+
     // MARK: - 概要
 
     private var summarySection: some View {
@@ -121,47 +493,12 @@ struct AntBmsView: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                bigRow("总电压", String(format: "%.2f", bms.data.totalVoltage), "V", .yellow)
-                bigRow("电流", String(format: "%.1f", bms.data.current), "A",
-                       bms.data.current < 0 ? .green : .mint)
-                bigRow("SOC", "\(bms.data.soc)", "%", .cyan)
-
-                HStack {
-                    Text("状态")
-                    Spacer()
-                    if bms.data.isCharging {
-                        Text("充电中")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Color.green.opacity(0.25))
-                            .foregroundStyle(.green)
-                            .clipShape(Capsule())
-                    } else if bms.data.isDischarging {
-                        Text("放电中")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(Color.orange.opacity(0.25))
-                            .foregroundStyle(.orange)
-                            .clipShape(Capsule())
-                    } else {
-                        Text("待机").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-
                 HStack {
                     Text("串数")
                     Spacer()
                     Text("\(bms.data.cellCount) 串")
                         .font(.system(.subheadline, design: .monospaced))
-                        .foregroundStyle(.cyan)
-                }
-                if bms.data.cycles > 0 {
-                    HStack {
-                        Text("循环次数")
-                        Spacer()
-                        Text("\(bms.data.cycles) 次")
-                            .font(.system(.subheadline, design: .monospaced))
-                    }
+                        .foregroundStyle(themeMgr.color(.rpm))
                 }
                 if bms.data.capacityTotal > 0 {
                     HStack {
@@ -171,22 +508,24 @@ struct AntBmsView: View {
                                     bms.data.capacityRemaining, bms.data.capacityTotal))
                             .font(.system(.caption, design: .monospaced))
                     }
+                    HStack {
+                        Text("剩余能量")
+                        Spacer()
+                        Text(String(format: "%.2f kWh",
+                                    bms.data.capacityRemaining * bms.data.totalVoltage / 1000.0))
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                }
+                HStack {
+                    Text("单体压差")
+                    Spacer()
+                    Text(String(format: "%.3f V", bms.data.deltaCell))
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(bms.data.deltaCell > 0.05
+                                         ? themeMgr.color(.power)
+                                         : themeMgr.color(.ok))
                 }
             }
-        }
-    }
-
-    private func bigRow(_ title: String, _ value: String, _ unit: String, _ color: Color) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(color)
-            Text(unit)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 

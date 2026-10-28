@@ -32,9 +32,42 @@ final class AntBmsManager: NSObject, ObservableObject {
     private var pollTimer: Timer?
     private var responseBuffer: [UInt8] = []
 
+    /// 最近若干次电流采样（用来做 30 秒平滑，避免时间估算乱跳）
+    private var currentSamples: [Double] = []
+    /// 本次充电过程中见过的最大的充电电流（用来判断是否进入 CV 阶段）
+    private var peakChargeCurrent: Double = 0
+
+    /// 30 秒滑动平均电流
+    var smoothedCurrent: Double {
+        guard !currentSamples.isEmpty else { return data.current }
+        return currentSamples.reduce(0, +) / Double(currentSamples.count)
+    }
+
+    /// 满功率充电电流（本次充电过程中的峰值）
+    var fullChargeCurrent: Double {
+        max(peakChargeCurrent, 1.0)
+    }
+
     private override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    /// 记一笔电流采样（每收到一次状态帧调用一次）
+    private func recordCurrent(_ amp: Double) {
+        // 采样窗口：轮询是 2 秒一次，15 个 ≈ 30 秒
+        currentSamples.append(amp)
+        if currentSamples.count > 15 {
+            currentSamples.removeFirst(currentSamples.count - 15)
+        }
+        // 充电时刷新峰值
+        if amp > 1.0 {
+            peakChargeCurrent = max(peakChargeCurrent, amp)
+        }
+        // 掉落电就不保留峰值，下次充电重新测
+        if amp < -1.0 {
+            peakChargeCurrent = 0
+        }
     }
 
     // MARK: - 扫描
@@ -168,6 +201,7 @@ final class AntBmsManager: NSObject, ObservableObject {
         errorMsg = nil
         if decoder.process(frame) {
             data = decoder.data
+            recordCurrent(decoder.data.current)
         }
     }
 }
