@@ -21,6 +21,7 @@ struct ContentView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         statusCard
+                        gearRow
                         if landscape {
                             // 横屏：左右两栏，仪表和数据并排，一屏看全
                             HStack(alignment: .top, spacing: 16) {
@@ -210,6 +211,66 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - 档位
+
+    /// 档位条：1/2/3 三格，亮到当前档位
+    ///
+    /// 遥控器本身是几档就只显示几档。gearbox 为 0 表示还没收到数据，
+    /// 这时整条压暗，不和「1 档」混淆。
+    private var gearRow: some View {
+        let gear = mgr.data.gear
+        let hasData = gear >= 1
+        return HStack(spacing: 8) {
+            Image(systemName: "gearshift.layout.sixspeed")
+                .font(.system(size: 14))
+                .foregroundStyle(themeMgr.secondary)
+
+            Text("档位")
+                .font(.system(size: 11))
+                .foregroundStyle(themeMgr.secondary)
+
+            HStack(spacing: 6) {
+                ForEach(1...3, id: \.self) { g in
+                    Text("\(g)")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(g == gear
+                                         ? Color.black
+                                         : themeMgr.foreground.opacity(hasData ? 0.45 : 0.18))
+                        .frame(width: 26, height: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(g == gear
+                                      ? themeMgr.color(.rpm)
+                                      : (themeMgr.isLight ? Color.black.opacity(0.06)
+                                                          : Color.white.opacity(0.10)))
+                        )
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // 右边放回收提示，省一行
+            if mgr.data.isRegen {
+                Text("回收")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(themeMgr.color(.ok))
+                    .foregroundStyle(.black)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(themeMgr.cardBG)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(themeMgr.cardStroke, lineWidth: 1)
+        }
+    }
+
     // MARK: - 主仪表（转速 + 功率）
 
     private var mainGauges: some View {
@@ -276,18 +337,6 @@ struct ContentView: View {
                 color: mgr.data.isRegen ? themeMgr.color(.ok) : themeMgr.color(.current),
                 theme: themeMgr
             )
-        }
-        .overlay(alignment: .topTrailing) {
-            if mgr.data.isRegen {
-                Text("回收")
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(themeMgr.color(.ok))
-                    .foregroundStyle(.black)
-                    .clipShape(Capsule())
-                    .padding(8)
-            }
         }
     }
 
