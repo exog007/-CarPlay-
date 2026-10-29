@@ -46,6 +46,7 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.exog007.fardriver
+        com.apple.developer.weatherkit: true
 
   FarDriverWidgetExtension:
     type: app-extension

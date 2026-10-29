@@ -13,6 +13,7 @@ struct SportDashView: View {
     @ObservedObject var mgr: ControllerManager
     @ObservedObject var themeMgr: ThemeManager
     @ObservedObject var gps: GpsSpeed
+    @ObservedObject var weather = WeatherService.shared
 
     /// 融合车速
     private var speed: Double {
@@ -43,6 +44,30 @@ struct SportDashView: View {
     private var cyan: Color { themeMgr.color(.rpm) }
     private var red: Color { themeMgr.color(.warn) }
 
+    // MARK: - 故障灯状态
+
+    /// 电瓶故障灯：电量低于 26%
+    private var batteryLampOn: Bool {
+        mgr.status.isConnected && batteryPercent < 0.26
+    }
+
+    /// 水温故障灯：MOS 温度高于 50°C
+    private var coolantLampOn: Bool {
+        mgr.status.isConnected && mgr.data.mosTemp > 50
+    }
+
+    /// 刹车灯：松开灭
+    ///
+    /// ⚠️ 控制器协议里还没解出确定的刹车灯信号位，现在是推断：
+    ///   - 车在走（速度 > 3）时按下刹车，速度会明显下降
+    ///   - 单帧掉 2.5 km/h 以上认为在刹车
+    ///   - 一旦不再掉速（松开刹车 / 重新加速）立刻灭
+    /// 想要精确的刹车灯，需要抓一帧「捏着刹车」的原始数据来对位偏移。
+    private var brakeLampOn: Bool { brakeActive }
+
+    @State private var lastSpeed: Double = 0
+    @State private var brakeActive = false
+
     var body: some View {
         VStack(spacing: 6) {
             topBar
@@ -52,6 +77,39 @@ struct SportDashView: View {
         }
         .padding(10)
         .background(sportBackground)
+        .onChange(of: mgr.data.speed) { _, newValue in
+            updateBrake(newValue)
+        }
+        .onAppear {
+            weather.refreshIfNeeded()
+        }
+    }
+
+    /// 每来一帧新速度就重新判断刹车
+    private func updateBrake(_ newSpeed: Double) {
+        let prev = lastSpeed
+        lastSpeed = newSpeed
+
+        guard mgr.status.isConnected else {
+            brakeActive = false
+            return
+        }
+
+        // 减速量（正值表示掉速）
+        let decel = prev - newSpeed
+
+        // 速度太低不考虑刹车（已经停下）
+        guard newSpeed >= 1 else {
+            brakeActive = false
+            return
+        }
+
+        // 掉速超过 2.5 km/h 点亮；保持不变或加速就灭
+        if decel > 2.5 {
+            brakeActive = true
+        } else if decel <= 0.5 {
+            brakeActive = false
+        }
     }
 
     // MARK: - 背景
@@ -107,6 +165,11 @@ struct SportDashView: View {
 
             Spacer(minLength: 6)
 
+            // 天气 + 气温
+            weatherBlock
+
+            Spacer(minLength: 6)
+
             Text(nowText())
                 .font(.system(size: 17, weight: .bold, design: .monospaced))
                 .foregroundStyle(amber)
@@ -114,10 +177,67 @@ struct SportDashView: View {
 
             Spacer(minLength: 6)
 
+            // 三个故障灯
+            HStack(spacing: 5) {
+                brakeLamp
+                coolantLamp
+                batteryLamp
+            }
+
+            Spacer(minLength: 4)
+
             dashPill("DIAGNOSTIC", on: mgr.status.isConnected)
             dashPill("SETTINGS", on: true)
         }
         .frame(height: 30)
+    }
+
+    // MARK: - 天气块
+
+    @ViewBuilder
+    private var weatherBlock: some View {
+        if let t = weather.temperature {
+            HStack(spacing: 4) {
+                Image(systemName: weather.symbolName)
+                    .font(.system(size: 12))
+                    .foregroundStyle(amber.opacity(0.85))
+                Text("\(Int(t.rounded()))°")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(amber)
+                    .monospacedDigit()
+                if !weather.conditionText.isEmpty {
+                    Text(weather.conditionText)
+                        .font(.system(size: 8))
+                        .foregroundStyle(amber.opacity(0.6))
+                }
+            }
+        }
+    }
+
+    // MARK: - 故障灯
+
+    /// 红色刹车启动灯（圆圈 + 感叹号）
+    private var brakeLamp: some View {
+        Image(systemName: "exclamationmark.circle.fill")
+            .font(.system(size: 15))
+            .foregroundStyle(brakeLampOn ? red : red.opacity(0.16))
+            .shadow(color: brakeLampOn ? red.opacity(0.8) : .clear, radius: 4)
+    }
+
+    /// 黄色水温故障灯（温度计 + 水波）
+    private var coolantLamp: some View {
+        Image(systemName: "thermometer.medium")
+            .font(.system(size: 14))
+            .foregroundStyle(coolantLampOn ? themeMgr.color(.mosTemp) : themeMgr.color(.mosTemp).opacity(0.16))
+            .shadow(color: coolantLampOn ? themeMgr.color(.mosTemp).opacity(0.8) : .clear, radius: 4)
+    }
+
+    /// 黄色电瓶故障灯
+    private var batteryLamp: some View {
+        Image(systemName: "battery.25percent")
+            .font(.system(size: 15))
+            .foregroundStyle(batteryLampOn ? themeMgr.color(.voltage) : themeMgr.color(.voltage).opacity(0.16))
+            .shadow(color: batteryLampOn ? themeMgr.color(.voltage).opacity(0.8) : .clear, radius: 4)
     }
 
     private func nowText() -> String {
@@ -291,13 +411,13 @@ struct SportDashView: View {
 
     private var fuelGauge: some View {
         ZStack {
-            // 表盘弧：从 150° 到 30°（下半圈留空）
+            // 表盘弧：从 150° 开始顺时针扫 240°
             Circle()
                 .trim(from: 0, to: 0.667)
                 .stroke(amber.opacity(0.18),
                         style: StrokeStyle(lineWidth: 5, lineCap: .butt))
                 .rotationEffect(.degrees(150))
-            // 已用电量（从空到当前）
+            // 当前电量
             Circle()
                 .trim(from: 0, to: 0.667 * batteryPercent)
                 .stroke(batteryColor,
@@ -305,21 +425,22 @@ struct SportDashView: View {
                 .rotationEffect(.degrees(150))
                 .animation(.easeOut(duration: 0.3), value: batteryPercent)
 
-            // 刻度线
+            // 刻度线：i=0 在 E（150°），i=10 在 F（150+240=390°）
             ForEach(0..<11, id: \.self) { i in
                 Rectangle()
                     .fill(amber.opacity(i % 5 == 0 ? 0.55 : 0.25))
                     .frame(width: i % 5 == 0 ? 1.5 : 1, height: i % 5 == 0 ? 6 : 3.5)
                     .offset(y: -30)
-                    .rotationEffect(.degrees(150 + Double(i) * 6.67))
+                    .rotationEffect(.degrees(150 + Double(i) * 24))
             }
 
-            // 指针
+            // 指针：0% 指 E（150°），100% 指 F（390°）
+            // 指针矩形默认朝上（0°），所以角度就是 150 + 240 × 百分比
             Rectangle()
                 .fill(batteryColor)
-                .frame(width: 2, height: 24)
-                .offset(y: -12)
-                .rotationEffect(.degrees(150 + 180 * batteryPercent))
+                .frame(width: 2, height: 26)
+                .offset(y: -13)
+                .rotationEffect(.degrees(150 + 240 * batteryPercent))
                 .animation(.easeOut(duration: 0.3), value: batteryPercent)
 
             // 中心轴
@@ -327,33 +448,27 @@ struct SportDashView: View {
                 .fill(amber)
                 .frame(width: 5, height: 5)
 
-            // 读数
+            // 读数（放在轴下方）
             VStack(spacing: 0) {
                 Text("\(Int(batteryPercent * 100))")
-                    .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
                     .foregroundStyle(batteryColor)
                     .monospacedDigit()
                 Text("%")
                     .font(.system(size: 7))
                     .foregroundStyle(amber.opacity(0.6))
             }
-            .offset(y: 15)
+            .offset(y: 17)
 
-            // 标签
-            VStack {
-                Spacer()
-                HStack {
-                    Text("E")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(amber.opacity(0.5))
-                    Spacer()
-                    Text("F")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(amber.opacity(0.5))
-                }
-            }
-            .frame(width: 70)
-            .offset(y: 6)
+            // E / F 标签：放在弧的两端
+            Text("E")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(amber.opacity(0.6))
+                .offset(x: -32, y: 16)
+            Text("F")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(amber.opacity(0.6))
+                .offset(x: 32, y: 16)
         }
     }
 

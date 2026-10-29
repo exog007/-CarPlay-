@@ -32,8 +32,10 @@ final class GpsSpeed: NSObject, ObservableObject {
     }
 
     private let manager = CLLocationManager()
-    /// 静止判定：连续这么久速度都是 0 才算真停下
+    /// 最后一次 GPS 读到「在动」的时间
     private var lastMovingAt: Date = .distantPast
+    /// 最后一次收到定位回调的时间（用来判断 GPS 是否还在喂数据）
+    private var lastLocationAt: Date = .distantPast
 
     override init() {
         super.init()
@@ -68,21 +70,20 @@ final class GpsSpeed: NSObject, ObservableObject {
 
     // MARK: - 读数
 
-    /// 融合车速：控制器轮速和 GPS 取大值
+    /// 融合车速
     ///
-    /// 但 GPS 只用来把速度**往高拉**，且必须足够可信：
-    /// GPS 静止时会报几 km/h 的噪声，如果无条件取大值，
-    /// 停下也会显示 9 km/h。
+    /// 原则：GPS 只在「控制器没有速度、而 GPS 明确有速度」时兜底。
+    /// 不再拿 GPS 去和轮速比大值——那样一旦 GPS 读数滞后，
+    /// 就会把已经降下来的车速又顶回去，表现为「松油门后卡几秒才掉」。
     ///
-    /// - Parameters:
-    ///   - wheel: 控制器按轮径算出来的速度
-    ///   - minGap: GPS 要比轮速高出这么多才采信
+    /// - Parameter wheel: 控制器按轮径算出来的速度
     /// - Returns: 用于显示的速度
-    func fused(with wheel: Double, minGap: Double = 4) -> Double {
+    func fused(with wheel: Double) -> Double {
+        // 控制器已经给出速度，就信控制器（它是实时的）
+        if wheel >= 1.0 { return wheel }
+        // 控制器没速度（没连上 / 免费版限速），才用 GPS 兜底
         guard enabled, hasFix, accuracy >= 0, accuracy < 25 else { return wheel }
-        // GPS 明显更快才信它（轮径设小了的情况）
-        if speedKmh > wheel + minGap { return speedKmh }
-        return wheel
+        return speedKmh
     }
 
     /// GPS 是否真的在参与（用于决定要不要在界面标 GPS）
@@ -117,10 +118,10 @@ extension GpsSpeed: CLLocationManagerDelegate {
 
         accuracy = loc.horizontalAccuracy
         hasFix = true
+        lastLocationAt = Date()
 
         let kmh = loc.speed * 3.6
-        // 低于 3 km/h 一律当静止：GPS 在静止时的速度噪声通常就是这个量级，
-        // 不走这条会永远停在几公里每小时下不来。
+        // 低于 3 km/h 一律当静止：GPS 在静止时的速度噪声通常就是这个量级
         if kmh > 3.0 {
             lastMovingAt = Date()
             speedKmh = kmh
