@@ -602,8 +602,8 @@ struct SportDashView: View {
 
         // t=0 → F（-62°，右上方），t=1 → E（+62°，右下方）
         // 中间经过 0°（正右），总扫角 124°
-        let startDeg: Double = -62
-        let sweepDeg: Double = 124
+        let startDeg: Double = -55
+        let sweepDeg: Double = 110
         func point(at t: Double, radius: Double) -> CGPoint {
             let deg = startDeg + sweepDeg * t
             let rad = deg * Double.pi / 180
