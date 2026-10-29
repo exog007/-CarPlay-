@@ -41,6 +41,10 @@ struct ControllerData: Codable, Equatable {
     ///
     /// 实测：挂入 P 时 p[0] = 0x80（bit0 = 0），解除时 p[0] = 0x81（bit0 = 1）
     var pGearOn: Bool = false
+    /// 是否正在刹车（来自 0xE2 的 p[3] bit7）
+    ///
+    /// 实测：捏刹车 p[3] = 0x80，松开 p[3] = 0x00
+    var braking: Bool = false
     /// 有没有收到过 0xE2 帧（判断 pGearOn 是否可信）
     var e2Seen: Bool = false
     var updatedAt: Date = Date()
@@ -112,6 +116,9 @@ final class FarDriverDecoder {
             // P 档：p[0] 的 bit0，0 = 挂入 P，1 = 解除
             // 实测：P 档 p[0]=0x80，解除 p[0]=0x81
             data.pGearOn = (p[0] & 0x01) == 0
+            // 刹车：p[3] 的 bit7，1 = 刹车中
+            // 实测：捏刹车 p[3]=0x80，松开 p[3]=0x00
+            data.braking = (p[3] & 0x80) != 0
             data.e2Seen = true
             data.e2Byte0 = Int(p[0])
             data.e2Raw = Self.hex(p, count: 12)

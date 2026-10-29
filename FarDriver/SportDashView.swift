@@ -81,20 +81,16 @@ struct SportDashView: View {
         return mgr.data.mosTemp >= 60
     }
 
-    /// 刹车灯：松开灭
+    /// 刹车灯：直接读控制器上报的刹车信号（0xE2 的 p[3] bit7）
     ///
-    /// ⚠️ 控制器协议里还没解出确定的刹车灯信号位，现在是推断：
-    ///   - 车在走（速度 > 3）时按下刹车，速度会明显下降
-    ///   - 单帧掉 2.5 km/h 以上认为在刹车
-    ///   - 一旦不再掉速（松开刹车 / 重新加速）立刻灭
-    /// 想要精确的刹车灯，需要抓一帧「捏着刹车」的原始数据来对位偏移。
+    /// 实测：捏刹车 p[3] = 0x80，松开 p[3] = 0x00。
+    /// 不再靠「掉速」推断，按住刹车不走也能亮。
     private var brakeLampOn: Bool {
         if inSelfTest { return true }
-        return brakeActive
+        guard mgr.status.isConnected, mgr.data.e2Seen else { return false }
+        return mgr.data.braking
     }
 
-    @State private var lastSpeed: Double = 0
-    @State private var brakeActive = false
     /// 自检闪烁相位
     @State private var pulsePhase: Double = 0
 
@@ -108,42 +104,12 @@ struct SportDashView: View {
         }
         .padding(10)
         .background(sportBackground)
-        .onChange(of: mgr.data.speed) { _, newValue in
-            updateBrake(newValue)
-        }
         .onAppear {
             weather.refreshIfNeeded()
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
         .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
             tickPulse()
-        }
-    }
-
-    /// 每来一帧新速度就重新判断刹车
-    private func updateBrake(_ newSpeed: Double) {
-        let prev = lastSpeed
-        lastSpeed = newSpeed
-
-        guard mgr.status.isConnected else {
-            brakeActive = false
-            return
-        }
-
-        // 减速量（正值表示掉速）
-        let decel = prev - newSpeed
-
-        // 速度太低不考虑刹车（已经停下）
-        guard newSpeed >= 1 else {
-            brakeActive = false
-            return
-        }
-
-        // 掉速超过 2.5 km/h 点亮；保持不变或加速就灭
-        if decel > 2.5 {
-            brakeActive = true
-        } else if decel <= 0.5 {
-            brakeActive = false
         }
     }
 
