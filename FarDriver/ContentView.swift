@@ -174,6 +174,12 @@ struct ContentView: View {
                 }
                 // 启动 GPS 车速（会弹一次定位授权）
                 gps.start()
+                // 打开 App 就不自动息屏，方便骑行时一直看仪表
+                UIApplication.shared.isIdleTimerDisabled = true
+            }
+            .onDisappear {
+                // 离开主界面时恢复系统自动息屏，别把电耗光
+                UIApplication.shared.isIdleTimerDisabled = false
             }
             // 控制器每来一帧数据就刷新一次 P 档判定
             .onChange(of: mgr.data) { _, _ in
