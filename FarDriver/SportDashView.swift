@@ -49,6 +49,8 @@ struct SportDashView: View {
 
     /// 故障灯的黄色（固定色，不受主题色影响，和真车指示灯一致）
     private var lampYellow: Color { Color(hex: "#FFC107") }
+    /// 电瓶灯用的橙黄（和参考图标一致）
+    private var lampAmber: Color { Color(hex: "#FB9B08") }
 
     // MARK: - 故障灯状态
 
@@ -281,11 +283,9 @@ struct SportDashView: View {
 
     /// 黄色电瓶故障灯（汽车小电瓶造型，自己画的）
     private var batteryLamp: some View {
-        CarBatteryIcon(size: 13,
-                       color: batteryLampOn ? lampYellow : lampYellow.opacity(0.16),
-                       lineWidth: 1.3)
-            .shadow(color: batteryLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
-            .frame(width: 18, height: 15)
+        CarBatteryIcon(color: batteryLampOn ? lampAmber : lampAmber.opacity(0.16))
+            .frame(width: 18, height: 14)
+            .shadow(color: batteryLampOn ? lampAmber.opacity(0.9) : .clear, radius: 4)
     }
 
     private func nowText() -> String {
