@@ -245,6 +245,30 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            // 蓝牙记忆诊断：告诉你记忆了什么、开关开没开
+            if !mgr.status.isConnected {
+                if let lastName = BluetoothMemory.lastControllerName, !lastName.isEmpty {
+                    HStack(spacing: 5) {
+                        Image(systemName: BluetoothMemory.autoConnectController
+                              ? "pin.circle.fill" : "pin.slash")
+                            .font(.caption2)
+                            .foregroundStyle(BluetoothMemory.autoConnectController
+                                             ? themeMgr.color(.ok) : themeMgr.secondary)
+                        Text(BluetoothMemory.autoConnectController
+                             ? "记忆：\(lastName)（搜到自动连）"
+                             : "记忆：\(lastName)（自动连已关）")
+                            .font(.caption2)
+                            .foregroundStyle(themeMgr.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    Text("还没记住控制器，连一次就会记住")
+                        .font(.caption2)
+                        .foregroundStyle(themeMgr.secondary)
+                }
+            }
+
             // GPS 速度表状态：没授权时提示一下，不然用户以为功能没做
             if gps.enabled && !gps.authorized {
                 HStack(spacing: 6) {

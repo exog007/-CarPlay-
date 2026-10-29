@@ -272,11 +272,25 @@ extension AntBmsManager: CBCentralManagerDelegate {
         _ = looksLikeAnt
 
         // ── 蓝牙记忆：搜到上次连过的 BMS 就自动连 ──
+        //
+        // 匹配规则（满足任一即可）：
+        //   ① UUID 完全一致
+        //   ② 名字一致（iOS 有时会给同一台设备换 UUID）
         guard !connected,
               self.peripheral == nil,
-              BluetoothMemory.autoConnectBms,
-              let lastID = BluetoothMemory.lastBmsID,
-              peripheral.identifier.uuidString == lastID else { return }
+              BluetoothMemory.autoConnectBms else { return }
+
+        let idMatch: Bool = {
+            guard let lastID = BluetoothMemory.lastBmsID else { return false }
+            return peripheral.identifier.uuidString == lastID
+        }()
+        let nameMatch: Bool = {
+            guard let lastName = BluetoothMemory.lastBmsName,
+                  !lastName.isEmpty,
+                  lastName != "ANT BMS" else { return false }
+            return name == lastName
+        }()
+        guard idMatch || nameMatch else { return }
 
         central.stopScan()
         scanning = false

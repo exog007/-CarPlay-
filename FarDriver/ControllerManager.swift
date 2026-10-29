@@ -362,15 +362,32 @@ extension ControllerManager: CBCentralManagerDelegate {
         discovered.append((id: peripheral.identifier, name: name, rssi: RSSI.intValue))
 
         // ── 蓝牙记忆：搜到上次连过的设备就自动连 ──
+        //
+        // 匹配规则（满足任一即可）：
+        //   ① UUID 完全一致（最可靠）
+        //   ② 名字一致（iOS 有时会给同一台设备换 UUID）
         guard autoConnect,
               peripheral == nil,
-              BluetoothMemory.autoConnectController,
-              let lastID = BluetoothMemory.lastControllerID,
-              peripheral.identifier.uuidString == lastID else { return }
+              BluetoothMemory.autoConnectController else { return }
 
+        let idMatch: Bool = {
+            guard let lastID = BluetoothMemory.lastControllerID else { return false }
+            return peripheral.identifier.uuidString == lastID
+        }()
+        let nameMatch: Bool = {
+            guard let lastName = BluetoothMemory.lastControllerName,
+                  !lastName.isEmpty,
+                  lastName != "FarDriver" else { return false }
+            return name == lastName
+        }()
+        guard idMatch || nameMatch else { return }
+
+        // 找到了，停扫并连
         stopScan()
         self.peripheral = peripheral
         peripheral.delegate = self
+        status = .scanning
+        uploadError = "找到记忆设备 \(name)，正在自动连接…"
         central.connect(peripheral, options: nil)
     }
 
