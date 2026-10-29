@@ -28,6 +28,15 @@ struct ControllerData: Codable, Equatable {
     var faultText: String = ""       // 故障描述（多故障用「、」分隔）
     var faultRaw: String = ""        // 原始字节，调试用，例如 "A4 08 00 00"
     var faultFrameSeen: Bool = false // 有没有真的收到过故障帧
+    /// 0xEE 帧原始 12 字节（调试用，find P gear）
+    var eeRaw: String = ""
+    /// 0xEE 的前两个字节：引脚分析类型 + 位索引
+    var eePinType: Int = -1
+    var eePinBit: Int = -1
+    /// 0xE2 帧原始 12 字节（调试用）
+    var e2Raw: String = ""
+    /// 0xE2 的 p[0] 原始值（档位/方向都在这一个字节里）
+    var e2Byte0: Int = -1
     var updatedAt: Date = Date()
 
     /// 有没有故障：只有解析出明确故障位才算
@@ -94,6 +103,16 @@ final class FarDriverDecoder {
             // 档位 + 转速
             data.gear = Int((p[0] >> 2) & 0b11) + 1
             data.rawRpm = Int16(bitPattern: (UInt16(p[7]) << 8) | UInt16(p[6]))
+            // 调试：保留原始字节，用来定位 P 档
+            data.e2Byte0 = Int(p[0])
+            data.e2Raw = Self.hex(p, count: 12)
+
+        case 0xEE:
+            // 引脚状态帧：p[0] = 引脚分析类型（P=0, BC=1, RE=2, SDH=3, SDL=4, XH=5, SEAT=6）
+            //           p[1] = 该功能对应的位索引
+            data.eePinType = Int(p[0])
+            data.eePinBit = Int(p[1])
+            data.eeRaw = Self.hex(p, count: 12)
 
         case 0xE8:
             // 电压 + 电流
@@ -140,6 +159,12 @@ final class FarDriverDecoder {
         data.recomputePower()
         data.updatedAt = Date()
         return true
+    }
+
+    /// 字节数组转 hex 字符串（调试用）
+    static func hex(_ bytes: [UInt8], count: Int) -> String {
+        let n = min(count, bytes.count)
+        return bytes[0..<n].map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 
     /// CRC16 校验（Modbus 风格，初值 0x7F3C）

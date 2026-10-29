@@ -104,6 +104,7 @@ struct SportDashView: View {
             rpmBand
             middleRow
             bottomRow
+            debugPinRow
         }
         .padding(10)
         .background(sportBackground)
@@ -714,6 +715,42 @@ struct SportDashView: View {
         if batteryPercent < 0.15 { return red }
         if batteryPercent < 0.30 { return lampAmber }
         return amber
+    }
+
+    // MARK: - 调试：P 档嗅探
+    //
+    // 用来在实车上找 P 档的信号位。
+    // 把 0xE2 和 0xEE 两帧的原始字节显示出来，按 P 键前后对比就能定位。
+    // 找到之后这行可以删掉。
+
+    private var debugPinRow: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text("E2")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.5))
+                Text(mgr.data.e2Raw.isEmpty ? "—" : mgr.data.e2Raw)
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+            }
+            HStack(spacing: 6) {
+                Text("EE")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.5))
+                Text(mgr.data.eeRaw.isEmpty ? "—" : mgr.data.eeRaw)
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                Text("pin=\(mgr.data.eePinType) bit=\(mgr.data.eePinBit)")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(cyan)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 2)
     }
 
     // MARK: - 底部
