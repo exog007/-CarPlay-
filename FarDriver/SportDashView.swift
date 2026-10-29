@@ -47,6 +47,9 @@ struct SportDashView: View {
     private var cyan: Color { themeMgr.color(.rpm) }
     private var red: Color { themeMgr.color(.warn) }
 
+    /// 故障灯的黄色（固定色，不受主题色影响，和真车指示灯一致）
+    private var lampYellow: Color { Color(hex: "#FFC107") }
+
     // MARK: - 故障灯状态
 
     /// 自检模式：还没连上控制器时，所有灯全亮
@@ -268,22 +271,20 @@ struct SportDashView: View {
             .shadow(color: brakeLampOn ? red.opacity(0.9) : .clear, radius: 4)
     }
 
-    /// 黄色水温故障灯（温度计 + 水波）
+    /// 黄色水温故障灯（温度计插在水里）
     private var coolantLamp: some View {
         Image(systemName: "thermometer.medium")
             .font(.system(size: 14))
-            .foregroundStyle(coolantLampOn ? themeMgr.color(.mosTemp)
-                                           : themeMgr.color(.mosTemp).opacity(0.16))
-            .shadow(color: coolantLampOn ? themeMgr.color(.mosTemp).opacity(0.9) : .clear, radius: 4)
+            .foregroundStyle(coolantLampOn ? lampYellow : amber.opacity(0.16))
+            .shadow(color: coolantLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
     }
 
-    /// 黄色电瓶故障灯
+    /// 黄色电瓶故障灯（汽车小电瓶造型）
     private var batteryLamp: some View {
-        Image(systemName: "battery.25percent")
+        Image(systemName: "car.batteryblock")
             .font(.system(size: 15))
-            .foregroundStyle(batteryLampOn ? themeMgr.color(.voltage)
-                                           : themeMgr.color(.voltage).opacity(0.16))
-            .shadow(color: batteryLampOn ? themeMgr.color(.voltage).opacity(0.9) : .clear, radius: 4)
+            .foregroundStyle(batteryLampOn ? lampYellow : amber.opacity(0.16))
+            .shadow(color: batteryLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
     }
 
     private func nowText() -> String {
@@ -386,7 +387,7 @@ struct SportDashView: View {
 
     private var middleRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            // 左侧：连接指示灯 + BMS 保护板 MOS 温度（没连 BMS 就整块不占位）
+            // 左侧：控制器连接指示灯
             VStack(spacing: 4) {
                 Circle()
                     .fill(mgr.status.isConnected ? themeMgr.color(.ok) : amber.opacity(0.25))
@@ -397,12 +398,7 @@ struct SportDashView: View {
                 Rectangle()
                     .fill(amber.opacity(0.3))
                     .frame(width: 1, height: 26)
-
-                if bms.connected {
-                    bmsMosTempBlock
-                }
             }
-            .frame(width: bms.connected ? 52 : nil)
 
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("\(Int(speed.rounded()))")
@@ -423,10 +419,26 @@ struct SportDashView: View {
 
             Spacer(minLength: 0)
 
-            fuelGauge
-                .frame(width: 92, height: 62)
+            // 右侧：BMS 温度 + 油表
+            HStack(spacing: 6) {
+                if showBmsBlock {
+                    bmsMosTempBlock
+                }
+                fuelGauge
+                    .frame(width: 92, height: 62)
+            }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// BMS 温度块什么时候显示
+    ///
+    /// - 自检阶段（还没连控制器）：亮起，显示 `--`
+    /// - 连上控制器但没连 ANT BMS：隐藏
+    /// - 连上 ANT BMS：亮起，显示真实温度
+    private var showBmsBlock: Bool {
+        if !mgr.status.isConnected { return true }   // 自检
+        return bms.connected
     }
 
     private var isParked: Bool {
@@ -436,19 +448,18 @@ struct SportDashView: View {
 
     // MARK: - BMS 保护板 MOS 温度
 
-    /// 左侧小方块：保护板 MOS 温度
-    ///
-    /// 只在 ANT BMS 已连接时出现，断开后整块从布局里消失（不留空位）。
+    /// 油表左边的小方块：BMS 保护板 MOS 温度
     private var bmsMosTempBlock: some View {
         let t = bms.data.mosTemp
         let hot = t > 55
+        let known = bms.connected && t > 0
         return VStack(spacing: 1) {
             Text("BMS")
                 .font(.system(size: 6, weight: .semibold))
                 .tracking(0.4)
                 .foregroundStyle(amber.opacity(0.55))
             HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text(t > 0 ? "\(t)" : "--")
+                Text(known ? "\(t)" : "--")
                     .font(.system(size: 13, weight: .heavy, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(hot ? red : cyan)
@@ -463,7 +474,7 @@ struct SportDashView: View {
                 .foregroundStyle(amber.opacity(0.45))
         }
         .padding(.vertical, 3)
-        .padding(.horizontal, 3)
+        .padding(.horizontal, 4)
         .background(
             RoundedRectangle(cornerRadius: 3)
                 .fill(amber.opacity(0.07))
