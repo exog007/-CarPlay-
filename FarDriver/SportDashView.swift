@@ -199,15 +199,13 @@ struct SportDashView: View {
 
             Spacer(minLength: 6)
 
-            // 天气 + 气温
-            weatherBlock
+            // 日期 + 时间（上下两行）
+            clockBlock
 
             Spacer(minLength: 6)
 
-            Text(nowText())
-                .font(.system(size: 17, weight: .bold, design: .monospaced))
-                .foregroundStyle(amber)
-                .padding(.horizontal, 6)
+            // 天气图标 + 气温
+            weatherBlock
 
             Spacer(minLength: 6)
 
@@ -239,23 +237,56 @@ struct SportDashView: View {
         pulsePhase += 0.18
     }
 
+    // MARK: - 日期时间
+
+    /// 上方时间块：第一行「10月29日」，第二行「21:24」
+    private var clockBlock: some View {
+        VStack(alignment: .center, spacing: -1) {
+            Text(dateText)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(amber.opacity(0.65))
+                .monospacedDigit()
+            Text(timeText)
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundStyle(amber)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var timeText: String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: Date())
+    }
+
+    /// 「10月29日」+ 星期
+    private var dateText: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 EEE"
+        return f.string(from: Date())
+    }
+
     // MARK: - 天气块
 
     @ViewBuilder
     private var weatherBlock: some View {
         if let t = weather.temperature {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: weather.symbolName)
-                    .font(.system(size: 12))
-                    .foregroundStyle(amber.opacity(0.85))
-                Text("\(Int(t.rounded()))°")
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .font(.system(size: 16))
                     .foregroundStyle(amber)
-                    .monospacedDigit()
-                if !weather.conditionText.isEmpty {
-                    Text(weather.conditionText)
-                        .font(.system(size: 8))
-                        .foregroundStyle(amber.opacity(0.6))
+                VStack(alignment: .leading, spacing: -1) {
+                    Text("\(Int(t.rounded()))°")
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .foregroundStyle(amber)
+                        .monospacedDigit()
+                    if !weather.conditionText.isEmpty {
+                        Text(weather.conditionText)
+                            .font(.system(size: 7))
+                            .foregroundStyle(amber.opacity(0.55))
+                    }
                 }
             }
         }
@@ -286,12 +317,6 @@ struct SportDashView: View {
         CarBatteryIcon(color: batteryLampOn ? lampAmber : lampAmber.opacity(0.16))
             .frame(width: 18, height: 14)
             .shadow(color: batteryLampOn ? lampAmber.opacity(0.9) : .clear, radius: 4)
-    }
-
-    private func nowText() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f.string(from: Date())
     }
 
     private func dashPill(_ title: String, on: Bool) -> some View {
