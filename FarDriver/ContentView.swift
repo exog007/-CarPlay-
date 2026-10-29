@@ -77,26 +77,39 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
+            let sportMode = (themeMgr.theme.dashStyle == .sport)
             NavigationStack {
-                ScrollView {
-                    VStack(spacing: 12) {
-                        statusCard
-                        if landscape {
-                            // 横屏：左速度 / 中档位 / 右电压功率
-                            landscapePanel
-                        } else {
-                            gearRow
-                            mainGauges
-                            tempRow
-                            batteryRow
+                Group {
+                    if landscape && sportMode {
+                        // 竞技风格：整屏黑底，不要导航栏和卡片，铺满
+                        ScrollView {
+                            SportDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
+                                .frame(minHeight: geo.size.height - 60)
                         }
+                        .scrollContentBackground(.hidden)
+                        .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 12) {
+                                statusCard
+                                if landscape {
+                                    // 横屏标准：左速度 / 中档位 / 右电压功率
+                                    landscapePanel
+                                } else {
+                                    gearRow
+                                    mainGauges
+                                    tempRow
+                                    batteryRow
+                                }
+                            }
+                            .padding()
+                            .animation(.easeInOut(duration: 0.2), value: landscape)
+                        }
+                        .scrollContentBackground(.hidden)
+                        .background(themeMgr.backgroundView)
                     }
-                    .padding()
-                    .animation(.easeInOut(duration: 0.2), value: landscape)
                 }
-                .scrollContentBackground(.hidden)
-                .background(themeMgr.backgroundView)
-                .navigationTitle("大肥鱼控制器")
+                .navigationTitle(landscape && sportMode ? "" : "大肥鱼控制器")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -106,6 +119,24 @@ struct ContentView: View {
                             Image(systemName: landscape
                                   ? "rectangle.portrait.rotate"
                                   : "rectangle.landscape.rotate")
+                        }
+                    }
+                    // 竞技/标准切换：横屏时一键换皮肤
+                    if landscape {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    themeMgr.theme.dashStyle =
+                                        sportMode ? .standard : .sport
+                                }
+                            } label: {
+                                Image(systemName: sportMode
+                                      ? "rectangle.split.3x1.fill"
+                                      : "speedometer")
+                                    .foregroundStyle(sportMode
+                                                     ? themeMgr.color(.power)
+                                                     : themeMgr.foreground)
+                            }
                         }
                     }
                     // 蚂蚁 BMS

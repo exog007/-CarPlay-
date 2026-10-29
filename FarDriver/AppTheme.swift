@@ -24,6 +24,39 @@ enum BackgroundType: String, Codable, CaseIterable {
     }
 }
 
+// MARK: - 仪表风格
+
+/// 横屏仪表皮肤
+enum DashStyle: String, Codable, CaseIterable, Identifiable {
+    /// 标准：卡片式，速度/档位/电压功率三栏
+    case standard
+    /// 竞技：黑底琥珀线框，EVA 诊断屏风格
+    case sport
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: return "标准风格"
+        case .sport:    return "竞技风格"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .standard: return "卡片分栏，速度 / 档位 / 电压功率"
+        case .sport:    return "黑底琥珀线框，转速刻度条 + 大号速度"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .standard: return "rectangle.split.3x1.fill"
+        case .sport:    return "speedometer"
+        }
+    }
+}
+
 // MARK: - 预设主题
 
 struct ThemePreset: Identifiable, Hashable {
@@ -114,6 +147,13 @@ struct AppTheme: Codable, Equatable {
     /// 卡片不透明度 0.15 ~ 0.9
     var cardOpacity: Double = 0.75
 
+    /// 横屏仪表风格
+    var dashStyle: DashStyle = .standard
+    /// 竞技风格底色
+    var sportBgHex: String = "#000000"
+    /// 竞技风格文字发光强度 0 ~ 1
+    var sportGlow: Double = 0.6
+
     /// 当前背景是不是浅色
     var isLightBackground: Bool {
         switch backgroundType {
@@ -180,6 +220,7 @@ struct AppTheme: Codable, Equatable {
         case backgroundType, presetId, solidHex, gradientStart, gradientEnd
         case photoFileName, photoBlur, photoDim
         case colorSlots, cardOpacity
+        case dashStyle, sportBgHex, sportGlow
     }
 
     init(from decoder: Decoder) throws {
@@ -194,6 +235,9 @@ struct AppTheme: Codable, Equatable {
         photoDim       = (try? c.decode(Double.self, forKey: .photoDim)) ?? 0.35
         colorSlots     = (try? c.decode([String: String].self, forKey: .colorSlots)) ?? [:]
         cardOpacity    = (try? c.decode(Double.self, forKey: .cardOpacity)) ?? 0.75
+        dashStyle      = (try? c.decode(DashStyle.self, forKey: .dashStyle)) ?? .standard
+        sportBgHex     = (try? c.decode(String.self, forKey: .sportBgHex)) ?? "#000000"
+        sportGlow      = (try? c.decode(Double.self, forKey: .sportGlow)) ?? 0.6
     }
 
     static func load() -> AppTheme {
@@ -325,5 +369,16 @@ extension Color {
     init(hex: String) {
         let (r, g, b) = ColorUtil.rgb(hex: hex)
         self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
+
+    /// 转回 #RRGGBB（给 ColorPicker 用）
+    func toHex() -> String? {
+        let ui = UIColor(self)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        return String(format: "#%02X%02X%02X",
+                      Int((r * 255).rounded()),
+                      Int((g * 255).rounded()),
+                      Int((b * 255).rounded()))
     }
 }

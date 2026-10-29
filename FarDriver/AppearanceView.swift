@@ -18,6 +18,8 @@ struct AppearanceView: View {
     var body: some View {
         NavigationStack {
             List {
+                dashStyleSection
+                sportSection
                 previewSection
                 backgroundTypeSection
                 backgroundDetailSection
@@ -64,6 +66,85 @@ struct AppearanceView: View {
                 await MainActor.run { showPhotoError = true }
             }
             await MainActor.run { pickedItem = nil }
+        }
+    }
+
+    // MARK: - 仪表风格
+
+    private var dashStyleSection: some View {
+        Section {
+            ForEach(DashStyle.allCases) { style in
+                Button {
+                    themeMgr.theme.dashStyle = style
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: style.icon)
+                            .font(.system(size: 18))
+                            .frame(width: 26)
+                            .foregroundStyle(themeMgr.theme.dashStyle == style
+                                             ? themeMgr.color(.ok)
+                                             : themeMgr.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(style.title)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(themeMgr.foreground)
+                            Text(style.subtitle)
+                                .font(.caption2)
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+                        Spacer()
+                        if themeMgr.theme.dashStyle == style {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(themeMgr.color(.ok))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        } header: {
+            Text("横屏仪表风格")
+        } footer: {
+            Text("竞技风格只在横屏生效，竖屏仍用标准布局。横屏时右上角也有一个按钮可以快速切换。")
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - 竞技风格设置
+
+    private var sportSection: some View {
+        Section {
+            HStack {
+                Text("竞技底色")
+                    .foregroundStyle(themeMgr.foreground)
+                Spacer()
+                ColorPicker("", selection: Binding(
+                    get: { Color(hex: themeMgr.theme.sportBgHex) },
+                    set: { themeMgr.theme.sportBgHex = $0.toHex() ?? "#000000" }
+                ), supportsOpacity: false)
+                .labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("发光强度")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    Text(String(format: "%.0f%%", themeMgr.theme.sportGlow * 100))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(themeMgr.secondary)
+                }
+                Slider(value: Binding(
+                    get: { themeMgr.theme.sportGlow },
+                    set: { themeMgr.theme.sportGlow = $0 }
+                ), in: 0...1)
+                .tint(themeMgr.color(.power))
+            }
+        } header: {
+            Text("竞技风格")
+        } footer: {
+            Text("底色建议深色（纯黑/深灰），文字和线框的颜色跟下面「仪表颜色」里的「功率」和「转速」走。")
+                .font(.caption2)
         }
     }
 
