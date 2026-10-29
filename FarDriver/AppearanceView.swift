@@ -649,6 +649,44 @@ struct AppearanceView: View {
 
     private var colorSection: some View {
         Section {
+            // 字体亮度：一次调所有颜色的强弱
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("字体亮度")
+                        .font(.subheadline)
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    Text(String(format: "%.0f%%", themeMgr.theme.textBrightness * 100))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(themeMgr.secondary)
+                }
+                Slider(value: Binding(
+                    get: { themeMgr.theme.textBrightness },
+                    set: { themeMgr.theme.textBrightness = $0 }
+                ), in: 0.5...1.6)
+                .tint(themeMgr.color(.rpm))
+
+                // 实时预览条：用几个典型颜色展示当前亮度
+                HStack(spacing: 8) {
+                    brightnessSwatch("转速", themeMgr.color(.rpm))
+                    brightnessSwatch("功率", themeMgr.color(.power))
+                    brightnessSwatch("电压", themeMgr.color(.voltage))
+                    brightnessSwatch("正常", themeMgr.color(.ok))
+                }
+
+                HStack {
+                    Text("暗（夜里不晃眼）")
+                        .font(.system(size: 9))
+                        .foregroundStyle(themeMgr.secondary)
+                    Spacer()
+                    Text("亮（阳光下更清楚）")
+                        .font(.system(size: 9))
+                        .foregroundStyle(themeMgr.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+            .listRowBackground(themeMgr.cardBG)
+
             ForEach(ColorSlot.allCases) { slot in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -674,9 +712,22 @@ struct AppearanceView: View {
         } header: {
             Text("仪表颜色")
         } footer: {
-            Text("改完立刻生效，不用重启")
+            Text("「字体亮度」是所有颜色统一调亮/调暗的系数，改了不用逐个调。100% = 调色板原色。改完立刻生效，不用重启。")
                 .font(.caption2)
         }
+    }
+
+    /// 亮度预览小色块
+    private func brightnessSwatch(_ title: String, _ c: Color) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(c)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(themeMgr.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.07))
+            )
     }
 
     // MARK: - 卡片透明度

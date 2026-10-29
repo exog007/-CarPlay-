@@ -170,6 +170,11 @@ struct AppTheme: Codable, Equatable {
     /// 电压电量表的没电阈值（V）
     var battEmptyVoltage: Double = 63.0
 
+    /// 字体亮度系数 0.5 ~ 1.6
+    ///
+    /// 1.0 = 调色板原色。大于 1 高亮（彩色更刺眼），小于 1 压暗（夜里不晃眼）。
+    var textBrightness: Double = 1.0
+
     /// 当前背景是不是浅色
     var isLightBackground: Bool {
         switch backgroundType {
@@ -187,7 +192,7 @@ struct AppTheme: Codable, Equatable {
     }
 
     func color(for slot: ColorSlot) -> Color {
-        Color(hex: colorSlots[slot.rawValue] ?? slot.defaultHex)
+        Color(hex: colorSlots[slot.rawValue] ?? slot.defaultHex).brightnessScaled(textBrightness)
     }
 
     func hex(for slot: ColorSlot) -> String {
@@ -203,13 +208,17 @@ struct AppTheme: Codable, Equatable {
     }
 
     /// 前景色（文字）：浅背景用深色
+    ///
+    /// 亮度系数直接乘在这个颜色上：0.6 偏暗（不晃眼），1.0 正常，1.5 高亮
     var foreground: Color {
-        isLightBackground ? Color(white: 0.12) : Color.white
+        let base: Color = isLightBackground ? Color(white: 0.12) : Color.white
+        return base.brightnessScaled(textBrightness)
     }
 
     /// 次要文字
     var secondaryForeground: Color {
-        isLightBackground ? Color(white: 0.38) : Color(white: 0.65)
+        let base: Color = isLightBackground ? Color(white: 0.38) : Color(white: 0.65)
+        return base.brightnessScaled(textBrightness)
     }
 
     /// 卡片底色
@@ -240,6 +249,7 @@ struct AppTheme: Codable, Equatable {
         case sportPhotoName, sportPhotoDim, sportPhotoBlur
         case rpmMultiplier, rpmScaleMax
         case battFullVoltage, battEmptyVoltage
+        case textBrightness
     }
 
     init(from decoder: Decoder) throws {
@@ -264,6 +274,7 @@ struct AppTheme: Codable, Equatable {
         rpmScaleMax    = (try? c.decode(Double.self, forKey: .rpmScaleMax)) ?? 12000
         battFullVoltage  = (try? c.decode(Double.self, forKey: .battFullVoltage)) ?? 90.3
         battEmptyVoltage = (try? c.decode(Double.self, forKey: .battEmptyVoltage)) ?? 63.0
+        textBrightness   = (try? c.decode(Double.self, forKey: .textBrightness)) ?? 1.0
     }
 
     static func load() -> AppTheme {
@@ -450,5 +461,28 @@ extension Color {
                       Int((r * 255).rounded()),
                       Int((g * 255).rounded()),
                       Int((b * 255).rounded()))
+    }
+
+    /// 按系数调整亮度
+    ///
+    /// 系数 > 1 时往白色方向提，< 1 时整体压暗。
+    /// 直接乘 RGB 会让暗色更暗、亮色更亮，色相基本保持。
+    func brightnessScaled(_ factor: Double) -> Color {
+        let f = min(max(factor, 0.05), 2.0)
+        if abs(f - 1.0) < 0.001 { return self }
+        let ui = UIColor(self)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getRed(&r, green: &g, blue: &b, alpha: &a) else { return self }
+        if f <= 1.0 {
+            // 压暗
+            return Color(.sRGB, red: r * f, green: g * f, blue: b * f, opacity: a)
+        }
+        // 提亮：往 1.0 插值，避免过曝后完全变白
+        let t = (f - 1.0) / 1.0
+        return Color(.sRGB,
+                     red: r + (1 - r) * t,
+                     green: g + (1 - g) * t,
+                     blue: b + (1 - b) * t,
+                     opacity: a)
     }
 }
