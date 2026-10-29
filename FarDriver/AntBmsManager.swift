@@ -270,11 +270,27 @@ extension AntBmsManager: CBCentralManagerDelegate {
         if discovered.contains(where: { $0.id == peripheral.identifier }) { return }
         discovered.append((id: peripheral.identifier, name: name.isEmpty ? "(未命名设备)" : name, rssi: RSSI.intValue))
         _ = looksLikeAnt
+
+        // ── 蓝牙记忆：搜到上次连过的 BMS 就自动连 ──
+        guard !connected,
+              self.peripheral == nil,
+              BluetoothMemory.autoConnectBms,
+              let lastID = BluetoothMemory.lastBmsID,
+              peripheral.identifier.uuidString == lastID else { return }
+
+        central.stopScan()
+        scanning = false
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        central.connect(peripheral, options: nil)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connected = true
         errorMsg = nil
+        // 记住这块 BMS，下次搜到自动连
+        BluetoothMemory.lastBmsID = peripheral.identifier.uuidString
+        BluetoothMemory.lastBmsName = peripheral.name ?? "ANT BMS"
         peripheral.discoverServices(nil)
     }
 

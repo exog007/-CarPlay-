@@ -704,6 +704,43 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("记住控制器，搜到就自动连",
+                           isOn: Binding(
+                            get: { BluetoothMemory.autoConnectController },
+                            set: { BluetoothMemory.autoConnectController = $0 }
+                           ))
+                    if let n = BluetoothMemory.lastControllerName, !n.isEmpty {
+                        HStack {
+                            Text("上次连接")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(n)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Toggle("记住 BMS，搜到就自动连",
+                           isOn: Binding(
+                            get: { BluetoothMemory.autoConnectBms },
+                            set: { BluetoothMemory.autoConnectBms = $0 }
+                           ))
+                    if let n = BluetoothMemory.lastBmsName, !n.isEmpty {
+                        HStack {
+                            Text("上次连接的 BMS")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(n)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("蓝牙记忆")
+                } footer: {
+                    Text("打开后，App 会记住上次连过的设备。下次进入 App 搜索时，一旦发现那台设备就自动连接，不用手动点。")
+                }
+
+                Section {
                     Toggle("自动上传（每 60 秒）", isOn: $mgr.autoUpload)
                 } header: {
                     Text("数据上传")

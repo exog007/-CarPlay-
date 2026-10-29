@@ -372,87 +372,109 @@ final class AntBmsDecoder {
         /// 每节的均衡标志（来自单体电压字节的高 3 位）
         var balFlags: [Bool] = []
 
-        // ── 1. 定串数 + 单体电压起点 ──
+        // ── 1. 自动定串数 + 单体电压起点 + 总电压位置 ──
         //
-        // 实测：不同帧的头部长度会变
-        //   数据长 175 → 单体起点 33
-        //   数据长 173 → 单体起点 33
-        //   数据长 ?   → 单体起点 39（前面多 3 个空槽）
+        // 核心思路：不猜任何偏移，用数学约束反推。
         //
-        // 光找「最长连续序列」不够 —— 骑行时会把后面的温度/容量数据也当成电压，
-        // 扫出 25 串、压差 1V 这种物理上不可能的结果。
+        //   ① 串数直接读 d[3]（BMS 自己报的，实测 0x15 = 21）
+        //   ② 对每个候选起点取 N 节电压
+        //   ③ 算这 N 节的合计，往后找总电压
+        //   ④ 只有「合计 ≈ 总电压」的起点才是真的
         //
-        // 所以用三个条件一起筛选：
-        //   ① 连续合理值数量多（至少 5 节）
-        //   ② 单体质本身要集中（压差 < 0.6V，正常电池都满足）
-        //   ③ 如果 BMS 配置报了串数，优先采用和它一致的
+        // 这样无论什么型号的保护板（16S/20S/21S/24S/25S...），
+        // 只要 BMS 在 d[3] 报了正确串数，就能自动对上。
+        let declaredCells = Int(d[3])
+        // 串数不合理时（0 或者超过 32）放弃 d[3]，改用扫描
+        let cellTarget = (declaredCells >= 4 && declaredCells <= 32) ? declaredCells : 0
+
         var cellCount = 0
-        var cellStart = 30
+        var cellStart = 28
+        var base = 0
+        var resolved = false
 
-        struct Candidate {
-            let start: Int
-            let count: Int
-            let spread: Double   // 单体压差
+        // 串数候选：优先用 d[3]，失败再上下浮动试几个
+        var countCandidates: [Int] = []
+        if cellTarget > 0 {
+            countCandidates = [cellTarget, cellTarget + 1, cellTarget - 1,
+                               cellTarget + 2, cellTarget - 2]
+        } else {
+            // 没报串数：12~28 全试
+            countCandidates = Array(12...28)
         }
-        var candidates: [Candidate] = []
 
-        for start in 20...50 {
-            let cnt = countValidCells(d, from: start)
-            guard cnt >= 5 else { continue }
-            // 算这一段的压差
-            var lo = 99999, hi = 0
-            for k in 0..<cnt {
-                let off = start + k * 2
-                if off + 1 >= d.count { break }
-                let hiByte = d[off + 1] & 0x1F
-                let mv = Int(d[off]) | (Int(hiByte) << 8)
-                lo = min(lo, mv)
-                hi = max(hi, mv)
+        for tryCount in countCandidates {
+            guard tryCount >= 4, tryCount <= 32 else { continue }
+            // 起点范围：头部最长见过 33，留点余量
+            for start in 20...36 {
+                guard start + tryCount * 2 <= d.count else { continue }
+
+                // 取 tryCount 节，逐个校验合理性
+                var cells: [Double] = []
+                var ok = true
+                for i in 0..<tryCount {
+                    let off = start + i * 2
+                    let mv = Int(d[off]) | (Int(d[off + 1] & 0x1F) << 8)
+                    // 单体合理范围放宽：2.0V ~ 5.0V（兼容 LFP 和三元、以及偏高/偏低）
+                    guard mv >= 2000 && mv <= 5000 else { ok = false; break }
+                    cells.append(Double(mv) / 1000.0)
+                }
+                guard ok else { continue }
+
+                let sum = cells.reduce(0, +)
+                guard sum > 10 else { continue }
+
+                // 在温度区之后找总电压
+                let tempStart = start + tryCount * 2
+                let maxOff = max(24, d.count - tempStart - 24)
+                for off in stride(from: 0, through: maxOff, by: 2) {
+                    let p = tempStart + off
+                    guard p + 21 < d.count else { break }
+                    let total = Double(readUInt16(d, p)) / 100.0
+                    guard total > 5 else { continue }
+                    // 合计和总电压差 < 0.3V 才算匹配
+                    if abs(total - sum) < 0.3 {
+                        cellStart = start
+                        cellCount = tryCount
+                        base = p
+                        resolved = true
+                        break
+                    }
+                }
+                if resolved { break }
             }
-            let spread = lo == 99999 ? 99999.0 : Double(hi - lo) / 1000.0
-            candidates.append(Candidate(start: start, count: cnt, spread: spread))
+            if resolved { break }
         }
 
-        // 优先选：压差正常（< 0.6V）且节数最多的
-        let normal = candidates.filter { $0.spread < 0.6 }
-        if let best = normal.max(by: { $0.count < $1.count }) {
-            cellStart = best.start
-            cellCount = best.count
-        } else if let best = candidates.max(by: { $0.count < $1.count }) {
-            // 全都不正常，退回最长的
-            cellStart = best.start
-            cellCount = best.count
-        }
-
-        // ── 方案 A：BMS 配置报了串数，就按它锁定 ──
-        // 这是最可靠的信息源，串数固定不变
-        if config.cellNumber > 0 {
-            let target = config.cellNumber
-            // 找出所有能容纳 target 节的起点，选压差最小的
-            let fits = candidates.filter { $0.count >= target }
-            if let best = fits.min(by: { $0.spread < $1.spread }) {
-                cellStart = best.start
-                cellCount = target
+        // 兜底：自校验全失败，退回老办法（扫描最长连续段）
+        if !resolved {
+            struct Candidate {
+                let start: Int
+                let count: Int
+                let spread: Double
             }
-        }
-        // ── 方案 B：用上次成功解析出来的串数（缓存）──
-        else if lastGoodCellCount > 0 {
-            let target = lastGoodCellCount
-            let fits = candidates.filter { $0.count >= target }
-            if let best = fits.min(by: { $0.spread < $1.spread }) {
-                cellStart = best.start
-                cellCount = target
+            var candidates: [Candidate] = []
+            for start in 20...40 {
+                let cnt = countValidCells(d, from: start)
+                guard cnt >= 5 else { continue }
+                var lo = 99999, hi = 0
+                for k in 0..<cnt {
+                    let off = start + k * 2
+                    guard off + 1 < d.count else { break }
+                    let mv = Int(d[off]) | (Int(d[off + 1] & 0x1F) << 8)
+                    lo = min(lo, mv)
+                    hi = max(hi, mv)
+                }
+                let spread = lo == 99999 ? 99999.0 : Double(hi - lo) / 1000.0
+                candidates.append(Candidate(start: start, count: cnt, spread: spread))
             }
-        }
-        // ── 方案 C：完全靠扫描，选压差正常且最长的 ──
-        else {
-            let normal = candidates.filter { $0.spread < 0.6 }
-            if let best = normal.max(by: { $0.count < $1.count }) {
+            if let best = candidates.filter({ $0.spread < 0.6 }).max(by: { $0.count < $1.count })
+                ?? candidates.max(by: { $0.count < $1.count }) {
                 cellStart = best.start
                 cellCount = best.count
-            } else if let best = candidates.max(by: { $0.count < $1.count }) {
-                cellStart = best.start
-                cellCount = best.count
+                let tempStart = cellStart + cellCount * 2
+                let tempCountFallback = Int(d[2])
+                let nT = (tempCountFallback > 0 && tempCountFallback <= 8) ? tempCountFallback : 4
+                base = tempStart + nT * 2 + 4
             }
         }
 
@@ -482,44 +504,54 @@ final class AntBmsDecoder {
         }
 
         // ── 2.5 温度传感器数量（BMS 自己报，不能写死）──
+        //
+        // d[2] 报的是温度传感器数量，但实测有对不上的情况（d[2]=4 却有 6 个温度），
+        // 所以温度个数 = 从温度区起点到总电压之间有多少个 2 字节槽。
         let tempCount = Int(d[2])
-        let nTemps = (tempCount > 0 && tempCount <= 8) ? tempCount : 4
+        let declaredTemps = (tempCount > 0 && tempCount <= 8) ? tempCount : 4
 
         /// 温度开始的位置 = 单体电压之后
         let tempStart = cellStart + cellCount * 2
 
-        // ── 2.6 动态推算总电压的位置 ──
+        // ── 2.6 温度个数 + 总电压位置 ──
         //
-        // 实测：不同帧的扩展头长度不一样
-        //   21 串（数据长 175）→ 总电压在 87
-        //   21 串（数据长 173）→ 总电压在 85
-        //   25 串 → 位置更靠后
-        //
-        // 不能写死，用「单体电压合计 ≈ 总电压」来反推。
-        // 关键：遍历**全部**候选取最接近的那个，而不是取第一个碰上的。
-        // 25 串时数据更长，搜索范围必须跟着放大，否则会误匹配到中间某段数据。
-        let cellSumMv = out.cells.reduce(0) { $0 + $1 } * 1000.0   // 转回 mV
-        let searchFrom = tempStart + nTemps * 2
-        var base = searchFrom + 4   // 默认布局兜底
-        var bestDiff = Double.greatestFiniteMagnitude
-
-        if cellSumMv > 1000 {
-            // 搜索范围跟着数据长度走：至少到帧尾前 24 字节
-            let maxOff = max(80, d.count - searchFrom - 24)
-            for off in stride(from: 0, through: maxOff, by: 2) {
-                let p = searchFrom + off
-                guard p + 21 < d.count else { break }   // 后面要读 cap/cycle，留够空间
-                let v = readUInt16(d, p)
-                guard v > 0 else { continue }
-                let volts = Double(v) / 100.0
-                let diff = abs(volts - cellSumMv / 1000.0)
-                // 误差 0.5V 以内才作为候选，取**最接近**的
-                if diff < 0.5 && diff < bestDiff {
-                    bestDiff = diff
-                    base = p
+        // base 已经在第①步的自校验里定好了（就是「合计 ≈ 总电压」匹配到的位置）。
+        // 温度区就是 tempStart 到 base 之间，每 2 字节一个。
+        var nTemps = declaredTemps
+        if resolved && base > tempStart {
+            let slots = (base - tempStart) / 2
+            // 合理范围 1~10 个；多出来的槽是 MOS 温度或其它字段
+            if slots >= 1 && slots <= 10 {
+                // 优先用 d[2] 报的数量，但不超过去重后的槽位
+                nTemps = min(declaredTemps, slots)
+                // d[2] 明显偏小时，用槽位数兜底（实测 d[2]=4 但有 6 个温度）
+                if declaredTemps < slots - 1 && slots <= 8 {
+                    nTemps = slots
+                }
+            }
+        } else if !resolved {
+            // 没校验成功：沿用老逻辑，在温度区后面重新找总电压
+            var bestDiff = Double.greatestFiniteMagnitude
+            let cellSumMv2 = out.cells.reduce(0) { $0 + $1 } * 1000.0
+            let searchFrom = tempStart + nTemps * 2
+            base = searchFrom + 4
+            if cellSumMv2 > 1000 {
+                let maxOff = max(80, d.count - searchFrom - 24)
+                for off in stride(from: 0, through: maxOff, by: 2) {
+                    let p = searchFrom + off
+                    guard p + 21 < d.count else { break }
+                    let v = readUInt16(d, p)
+                    guard v > 0 else { continue }
+                    let diff = abs(Double(v) / 100.0 - cellSumMv2 / 1000.0)
+                    if diff < 0.5 && diff < bestDiff {
+                        bestDiff = diff
+                        base = p
+                    }
                 }
             }
         }
+
+        let cellSumMv = out.cells.reduce(0) { $0 + $1 } * 1000.0
 
         // ── 3. 温度（nTemps 个）──
         var temps: [Int] = []

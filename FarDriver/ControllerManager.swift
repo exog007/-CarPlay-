@@ -360,12 +360,27 @@ extension ControllerManager: CBCentralManagerDelegate {
 
         // 只记录，不自动连接，由用户自己选
         discovered.append((id: peripheral.identifier, name: name, rssi: RSSI.intValue))
+
+        // ── 蓝牙记忆：搜到上次连过的设备就自动连 ──
+        guard autoConnect,
+              peripheral == nil,
+              BluetoothMemory.autoConnectController,
+              let lastID = BluetoothMemory.lastControllerID,
+              peripheral.identifier.uuidString == lastID else { return }
+
+        stopScan()
+        self.peripheral = peripheral
+        peripheral.delegate = self
+        central.connect(peripheral, options: nil)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let name = peripheral.name ?? "FarDriver"
         lastDeviceName = name
         status = .connected(name: name)
+        // 记住这台设备，下次搜到自动连
+        BluetoothMemory.lastControllerID = peripheral.identifier.uuidString
+        BluetoothMemory.lastControllerName = name
         // 连上了就清空搜索列表，界面更干净
         discovered.removeAll()
         // 发现所有服务，不限定 UUID
