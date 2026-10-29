@@ -279,12 +279,13 @@ struct SportDashView: View {
             .shadow(color: coolantLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
     }
 
-    /// 黄色电瓶故障灯（汽车小电瓶造型）
+    /// 黄色电瓶故障灯（汽车小电瓶造型，自己画的）
     private var batteryLamp: some View {
-        Image(systemName: "car.batteryblock")
-            .font(.system(size: 15))
-            .foregroundStyle(batteryLampOn ? lampYellow : amber.opacity(0.16))
+        CarBatteryIcon(size: 13,
+                       color: batteryLampOn ? lampYellow : lampYellow.opacity(0.16),
+                       lineWidth: 1.3)
             .shadow(color: batteryLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
+            .frame(width: 18, height: 15)
     }
 
     private func nowText() -> String {
