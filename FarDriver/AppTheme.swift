@@ -153,6 +153,22 @@ struct AppTheme: Codable, Equatable {
     var sportBgHex: String = "#000000"
     /// 竞技风格文字发光强度 0 ~ 1
     var sportGlow: Double = 0.6
+    /// 竞技风格背景图文件名（空 = 用纯色底）
+    var sportPhotoName: String = ""
+    /// 竞技背景图暗度 0 ~ 0.85
+    var sportPhotoDim: Double = 0.35
+    /// 竞技背景图模糊 0 ~ 20
+    var sportPhotoBlur: Double = 0
+
+    /// 转速显示倍率（原厂 100rpm 在竞技仪表上显示成 1000rpm）
+    var rpmMultiplier: Double = 10
+    /// 转速表满量程（按下显示后的刻度算）
+    var rpmScaleMax: Double = 12000
+
+    /// 电压电量表的满电阈值（V）
+    var battFullVoltage: Double = 90.3
+    /// 电压电量表的没电阈值（V）
+    var battEmptyVoltage: Double = 63.0
 
     /// 当前背景是不是浅色
     var isLightBackground: Bool {
@@ -221,6 +237,9 @@ struct AppTheme: Codable, Equatable {
         case photoFileName, photoBlur, photoDim
         case colorSlots, cardOpacity
         case dashStyle, sportBgHex, sportGlow
+        case sportPhotoName, sportPhotoDim, sportPhotoBlur
+        case rpmMultiplier, rpmScaleMax
+        case battFullVoltage, battEmptyVoltage
     }
 
     init(from decoder: Decoder) throws {
@@ -238,6 +257,13 @@ struct AppTheme: Codable, Equatable {
         dashStyle      = (try? c.decode(DashStyle.self, forKey: .dashStyle)) ?? .standard
         sportBgHex     = (try? c.decode(String.self, forKey: .sportBgHex)) ?? "#000000"
         sportGlow      = (try? c.decode(Double.self, forKey: .sportGlow)) ?? 0.6
+        sportPhotoName = (try? c.decode(String.self, forKey: .sportPhotoName)) ?? ""
+        sportPhotoDim  = (try? c.decode(Double.self, forKey: .sportPhotoDim)) ?? 0.35
+        sportPhotoBlur = (try? c.decode(Double.self, forKey: .sportPhotoBlur)) ?? 0
+        rpmMultiplier  = (try? c.decode(Double.self, forKey: .rpmMultiplier)) ?? 10
+        rpmScaleMax    = (try? c.decode(Double.self, forKey: .rpmScaleMax)) ?? 12000
+        battFullVoltage  = (try? c.decode(Double.self, forKey: .battFullVoltage)) ?? 90.3
+        battEmptyVoltage = (try? c.decode(Double.self, forKey: .battEmptyVoltage)) ?? 63.0
     }
 
     static func load() -> AppTheme {
@@ -285,6 +311,50 @@ enum BackgroundImageStore {
     }
 
     /// 读图
+    static func load() -> UIImage? {
+        guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    static func delete() {
+        guard let url = fileURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    static var exists: Bool {
+        guard let url = fileURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+}
+
+// MARK: - 竞技风格背景图存取
+//
+// 和普通背景图分开存：Documents/sport-bg.jpg
+// 这样切换风格时两张图互不干扰。
+
+enum SportBackgroundStore {
+
+    static var fileURL: URL? {
+        guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return dir.appendingPathComponent("sport-bg.jpg")
+    }
+
+    @discardableResult
+    static func save(_ image: UIImage) -> Bool {
+        guard let url = fileURL else { return false }
+        // 横屏铺满，最长边 2400 足够
+        let scaled = image.resized(maxSide: 2400)
+        guard let data = scaled.jpegData(compressionQuality: 0.88) else { return false }
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     static func load() -> UIImage? {
         guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { return nil }
         return UIImage(contentsOfFile: url.path)

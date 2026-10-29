@@ -15,11 +15,18 @@ struct AppearanceView: View {
     @State private var photoBusy = false
     @State private var showPhotoError = false
 
+    /// 竞技风格背景图
+    @State private var sportPickItem: PhotosPickerItem?
+    @State private var sportPhotoBusy = false
+
     var body: some View {
         NavigationStack {
             List {
                 dashStyleSection
                 sportSection
+                sportPhotoSection
+                rpmSection
+                batterySection
                 previewSection
                 backgroundTypeSection
                 backgroundDetailSection
@@ -39,6 +46,10 @@ struct AppearanceView: View {
             .onChange(of: pickedItem) { _, item in
                 guard let item else { return }
                 loadPickedPhoto(item)
+            }
+            .onChange(of: sportPickItem) { _, item in
+                guard let item else { return }
+                loadSportPhoto(item)
             }
             .alert("图片读取失败", isPresented: $showPhotoError) {
                 Button("好", role: .cancel) { }
@@ -66,6 +77,26 @@ struct AppearanceView: View {
                 await MainActor.run { showPhotoError = true }
             }
             await MainActor.run { pickedItem = nil }
+        }
+    }
+
+    /// 从相册取图并设为竞技风格背景
+    private func loadSportPhoto(_ item: PhotosPickerItem) {
+        sportPhotoBusy = true
+        Task {
+            defer {
+                Task { @MainActor in sportPhotoBusy = false }
+            }
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let img = UIImage(data: data) else {
+                await MainActor.run { showPhotoError = true }
+                return
+            }
+            let ok = await MainActor.run { themeMgr.setSportPhoto(img) }
+            if !ok {
+                await MainActor.run { showPhotoError = true }
+            }
+            await MainActor.run { sportPickItem = nil }
         }
     }
 
@@ -146,6 +177,200 @@ struct AppearanceView: View {
             Text("底色建议深色（纯黑/深灰），文字和线框的颜色跟下面「仪表颜色」里的「功率」和「转速」走。")
                 .font(.caption2)
         }
+    }
+
+    // MARK: - 竞技：背景图
+
+    private var sportPhotoSection: some View {
+        Section {
+            // 预览缩略图
+            if let img = themeMgr.sportPhotoImage {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 110)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            }
+
+            PhotosPicker(selection: $sportPickItem, matching: .images) {
+                HStack {
+                    Image(systemName: "photo.badge.plus")
+                        .foregroundStyle(themeMgr.color(.power))
+                    Text(themeMgr.sportPhotoImage == nil ? "给竞技仪表换背景图" : "换一张图片")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    if sportPhotoBusy {
+                        ProgressView().scaleEffect(0.8)
+                    }
+                }
+            }
+
+            if themeMgr.sportPhotoImage != nil {
+                Button(role: .destructive) {
+                    themeMgr.clearSportPhoto()
+                } label: {
+                    Label("删掉图片，用纯色底", systemImage: "trash")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("图片暗度")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.0f%%", themeMgr.theme.sportPhotoDim * 100))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Slider(value: Binding(
+                        get: { themeMgr.theme.sportPhotoDim },
+                        set: { themeMgr.theme.sportPhotoDim = $0 }
+                    ), in: 0...0.85)
+                    .tint(themeMgr.color(.power))
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("图片模糊")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.0f", themeMgr.theme.sportPhotoBlur))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Slider(value: Binding(
+                        get: { themeMgr.theme.sportPhotoBlur },
+                        set: { themeMgr.theme.sportPhotoBlur = $0 }
+                    ), in: 0...20)
+                    .tint(themeMgr.color(.power))
+                }
+            }
+        } header: {
+            Text("竞技背景图")
+        } footer: {
+            Text("竞技仪表可以用图片当背景，和上面「背景类型」里的图片互不影响。暗度调高一点，琥珀色数字更清楚。")
+                .font(.caption2)
+        }
+    }
+
+    // MARK: - 转速显示
+
+    private var rpmSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("转速倍率")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    Text(String(format: "×%.0f", themeMgr.theme.rpmMultiplier))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(themeMgr.color(.power))
+                }
+                Slider(value: Binding(
+                    get: { themeMgr.theme.rpmMultiplier },
+                    set: { themeMgr.theme.rpmMultiplier = $0 }
+                ), in: 1...20, step: 1)
+                .tint(themeMgr.color(.power))
+                Text("原厂报 \(Int(mgrRpmSample)) rpm ✕ \(Int(themeMgr.theme.rpmMultiplier)) = 显示 \(Int(mgrRpmSample * themeMgr.theme.rpmMultiplier)) rpm")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("转速表满量程")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    Text("\(Int(themeMgr.theme.rpmScaleMax)) rpm")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(themeMgr.secondary)
+                }
+                Slider(value: Binding(
+                    get: { themeMgr.theme.rpmScaleMax },
+                    set: { themeMgr.theme.rpmScaleMax = $0 }
+                ), in: 4000...30000, step: 1000)
+                .tint(themeMgr.color(.rpm))
+            }
+        } header: {
+            Text("转速显示")
+        } footer: {
+            Text("竞技仪表上的转速 = 原厂转速 × 倍率。原厂报 100 rpm，倍率 10 就显示 1000 rpm。满量程决定刻度条跑满时对应多少。")
+                .font(.caption2)
+        }
+    }
+
+    /// 示例用的原厂转速
+    private var mgrRpmSample: Double { 100 }
+
+    // MARK: - 电量表
+
+    private var batterySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("满电电压")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    Text(String(format: "%.1f V", themeMgr.theme.battFullVoltage))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(themeMgr.color(.ok))
+                }
+                Slider(value: Binding(
+                    get: { themeMgr.theme.battFullVoltage },
+                    set: { themeMgr.theme.battFullVoltage = $0 }
+                ), in: 20...120, step: 0.1)
+                .tint(themeMgr.color(.ok))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("没电电压")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    Text(String(format: "%.1f V", themeMgr.theme.battEmptyVoltage))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(themeMgr.color(.warn))
+                }
+                Slider(value: Binding(
+                    get: { themeMgr.theme.battEmptyVoltage },
+                    set: { themeMgr.theme.battEmptyVoltage = $0 }
+                ), in: 10...110, step: 0.1)
+                .tint(themeMgr.color(.warn))
+            }
+
+            // 当前电压换算示例
+            HStack {
+                Text("当前电压")
+                    .foregroundStyle(themeMgr.foreground)
+                Spacer()
+                Text(String(format: "%.1f V", sampleVoltage))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(themeMgr.secondary)
+                Text("→")
+                    .foregroundStyle(themeMgr.secondary)
+                Text("\(Int(BatteryPercent.compute(voltage: sampleVoltage,
+                                                full: themeMgr.theme.battFullVoltage,
+                                                empty: themeMgr.theme.battEmptyVoltage) * 100))%")
+                    .font(.caption.bold().monospacedDigit())
+                    .foregroundStyle(themeMgr.color(.ok))
+            }
+        } header: {
+            Text("仪表电量表")
+        } footer: {
+            Text("竞技仪表右下角的指针表按这两个阈值线性换算：满电压 = 100%，没电电压 = 0%。21 串三元锂建议满 90.3V / 没电 63V。")
+                .font(.caption2)
+        }
+    }
+
+    /// 当前控制器电压（没连就用满电值做示例）
+    private var sampleVoltage: Double {
+        let v = ControllerManager.shared.data.voltage
+        return v > 1 ? v : themeMgr.theme.battFullVoltage
     }
 
     // MARK: - 预览

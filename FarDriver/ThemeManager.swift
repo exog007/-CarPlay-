@@ -19,14 +19,39 @@ final class ThemeManager: ObservableObject {
     /// 缓存解码后的图片，避免每次刷新都重新读盘
     @Published private(set) var photoImage: UIImage?
 
+    /// 竞技风格的独立背景图（和普通背景图分开）
+    @Published private(set) var sportPhotoImage: UIImage?
+
     private init() {
         theme = AppTheme.load()
         reloadPhoto()
+        reloadSportPhoto()
     }
 
     /// 重新从磁盘读背景图
     func reloadPhoto() {
         photoImage = BackgroundImageStore.load()
+    }
+
+    /// 重新读竞技风格背景图
+    func reloadSportPhoto() {
+        sportPhotoImage = SportBackgroundStore.load()
+    }
+
+    /// 换竞技风格背景图
+    @discardableResult
+    func setSportPhoto(_ image: UIImage) -> Bool {
+        guard SportBackgroundStore.save(image) else { return false }
+        reloadSportPhoto()
+        theme.sportPhotoName = "sport-bg.jpg"
+        return true
+    }
+
+    /// 清掉竞技风格背景图，退回纯色底
+    func clearSportPhoto() {
+        SportBackgroundStore.delete()
+        sportPhotoImage = nil
+        theme.sportPhotoName = ""
     }
 
     /// 换一张背景图并切到图片模式
