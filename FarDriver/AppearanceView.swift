@@ -353,9 +353,7 @@ struct AppearanceView: View {
                     .foregroundStyle(themeMgr.secondary)
                 Text("→")
                     .foregroundStyle(themeMgr.secondary)
-                Text("\(Int(BatteryPercent.compute(voltage: sampleVoltage,
-                                                full: themeMgr.theme.battFullVoltage,
-                                                empty: themeMgr.theme.battEmptyVoltage) * 100))%")
+                Text(samplePercentText)
                     .font(.caption.bold().monospacedDigit())
                     .foregroundStyle(themeMgr.color(.ok))
             }
@@ -371,6 +369,14 @@ struct AppearanceView: View {
     private var sampleVoltage: Double {
         let v = ControllerManager.shared.data.voltage
         return v > 1 ? v : themeMgr.theme.battFullVoltage
+    }
+
+    /// 用示例电压算出来的百分比文字
+    private var samplePercentText: String {
+        let pct = BatteryPercent.compute(voltage: sampleVoltage,
+                                         full: themeMgr.theme.battFullVoltage,
+                                         empty: themeMgr.theme.battEmptyVoltage)
+        return "\(Int(pct * 100))%"
     }
 
     // MARK: - 预览
