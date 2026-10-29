@@ -471,7 +471,7 @@ struct SportDashView: View {
                         .offset(x: -6)
                 }
                 fuelGauge
-                    .frame(width: 84, height: 150)
+                    .frame(width: 72, height: 116)
             }
         }
         .frame(maxHeight: .infinity)
@@ -578,30 +578,27 @@ struct SportDashView: View {
             Canvas { ctx, size in
                 drawFuelGauge(ctx: &ctx, size: size)
             }
-            .frame(width: 84, height: 150)
+            .frame(width: 72, height: 116)
 
             // 加油灯：左上角（和参考图一致）
             fuelWarningLamp
-                .offset(x: 2, y: 0)
         }
-        .frame(width: 84, height: 150, alignment: .topLeading)
+        .frame(width: 72, height: 116, alignment: .topLeading)
     }
 
     /// 画扇形油表（参考图布局）
     ///
-    /// 圆心在左侧偏下，弧从圆心向右侧拱出。
-    /// 角度：向上 -90° 附近是 F，向下 +90° 附近是 E。
+    /// 尺寸固化，不依赖父容器给的尺寸，避免被压扁或裁掉上半截。
+    /// 整块画在 72 × 116 里：
+    ///   弧顶 y≈19，弧底 y≈93，F/E 字在 8~108 之间，全部在框内。
     private func drawFuelGauge(ctx: inout GraphicsContext, size: CGSize) {
-        let w = size.width
-        let h = size.height
-        // 圆心：靠左，垂直方向略偏下（参考图 E 那头更长）
+        // 圆心固定在左侧，垂直居中
         let cx: CGFloat = 8
-        let cy: CGFloat = h * 0.55
-        // 半径：受宽度限制，高度方向留 E/F 标签空间
-        let r = min(w - 20, h * 0.42)
+        let cy: CGFloat = 58
+        // 半径：让弧上下都留出标签空间
+        let r: CGFloat = 46
 
-        // t=0 → F（-62°，右上方），t=1 → E（+62°，右下方）
-        // 中间经过 0°（正右），总扫角 124°
+        // t=0 → F（-55°，右上方），t=1 → E（+55°，右下方），扫角 110°
         let startDeg: Double = -55
         let sweepDeg: Double = 110
         func point(at t: Double, radius: Double) -> CGPoint {
@@ -637,16 +634,15 @@ struct SportDashView: View {
         }
 
         // ③ 刻度：全部在弧内侧，朝圆心方向伸
-        // 参考图：F 旁一根长的斜刻度，中间两根短的，E 旁一根长的
         let tickTs: [(t: Double, len: CGFloat, width: CGFloat)] = [
-            (0.06, 11, 2.6),   // F 旁长刻度
-            (0.38, 7, 2.2),    // 中上短刻度
-            (0.62, 7, 2.2),    // 中下短刻度
-            (0.94, 11, 2.6),   // E 旁长刻度
+            (0.06, 9, 2.4),    // F 旁长刻度
+            (0.38, 5.5, 2.0),  // 中上短刻度
+            (0.62, 5.5, 2.0),  // 中下短刻度
+            (0.94, 9, 2.4),    // E 旁长刻度
         ]
         for tick in tickTs {
-            let p1 = point(at: tick.t, radius: r - 3)
-            let p2 = point(at: tick.t, radius: r - 3 - Double(tick.len))
+            let p1 = point(at: tick.t, radius: r - 2.5)
+            let p2 = point(at: tick.t, radius: r - 2.5 - Double(tick.len))
             var tp = Path()
             tp.move(to: p1)
             tp.addLine(to: p2)
@@ -655,29 +651,27 @@ struct SportDashView: View {
         }
 
         // ④ F / E 标签：放到弧外侧，彻底避开指针
-        let fPos = point(at: 0.00, radius: r + 13)
-        let ePos = point(at: 1.00, radius: r + 13)
+        let fPos = point(at: 0.00, radius: r + 10)
+        let ePos = point(at: 1.00, radius: r + 10)
         ctx.draw(
-            Text("F").font(.system(size: 13, weight: .bold, design: .rounded))
+            Text("F").font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(amber),
             at: fPos
         )
         ctx.draw(
-            Text("E").font(.system(size: 13, weight: .bold, design: .rounded))
+            Text("E").font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(amber),
             at: ePos
         )
 
         // ⑤ 红色宽指针：从圆心指向当前电量
         //
-        // 限制：指针末端不能超过两端的长刻度线。
-        // 长刻度在内侧从 (r-3) 伸到 (r-3-len)，所以指针最远只能到 r-3-len 左右。
-        // 取两端长刻度里更靠内的那个作为上限，保证 0% 和 100% 都不越界。
-        let tickOuter = r - 3                        // 刻度起点（贴弧）
-        let longTickLen: CGFloat = 11
-        let needleLen = tickOuter - longTickLen + 3  // 停在长刻度内端附近
+        // 指针末端限制在长刻度内侧，保证 0% / 100% 都不越过刻度线。
+        let tickOuter = r - 2.5          // 刻度起点（贴弧）
+        let longTickLen: CGFloat = 9
+        let needleLen = tickOuter - longTickLen + 3
 
-        // 角度收一点：0%/100% 各让出 3°，避免指针压到两端的长刻度
+        // 角度收 3°，避免压到两端的长刻度
         let angleStart = startDeg + 3
         let angleSweep = sweepDeg - 6
         let angleDeg = angleStart + angleSweep * (1 - batteryPercent)
@@ -685,7 +679,7 @@ struct SportDashView: View {
 
         let tip = CGPoint(x: cx + CGFloat(cos(rad)) * needleLen,
                           y: cy + CGFloat(sin(rad)) * needleLen)
-        // 根部：从圆心开始，粗 6.5pt
+        // 根部：从圆心开始，粗
         let rootLen = needleLen * 0.42
         let rootEnd = CGPoint(x: cx + CGFloat(cos(rad)) * rootLen,
                               y: cy + CGFloat(sin(rad)) * rootLen)
@@ -693,14 +687,14 @@ struct SportDashView: View {
         rootPath.move(to: CGPoint(x: cx, y: cy))
         rootPath.addLine(to: rootEnd)
         ctx.stroke(rootPath, with: .color(red),
-                   style: StrokeStyle(lineWidth: 6.5, lineCap: .round))
+                   style: StrokeStyle(lineWidth: 6, lineCap: .round))
 
-        // 尖端：续接，细 3pt
+        // 尖端：续接，细
         var tipPath = Path()
         tipPath.move(to: rootEnd)
         tipPath.addLine(to: tip)
         ctx.stroke(tipPath, with: .color(red),
-                   style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                   style: StrokeStyle(lineWidth: 2.8, lineCap: .round))
 
         // ⑥ 圆心小点
         let hub = CGRect(x: cx - 2, y: cy - 2, width: 4, height: 4)
