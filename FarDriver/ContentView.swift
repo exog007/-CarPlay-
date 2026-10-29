@@ -15,14 +15,6 @@ struct ContentView: View {
     @State private var showBms = false
     @State private var landscapeRequested = false
 
-    /// 挂 P 档后还没动过
-    @State private var movedSincePark = false    /// 什么时候开始静止的（用来做 1.5 秒判定）
-    @State private var stoppedAt: Date?
-    /// 静止满 1.5 秒后翻一次身，强制重算界面，让 P 亮起来
-    @State private var parkSettled = false
-    /// 1.5 秒静止判定的计时器
-    @State private var parkTimer: Timer?
-
     /// 最终显示的车速：控制器轮速和 GPS 融合
     private var displaySpeed: Double {
         gps.fused(with: mgr.data.speed)
@@ -30,48 +22,11 @@ struct ContentView: View {
 
     /// 是不是 P 档
     ///
-    /// 判断顺序：
-    ///   1. 没连上 → 不算 P
-    ///   2. 车在动（有速度或有电流）→ 立刻退出 P
-    ///   3. 还没静止满 1.5 秒 → 还不算 P
-    ///   4. 静止满 1.5 秒 → 算 P
+    /// 直接读控制器上报的 P 档状态（0xE2 的 p[0] bit0），
+    /// 不再靠速度/电流推断。删掉原来的 1.5 秒静止计时逻辑。
     private var isParked: Bool {
-        guard mgr.status.isConnected else { return false }
-        let moving = displaySpeed >= 1.0 || abs(mgr.data.current) >= 0.5
-        if moving { return false }
-        return parkSettled
-    }
-
-    /// 每收到一次控制器数据就刷新一次静止计时
-    ///
-    /// 车速掉到 0 和「静止满 1.5 秒」是两个不同时刻：
-    /// 前者有可能再也不会有新数据推送，所以不能只靠数据驱动，
-    /// 必须挂一个计时器在 1.5 秒后自己触发一次重绘。
-    private func updateParkState() {
-        let moving = displaySpeed >= 1.0 || abs(mgr.data.current) >= 0.5
-
-        if moving {
-            movedSincePark = true
-            stoppedAt = nil
-            parkSettled = false
-            parkTimer?.invalidate()
-            parkTimer = nil
-            return
-        }
-
-        // 已经在静止状态，且已经结算过 P，就不用再挂计时器
-        if parkSettled { return }
-
-        // 刚开始静止：记时间，1.5 秒后结算
-        if stoppedAt == nil {
-            stoppedAt = Date()
-            parkTimer?.invalidate()
-            parkTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
-                DispatchQueue.main.async {
-                    parkSettled = true
-                }
-            }
-        }
+        guard mgr.status.isConnected, mgr.data.e2Seen else { return false }
+        return mgr.data.pGearOn
     }
 
     var body: some View {
@@ -180,20 +135,6 @@ struct ContentView: View {
             .onDisappear {
                 // 离开主界面时恢复系统自动息屏，别把电耗光
                 UIApplication.shared.isIdleTimerDisabled = false
-            }
-            // 控制器每来一帧数据就刷新一次 P 档判定
-            .onChange(of: mgr.data) { _, _ in
-                updateParkState()
-            }
-            // 断开连接时把 P 档状态清掉
-            .onChange(of: mgr.status) { _, newValue in
-                if !newValue.isConnected {
-                    parkTimer?.invalidate()
-                    parkTimer = nil
-                    stoppedAt = nil
-                    parkSettled = false
-                    movedSincePark = false
-                }
             }
         }
     }

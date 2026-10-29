@@ -488,9 +488,13 @@ struct SportDashView: View {
         return bms.connected
     }
 
+    /// P 档：直接读控制器上报的状态（0xE2 的 p[0] bit0）
+    ///
+    /// 实测：挂入 P 时 p[0] = 0x80，解除时 p[0] = 0x81。
+    /// 不再靠「速度 + 电流」猜，滑行和坡道溜车都不会再误判。
     private var isParked: Bool {
-        guard mgr.status.isConnected else { return false }
-        return speed < 1.0 && abs(mgr.data.current) < 0.5
+        guard mgr.status.isConnected, mgr.data.e2Seen else { return false }
+        return mgr.data.pGearOn
     }
 
     // MARK: - BMS 保护板 MOS 温度

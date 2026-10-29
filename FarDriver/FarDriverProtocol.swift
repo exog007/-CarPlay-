@@ -35,8 +35,14 @@ struct ControllerData: Codable, Equatable {
     var eePinBit: Int = -1
     /// 0xE2 帧原始 12 字节（调试用）
     var e2Raw: String = ""
-    /// 0xE2 的 p[0] 原始值（档位/方向都在这一个字节里）
+    /// 0xE2 的 p[0] 原始值（档位/方向/P 档都在这一个字节里）
     var e2Byte0: Int = -1
+    /// P 档是否挂入（来自 0xE2 的 p[0] bit0）
+    ///
+    /// 实测：挂入 P 时 p[0] = 0x80（bit0 = 0），解除时 p[0] = 0x81（bit0 = 1）
+    var pGearOn: Bool = false
+    /// 有没有收到过 0xE2 帧（判断 pGearOn 是否可信）
+    var e2Seen: Bool = false
     var updatedAt: Date = Date()
 
     /// 有没有故障：只有解析出明确故障位才算
@@ -103,7 +109,10 @@ final class FarDriverDecoder {
             // 档位 + 转速
             data.gear = Int((p[0] >> 2) & 0b11) + 1
             data.rawRpm = Int16(bitPattern: (UInt16(p[7]) << 8) | UInt16(p[6]))
-            // 调试：保留原始字节，用来定位 P 档
+            // P 档：p[0] 的 bit0，0 = 挂入 P，1 = 解除
+            // 实测：P 档 p[0]=0x80，解除 p[0]=0x81
+            data.pGearOn = (p[0] & 0x01) == 0
+            data.e2Seen = true
             data.e2Byte0 = Int(p[0])
             data.e2Raw = Self.hex(p, count: 12)
 
