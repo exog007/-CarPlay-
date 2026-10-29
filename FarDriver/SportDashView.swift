@@ -5,9 +5,11 @@
 //  - 纯黑底（或自定义图片）+ 琥珀色单色线框
 //  - 转速按用户设置的倍率放大显示（原厂 100rpm → 1000rpm）
 //  - 右下角指针式电量表，按电压阈值算百分比
+//  - 没连控制器时进自检模式：故障灯全亮呼吸闪烁
 //
 
 import SwiftUI
+import Combine
 
 struct SportDashView: View {
     @ObservedObject var mgr: ControllerManager
@@ -46,14 +48,22 @@ struct SportDashView: View {
 
     // MARK: - 故障灯状态
 
+    /// 自检模式：还没连上控制器时，所有灯全亮
+    ///
+    /// 这是老车/新车的自检行为——点火瞬间所有灯亮一遍，确认灯本身没坏。
+    /// 连上控制器后立刻切到正常模式，按真实数据决定谁亮。
+    private var inSelfTest: Bool { !mgr.status.isConnected }
+
     /// 电瓶故障灯：电量低于 26%
     private var batteryLampOn: Bool {
-        mgr.status.isConnected && batteryPercent < 0.26
+        if inSelfTest { return true }
+        return batteryPercent < 0.26
     }
 
     /// 水温故障灯：MOS 温度高于 50°C
     private var coolantLampOn: Bool {
-        mgr.status.isConnected && mgr.data.mosTemp > 50
+        if inSelfTest { return true }
+        return mgr.data.mosTemp > 50
     }
 
     /// 刹车灯：松开灭
@@ -63,10 +73,15 @@ struct SportDashView: View {
     ///   - 单帧掉 2.5 km/h 以上认为在刹车
     ///   - 一旦不再掉速（松开刹车 / 重新加速）立刻灭
     /// 想要精确的刹车灯，需要抓一帧「捏着刹车」的原始数据来对位偏移。
-    private var brakeLampOn: Bool { brakeActive }
+    private var brakeLampOn: Bool {
+        if inSelfTest { return true }
+        return brakeActive
+    }
 
     @State private var lastSpeed: Double = 0
     @State private var brakeActive = false
+    /// 自检闪烁相位
+    @State private var pulsePhase: Double = 0
 
     var body: some View {
         VStack(spacing: 6) {
@@ -82,6 +97,10 @@ struct SportDashView: View {
         }
         .onAppear {
             weather.refreshIfNeeded()
+        }
+        // 自检模式下让灯呼吸闪，用时间线驱动
+        .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
+            tickPulse()
         }
     }
 
@@ -145,8 +164,17 @@ struct SportDashView: View {
                         Text("车辆状态诊断")
                             .font(.system(size: 13, weight: .heavy))
                             .foregroundStyle(amber)
-                        // 连上控制器后，在标题旁边亮「正常」
-                        if mgr.status.isConnected {
+                        // 连上控制器后显示「正常」，没连上显示「自检中」
+                        if inSelfTest {
+                            Text("自检中")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(themeMgr.color(.power))
+                                .clipShape(RoundedRectangle(cornerRadius: 2))
+                                .opacity(pulseOpacity)
+                        } else {
                             Text("正常")
                                 .font(.system(size: 9, weight: .heavy))
                                 .foregroundStyle(.black)
@@ -177,19 +205,32 @@ struct SportDashView: View {
 
             Spacer(minLength: 6)
 
-            // 三个故障灯
+            // 三个故障灯：自检时全亮呼吸闪烁，连上后按真实状态
             HStack(spacing: 5) {
                 brakeLamp
                 coolantLamp
                 batteryLamp
             }
+            .opacity(inSelfTest ? pulseOpacity : 1.0)
 
             Spacer(minLength: 4)
 
-            dashPill("DIAGNOSTIC", on: mgr.status.isConnected)
+            dashPill("DIAGNOSTIC", on: !inSelfTest)
             dashPill("SETTINGS", on: true)
         }
         .frame(height: 30)
+    }
+
+    /// 自检模式的呼吸闪烁透明度
+    private var pulseOpacity: Double {
+        guard inSelfTest else { return 1.0 }
+        return 0.45 + 0.55 * (0.5 + 0.5 * sin(pulsePhase))
+    }
+
+    /// 每帧更新相位（自检模式下指示灯呼吸）
+    private func tickPulse() {
+        guard inSelfTest else { return }
+        pulsePhase += 0.18
     }
 
     // MARK: - 天气块
@@ -215,29 +256,33 @@ struct SportDashView: View {
     }
 
     // MARK: - 故障灯
+    //
+    // 自检模式灯全亮，正常模式灯灭/亮看真实数据。
 
     /// 红色刹车启动灯（圆圈 + 感叹号）
     private var brakeLamp: some View {
         Image(systemName: "exclamationmark.circle.fill")
             .font(.system(size: 15))
             .foregroundStyle(brakeLampOn ? red : red.opacity(0.16))
-            .shadow(color: brakeLampOn ? red.opacity(0.8) : .clear, radius: 4)
+            .shadow(color: brakeLampOn ? red.opacity(0.9) : .clear, radius: 4)
     }
 
     /// 黄色水温故障灯（温度计 + 水波）
     private var coolantLamp: some View {
         Image(systemName: "thermometer.medium")
             .font(.system(size: 14))
-            .foregroundStyle(coolantLampOn ? themeMgr.color(.mosTemp) : themeMgr.color(.mosTemp).opacity(0.16))
-            .shadow(color: coolantLampOn ? themeMgr.color(.mosTemp).opacity(0.8) : .clear, radius: 4)
+            .foregroundStyle(coolantLampOn ? themeMgr.color(.mosTemp)
+                                           : themeMgr.color(.mosTemp).opacity(0.16))
+            .shadow(color: coolantLampOn ? themeMgr.color(.mosTemp).opacity(0.9) : .clear, radius: 4)
     }
 
     /// 黄色电瓶故障灯
     private var batteryLamp: some View {
         Image(systemName: "battery.25percent")
             .font(.system(size: 15))
-            .foregroundStyle(batteryLampOn ? themeMgr.color(.voltage) : themeMgr.color(.voltage).opacity(0.16))
-            .shadow(color: batteryLampOn ? themeMgr.color(.voltage).opacity(0.8) : .clear, radius: 4)
+            .foregroundStyle(batteryLampOn ? themeMgr.color(.voltage)
+                                           : themeMgr.color(.voltage).opacity(0.16))
+            .shadow(color: batteryLampOn ? themeMgr.color(.voltage).opacity(0.9) : .clear, radius: 4)
     }
 
     private func nowText() -> String {
