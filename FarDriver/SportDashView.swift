@@ -466,7 +466,7 @@ struct SportDashView: View {
                     bmsMosTempBlock
                 }
                 fuelGauge
-                    .frame(width: 92, height: 62)
+                    .frame(width: 78, height: 78)
             }
         }
         .frame(maxHeight: .infinity)
@@ -552,74 +552,121 @@ struct SportDashView: View {
     }
 
     // MARK: - 指针式电量表
+    //
+    // 造型按参考图：
+    //   - 左粗右细的弧形轨道，开口朝左
+    //   - 极简刻度：F 上方一根长刻度，中间两根短刻度，E 下方一根长刻度
+    //   - 红色宽指针，根部粗、尖端细，超出轨道一点
+    //   - 电量低于 30% 时左上角亮起加油灯
+
+    /// 轨道起始角：E 在下方，F 在上方。
+    /// SwiftUI 的 0° 指向右侧，顺时针为正。
+    /// F 用 -50°（右上方），E 用 130°（左下方），总共 180°。
+    private let gaugeStart: Double = 130    // E
+    private let gaugeSweep: Double = 180    // 到 F
+
+    /// 指针角度：0% → E(130°)，100% → F(-50°=310°)
+    private var needleAngle: Double {
+        gaugeStart - gaugeSweep * batteryPercent
+    }
+
+    /// 加油灯：低于 30%
+    private var fuelLampOn: Bool {
+        if inSelfTest { return true }
+        return batteryPercent < 0.30
+    }
 
     private var fuelGauge: some View {
         ZStack {
-            // 表盘弧：从 150° 开始顺时针扫 240°
-            Circle()
-                .trim(from: 0, to: 0.667)
-                .stroke(amber.opacity(0.18),
-                        style: StrokeStyle(lineWidth: 5, lineCap: .butt))
-                .rotationEffect(.degrees(150))
-            // 当前电量
-            Circle()
-                .trim(from: 0, to: 0.667 * batteryPercent)
-                .stroke(batteryColor,
-                        style: StrokeStyle(lineWidth: 5, lineCap: .butt))
-                .rotationEffect(.degrees(150))
-                .animation(.easeOut(duration: 0.3), value: batteryPercent)
+            // ① 轨道：左粗右细
+            GaugeTrack(start: gaugeStart, sweep: gaugeSweep)
+                .stroke(amber, lineWidth: 3)
+                .mask(
+                    // 用渐变控制粗细：靠近 E 一端粗，靠近 F 一端细
+                    GaugeTrack(start: gaugeStart, sweep: gaugeSweep)
+                        .stroke(
+                            LinearGradient(
+                                colors: [.black, .black.opacity(0.55)],
+                                startPoint: .bottomLeading,
+                                endPoint: .topTrailing
+                            ),
+                            style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                        )
+                )
 
-            // 刻度线：i=0 在 E（150°），i=10 在 F（150+240=390°）
-            ForEach(0..<11, id: \.self) { i in
-                Rectangle()
-                    .fill(amber.opacity(i % 5 == 0 ? 0.55 : 0.25))
-                    .frame(width: i % 5 == 0 ? 1.5 : 1, height: i % 5 == 0 ? 6 : 3.5)
-                    .offset(y: -30)
-                    .rotationEffect(.degrees(150 + Double(i) * 24))
+            // ② 已用油量：从 E 到当前的电量弧（细一号，压在轨道上）
+            GaugeTrack(start: gaugeStart, sweep: gaugeSweep * batteryPercent)
+                .stroke(batteryColor.opacity(0.35), lineWidth: 2)
+
+            // ③ 刻度
+            ForEach(gaugeTicks, id: \.angle) { tick in
+                Capsule()
+                    .fill(amber)
+                    .frame(width: tick.w, height: tick.len)
+                    .offset(y: -24)
+                    .rotationEffect(.degrees(tick.angle))
             }
 
-            // 指针：0% 指 E（150°），100% 指 F（390°）
-            // 指针矩形默认朝上（0°），所以角度就是 150 + 240 × 百分比
-            Rectangle()
-                .fill(batteryColor)
-                .frame(width: 2, height: 26)
+            // ④ 红色宽指针（根部粗、尖端细）
+            Capsule()
+                .fill(
+                    LinearGradient(colors: [red.opacity(0.85), red],
+                                   startPoint: .bottom,
+                                   endPoint: .top)
+                )
+                .frame(width: 5, height: 30)
                 .offset(y: -13)
-                .rotationEffect(.degrees(150 + 240 * batteryPercent))
-                .animation(.easeOut(duration: 0.3), value: batteryPercent)
+                .rotationEffect(.degrees(needleAngle))
+                .animation(.easeOut(duration: 0.35), value: batteryPercent)
 
-            // 中心轴
+            // ⑤ 中心轴
             Circle()
                 .fill(amber)
-                .frame(width: 5, height: 5)
+                .frame(width: 4, height: 4)
 
-            // 读数（放在轴下方）
-            VStack(spacing: 0) {
-                Text("\(Int(batteryPercent * 100))")
-                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(batteryColor)
-                    .monospacedDigit()
-                Text("%")
-                    .font(.system(size: 7))
-                    .foregroundStyle(amber.opacity(0.6))
-            }
-            .offset(y: 17)
-
-            // E / F 标签：放在弧的两端
-            Text("E")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(amber.opacity(0.6))
-                .offset(x: -32, y: 16)
+            // ⑥ F / E 标签
             Text("F")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(amber.opacity(0.6))
-                .offset(x: 32, y: 16)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(amber)
+                .offset(x: -26, y: -26)
+            Text("E")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(amber)
+                .offset(x: -34, y: 26)
+
+            // ⑦ 加油灯（左上角）
+            fuelWarningLamp
+                .offset(x: -40, y: -40)
         }
+        .frame(width: 78, height: 78)
+    }
+
+    /// 加油灯：油泵造型
+    private var fuelWarningLamp: some View {
+        Image(systemName: "fuelpump")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(fuelLampOn ? lampAmber : amber.opacity(0.16))
+            .shadow(color: fuelLampOn ? lampAmber.opacity(0.9) : .clear, radius: 4)
+            .opacity(inSelfTest ? pulseOpacity : 1)
+    }
+
+    /// 刻度定义：F 处一根长、中间两根短、E 处一根长
+    private var gaugeTicks: [(angle: Double, len: CGFloat, w: CGFloat)] {
+        // 从 E 算角度：F 在上方、E 在下方
+        let fAngle = gaugeStart - gaugeSweep          // -50°
+        let eAngle = gaugeStart                        // 130°
+        return [
+            (fAngle, 14, 2.5),                         // F 长刻度
+            (fAngle + 60, 8, 2),                       // 中间短
+            (fAngle + 120, 8, 2),                      // 中间短
+            (eAngle, 14, 2.5),                         // E 长刻度
+        ]
     }
 
     private var batteryColor: Color {
         if batteryPercent < 0.15 { return red }
-        if batteryPercent < 0.30 { return themeMgr.color(.warn) }
-        return themeMgr.color(.ok)
+        if batteryPercent < 0.30 { return lampAmber }
+        return amber
     }
 
     // MARK: - 底部
@@ -681,6 +728,42 @@ struct SportDashView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 6)
+    }
+}
+
+// MARK: - 弧形轨道
+
+/// 按角度范围画一段圆弧
+///
+/// SwiftUI 的 `Circle().trim()` 只能从 0° 开始，画不了「任意起点 + 任意角度」，
+/// 所以自己算路径。
+struct GaugeTrack: Shape {
+    /// 起始角（度），0° 指向右，正数顺时针
+    var start: Double
+    /// 扫过角度（度），正数顺时针，负数逆时针
+    var sweep: Double
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let r = min(rect.width, rect.height) / 2
+        guard r > 0, abs(sweep) > 0.01 else { return p }
+
+        // 用逐点采样画，避开 addArc 的 clockwise 参数语义坑
+        let steps = max(2, Int(abs(sweep) / 2))
+        for i in 0...steps {
+            let t = Double(i) / Double(steps)
+            let deg = start + sweep * t
+            let rad = deg * Double.pi / 180
+            let pt = CGPoint(x: c.x + CGFloat(cos(rad)) * r,
+                             y: c.y + CGFloat(sin(rad)) * r)
+            if i == 0 {
+                p.move(to: pt)
+            } else {
+                p.addLine(to: pt)
+            }
+        }
+        return p
     }
 }
 
