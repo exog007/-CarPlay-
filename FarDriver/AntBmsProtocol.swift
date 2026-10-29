@@ -491,31 +491,34 @@ final class AntBmsDecoder {
         // ── 2.6 动态推算总电压的位置 ──
         //
         // 实测：不同帧的扩展头长度不一样
-        //   数据长 175 → 总电压在 87
-        //   数据长 173 → 总电压在 85
+        //   21 串（数据长 175）→ 总电压在 87
+        //   21 串（数据长 173）→ 总电压在 85
+        //   25 串 → 位置更靠后
         //
         // 不能写死，用「单体电压合计 ≈ 总电压」来反推。
+        // 关键：遍历**全部**候选取最接近的那个，而不是取第一个碰上的。
+        // 25 串时数据更长，搜索范围必须跟着放大，否则会误匹配到中间某段数据。
         let cellSumMv = out.cells.reduce(0) { $0 + $1 } * 1000.0   // 转回 mV
-        var base = tempStart + nTemps * 2 + 4   // 默认布局
-        var found = false
-        // 从温度区结束开始，往后找 32 字节（放宽范围）
         let searchFrom = tempStart + nTemps * 2
+        var base = searchFrom + 4   // 默认布局兜底
+        var bestDiff = Double.greatestFiniteMagnitude
+
         if cellSumMv > 1000 {
-            for off in stride(from: 0, through: 32, by: 2) {
+            // 搜索范围跟着数据长度走：至少到帧尾前 24 字节
+            let maxOff = max(80, d.count - searchFrom - 24)
+            for off in stride(from: 0, through: maxOff, by: 2) {
                 let p = searchFrom + off
-                guard p + 1 < d.count else { break }
+                guard p + 21 < d.count else { break }   // 后面要读 cap/cycle，留够空间
                 let v = readUInt16(d, p)
-                // 总电压 = 数值 / 100，允许 ±0.5V 误差
-                if abs(Double(v) / 100.0 - cellSumMv / 1000.0) < 0.5 {
+                guard v > 0 else { continue }
+                let volts = Double(v) / 100.0
+                let diff = abs(volts - cellSumMv / 1000.0)
+                // 误差 0.5V 以内才作为候选，取**最接近**的
+                if diff < 0.5 && diff < bestDiff {
+                    bestDiff = diff
                     base = p
-                    found = true
-                    break
                 }
             }
-        }
-        if !found {
-            // 实在找不到就退回默认布局
-            base = tempStart + nTemps * 2 + 4
         }
 
         // ── 3. 温度（nTemps 个）──

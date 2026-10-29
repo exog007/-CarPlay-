@@ -26,6 +26,9 @@ struct AntBmsView: View {
         BatteryChemistry(rawValue: chemistryRaw) ?? .ncm
     }
 
+    /// 刚复制过帧的时间（用来显示「已复制」）
+    @State private var copiedAt: Date?
+
     // MARK: - 健康度
 
     private var soh: Double? {
@@ -773,6 +776,24 @@ struct AntBmsView: View {
                     .font(.system(size: 8, design: .monospaced))
                     .foregroundStyle(themeMgr.secondary.opacity(0.7))
                     .lineLimit(3)
+            }
+            // 复制完整原始帧，方便把 hex 发给开发者排查
+            if !bms.rawFrameHex.isEmpty {
+                Button {
+                    UIPasteboard.general.string = bms.rawFrameHex
+                    copiedAt = Date()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: copiedAt != nil ? "checkmark.circle.fill" : "doc.on.doc")
+                        Text(copiedAt != nil ? "已复制" : "复制完整帧")
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(themeMgr.color(.ok))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(themeMgr.color(.ok).opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
             }
         }
         .padding(12)
