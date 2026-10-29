@@ -37,10 +37,13 @@ struct SportDashView: View {
     }
 
     /// 电量百分比（按电压阈值线性插值）
+    ///
+    /// 没连控制器时电压是 0，表针强制归零（指向 E）。
     private var batteryPercent: Double {
-        BatteryPercent.compute(voltage: mgr.data.voltage,
-                               full: theme.battFullVoltage,
-                               empty: theme.battEmptyVoltage)
+        guard mgr.status.isConnected else { return 0 }
+        return BatteryPercent.compute(voltage: mgr.data.voltage,
+                                      full: theme.battFullVoltage,
+                                      empty: theme.battEmptyVoltage)
     }
 
     private var amber: Color { themeMgr.color(.power) }
@@ -563,6 +566,8 @@ struct SportDashView: View {
     //   - 红色宽指针，根部粗、尖端细，指针头接近弧
 
     /// 加油灯的显隐：低于 30%
+    ///
+    /// 没连控制器时表针归零，但这不代表真的没油，所以加油灯跟着自检逻辑走。
     private var fuelLampOn: Bool {
         if inSelfTest { return true }
         return batteryPercent < 0.30
@@ -649,28 +654,38 @@ struct SportDashView: View {
                        style: StrokeStyle(lineWidth: tick.width, lineCap: .round))
         }
 
-        // ④ F / E 标签：在弧两端往圆心方向的内侧
-        let fPos = point(at: 0.02, radius: r - 20)
-        let ePos = point(at: 0.98, radius: r - 20)
+        // ④ F / E 标签：放到弧外侧，彻底避开指针
+        let fPos = point(at: 0.00, radius: r + 13)
+        let ePos = point(at: 1.00, radius: r + 13)
         ctx.draw(
-            Text("F").font(.system(size: 15, weight: .bold, design: .rounded))
+            Text("F").font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(amber),
             at: fPos
         )
         ctx.draw(
-            Text("E").font(.system(size: 15, weight: .bold, design: .rounded))
+            Text("E").font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(amber),
             at: ePos
         )
 
         // ⑤ 红色宽指针：从圆心指向当前电量
-        // 根部（靠近圆心）粗、尖端细，用两条渐窄的路径实现
-        let angleDeg = startDeg + sweepDeg * (1 - batteryPercent)
+        //
+        // 限制：指针末端不能超过两端的长刻度线。
+        // 长刻度在内侧从 (r-3) 伸到 (r-3-len)，所以指针最远只能到 r-3-len 左右。
+        // 取两端长刻度里更靠内的那个作为上限，保证 0% 和 100% 都不越界。
+        let tickOuter = r - 3                        // 刻度起点（贴弧）
+        let longTickLen: CGFloat = 11
+        let needleLen = tickOuter - longTickLen + 3  // 停在长刻度内端附近
+
+        // 角度收一点：0%/100% 各让出 3°，避免指针压到两端的长刻度
+        let angleStart = startDeg + 3
+        let angleSweep = sweepDeg - 6
+        let angleDeg = angleStart + angleSweep * (1 - batteryPercent)
         let rad = angleDeg * Double.pi / 180
-        let needleLen = r - 6
+
         let tip = CGPoint(x: cx + CGFloat(cos(rad)) * needleLen,
                           y: cy + CGFloat(sin(rad)) * needleLen)
-        // 根部：从圆心开始，粗 6pt
+        // 根部：从圆心开始，粗 6.5pt
         let rootLen = needleLen * 0.42
         let rootEnd = CGPoint(x: cx + CGFloat(cos(rad)) * rootLen,
                               y: cy + CGFloat(sin(rad)) * rootLen)
