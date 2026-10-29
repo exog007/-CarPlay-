@@ -466,7 +466,7 @@ struct SportDashView: View {
                     bmsMosTempBlock
                 }
                 fuelGauge
-                    .frame(width: 96, height: 66)
+                    .frame(width: 74, height: 132)
             }
         }
         .frame(maxHeight: .infinity)
@@ -553,79 +553,76 @@ struct SportDashView: View {
 
     // MARK: - 指针式电量表
     //
-    // 扇形半圆：圆心在底部中间，弧从左边（E）扫过顶部到右边（F）。
+    // 扇形半圆，开口朝右（弧在左半边）。
+    // 圆心在画布右侧中间，弧从上方（F）逆时针扫过最左点到下方（E）。
     // 所有几何计算都在 Canvas 里按像素坐标做，不依赖 rotationEffect 的隐含中心，
     // 避免元素飞出表盘。
 
-    /// 加油灯：低于 30%
+    /// 加油灯的显隐：低于 30%
     private var fuelLampOn: Bool {
         if inSelfTest { return true }
         return batteryPercent < 0.30
     }
 
     private var fuelGauge: some View {
-        ZStack(alignment: .topLeading) {
+        ZStack(alignment: .topTrailing) {
             Canvas { ctx, size in
                 drawFuelGauge(ctx: &ctx, size: size)
             }
-            .frame(width: 96, height: 66)
+            .frame(width: 74, height: 132)
 
-            // 加油灯：左上角
+            // 加油灯：右上角
             fuelWarningLamp
-                .offset(x: 0, y: 0)
         }
-        .frame(width: 96, height: 66, alignment: .topLeading)
+        .frame(width: 74, height: 132, alignment: .topTrailing)
     }
 
-    /// 画整个扇形油表
+    /// 画扇形油表
     ///
-    /// 坐标系：圆心在 (w/2, h)，半径 r。
-    /// 角度从「正左方」开始（180°），顺时针扫 180° 到「正右方」（360°/0°）。
-    /// 也就是 E 在左，F 在右，半圆开口朝下。
+    /// 坐标系：圆心在 (w - 6, h/2)，半径 r。
+    /// 角度 -90° 是正上方（F），+90° 是正下方（E），中间经过 180°（正左）。
+    /// 开口朝右。
     private func drawFuelGauge(ctx: inout GraphicsContext, size: CGSize) {
         let w = size.width
         let h = size.height
-        let cx = w / 2
-        let cy = h                      // 圆心在底边
-        let r = min(w / 2 - 3, h - 6)   // 留出刻度空间
+        let cx = w - 4                  // 圆心靠右
+        let cy = h / 2
+        let r = min(w - 10, h / 2 - 8)  // 留出刻度与标签空间
 
-        // 角度：0 = E（左，180°），1 = F（右，360°）
+        // 角度映射：t=0 → E（下方 +90°），t=1 → F（上方 -90°）
+        // 逆时针从 +90 走到 -90，共 180°
         func point(at t: Double, radius: Double) -> CGPoint {
-            let deg = 180.0 + 180.0 * t
+            let deg = 90.0 - 180.0 * t
             let rad = deg * Double.pi / 180
             return CGPoint(x: cx + CGFloat(cos(rad)) * radius,
                            y: cy + CGFloat(sin(rad)) * radius)
         }
 
-        // ① 轨道：左粗右细（E 一端粗，F 一端细）
-        var track = Path()
+        // ① 轨道
+        // 从上方（F）到下方（E），越靠近 E 越粗
         let steps = 60
-        for i in 0...steps {
-            let t = Double(i) / Double(steps)
-            let p = point(at: t, radius: r)
-            if i == 0 { track.move(to: p) } else { track.addLine(to: p) }
-        }
-        // 分两段画，用不同线宽模拟「粗到细」
-        // 前 40% 用 4pt，后 60% 用 2.5pt，接缝处圆头盖住
         let splitT = 0.40
         let splitPt = point(at: splitT, radius: r)
-        var thick = Path()
-        for i in 0...Int(Double(steps) * splitT) {
-            let t = Double(i) / Double(steps)
-            let p = point(at: t, radius: r)
-            if i == 0 { thick.move(to: p) } else { thick.addLine(to: p) }
-        }
-        ctx.stroke(thick, with: .color(amber),
-                   style: StrokeStyle(lineWidth: 4.5, lineCap: .round))
 
-        var thin = Path()
-        thin.move(to: splitPt)
+        // 细段：F 端那 40%（t 0 → 0.4），线宽 2.5
+        var thinPath = Path()
+        thinPath.move(to: point(at: 0, radius: r))
+        for i in 1...Int(Double(steps) * splitT) {
+            let t = Double(i) / Double(steps)
+            thinPath.addLine(to: point(at: t, radius: r))
+        }
+        ctx.stroke(thinPath, with: .color(amber),
+                   style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+
+        // 粗段：往 E 走（t 0.4 → 1），线宽 5
+        var thickPath = Path()
+        thickPath.move(to: splitPt)
         for i in Int(Double(steps) * splitT)...steps {
             let t = Double(i) / Double(steps)
-            thin.addLine(to: point(at: t, radius: r))
+            thickPath.addLine(to: point(at: t, radius: r))
         }
-        ctx.stroke(thin, with: .color(amber),
-                   style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+        ctx.stroke(thickPath, with: .color(amber),
+                   style: StrokeStyle(lineWidth: 5, lineCap: .round))
 
         // ② 已充电量弧：贴在轨道内侧
         if batteryPercent > 0.001 {
@@ -660,18 +657,19 @@ struct SportDashView: View {
                        style: StrokeStyle(lineWidth: tick.w, lineCap: .round))
         }
 
-        // ④ F / E 标签：在轨道两端外侧
-        let fPos = point(at: 1.00, radius: r + 1)
-        let ePos = point(at: 0.00, radius: r + 1)
+        // ④ F / E 标签：在弧的两端内侧
+        // F 在上端点（t=0），E 在下端点（t=1），文字往圆心方向挪一点
+        let fPos = point(at: 0.00, radius: r - 14)
+        let ePos = point(at: 1.00, radius: r - 14)
         ctx.draw(
-            Text("F").font(.system(size: 11, weight: .bold, design: .rounded))
+            Text("F").font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(amber),
-            at: CGPoint(x: fPos.x, y: fPos.y + 2)
+            at: fPos
         )
         ctx.draw(
-            Text("E").font(.system(size: 11, weight: .bold, design: .rounded))
+            Text("E").font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(amber),
-            at: CGPoint(x: ePos.x, y: ePos.y + 2)
+            at: ePos
         )
 
         // ⑤ 红色指针：从圆心指向当前电量
