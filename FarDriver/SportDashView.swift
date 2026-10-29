@@ -16,6 +16,7 @@ struct SportDashView: View {
     @ObservedObject var themeMgr: ThemeManager
     @ObservedObject var gps: GpsSpeed
     @ObservedObject var weather = WeatherService.shared
+    @ObservedObject var bms = AntBmsManager.shared
 
     /// 融合车速
     private var speed: Double {
@@ -385,6 +386,7 @@ struct SportDashView: View {
 
     private var middleRow: some View {
         HStack(alignment: .center, spacing: 10) {
+            // 左侧：连接指示灯 + BMS 保护板 MOS 温度（没连 BMS 就整块不占位）
             VStack(spacing: 4) {
                 Circle()
                     .fill(mgr.status.isConnected ? themeMgr.color(.ok) : amber.opacity(0.25))
@@ -395,7 +397,12 @@ struct SportDashView: View {
                 Rectangle()
                     .fill(amber.opacity(0.3))
                     .frame(width: 1, height: 26)
+
+                if bms.connected {
+                    bmsMosTempBlock
+                }
             }
+            .frame(width: bms.connected ? 52 : nil)
 
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("\(Int(speed.rounded()))")
@@ -425,6 +432,46 @@ struct SportDashView: View {
     private var isParked: Bool {
         guard mgr.status.isConnected else { return false }
         return speed < 1.0 && abs(mgr.data.current) < 0.5
+    }
+
+    // MARK: - BMS 保护板 MOS 温度
+
+    /// 左侧小方块：保护板 MOS 温度
+    ///
+    /// 只在 ANT BMS 已连接时出现，断开后整块从布局里消失（不留空位）。
+    private var bmsMosTempBlock: some View {
+        let t = bms.data.mosTemp
+        let hot = t > 55
+        return VStack(spacing: 1) {
+            Text("保护板")
+                .font(.system(size: 6, weight: .semibold))
+                .tracking(0.4)
+                .foregroundStyle(amber.opacity(0.55))
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(t > 0 ? "\(t)" : "--")
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(hot ? red : cyan)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text("°")
+                    .font(.system(size: 7))
+                    .foregroundStyle(amber.opacity(0.55))
+            }
+            Text("MOS")
+                .font(.system(size: 6, weight: .medium))
+                .foregroundStyle(amber.opacity(0.45))
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 3)
+                .fill(amber.opacity(0.07))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 3)
+                .stroke(hot ? red.opacity(0.7) : amber.opacity(0.28), lineWidth: 1)
+        }
     }
 
     private var gearBoxes: some View {
