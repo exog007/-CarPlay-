@@ -443,7 +443,7 @@ struct SportDashView: View {
         let t = bms.data.mosTemp
         let hot = t > 55
         return VStack(spacing: 1) {
-            Text("保护板")
+            Text("BMS")
                 .font(.system(size: 6, weight: .semibold))
                 .tracking(0.4)
                 .foregroundStyle(amber.opacity(0.55))
