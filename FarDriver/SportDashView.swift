@@ -72,6 +72,12 @@ struct SportDashView: View {
         return mgr.data.mosTemp > 50
     }
 
+    /// 发动机故障灯：控制器 MOS 温度到达 60°C
+    private var engineLampOn: Bool {
+        if inSelfTest { return true }
+        return mgr.data.mosTemp >= 60
+    }
+
     /// 刹车灯：松开灭
     ///
     /// ⚠️ 控制器协议里还没解出确定的刹车灯信号位，现在是推断：
@@ -209,11 +215,12 @@ struct SportDashView: View {
 
             Spacer(minLength: 6)
 
-            // 三个故障灯：自检时全亮呼吸闪烁，连上后按真实状态
+            // 故障灯：自检时全亮呼吸闪烁，连上后按真实状态
             HStack(spacing: 5) {
-                brakeLamp
-                coolantLamp
-                batteryLamp
+                brakeLamp    // 刹车（红）
+                engineLamp   // 发动机（黄，MOS ≥ 60°C）
+                coolantLamp  // 水温（黄，MOS > 50°C）
+                batteryLamp  // 电瓶（黄，电量 < 26%）
             }
             .opacity(inSelfTest ? pulseOpacity : 1.0)
 
@@ -310,6 +317,14 @@ struct SportDashView: View {
             .font(.system(size: 14))
             .foregroundStyle(coolantLampOn ? lampYellow : amber.opacity(0.16))
             .shadow(color: coolantLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
+    }
+
+    /// 黄色发动机故障灯（发动机轮廓）
+    private var engineLamp: some View {
+        Image(systemName: "engine.combustion")
+            .font(.system(size: 14))
+            .foregroundStyle(engineLampOn ? lampYellow : amber.opacity(0.16))
+            .shadow(color: engineLampOn ? lampYellow.opacity(0.9) : .clear, radius: 4)
     }
 
     /// 黄色电瓶故障灯（汽车小电瓶造型，自己画的）
