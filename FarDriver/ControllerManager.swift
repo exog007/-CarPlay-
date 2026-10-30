@@ -487,6 +487,8 @@ extension ControllerManager: CBPeripheralDelegate {
             if d != data {
                 data = d
                 snapshot()
+                // 累计小计里程 / 能量
+                TripMeter.shared.update(speedKmh: d.speed, powerW: d.power)
                 // 同步到 CarPlay / 锁屏 / 灵动岛
                 updateLiveActivity()
             }

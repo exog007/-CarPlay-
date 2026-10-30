@@ -773,6 +773,50 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    HStack {
+                        Text("小计里程")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text("\(TripMeter.shared.distanceText) km")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("累计电量")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.3f kWh", TripMeter.shared.energyKWh))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("百公里电耗")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text("\(TripMeter.shared.consumptionText) kWh")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(themeMgr.color(.ok))
+                    }
+                    HStack {
+                        Text("平均功率")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text("\(TripMeter.shared.avgPowerText) W")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Button(role: .destructive) {
+                        TripMeter.shared.reset()
+                    } label: {
+                        Label("清空小计里程", systemImage: "arrow.counterclockwise")
+                    }
+                } header: {
+                    Text("行程统计")
+                } footer: {
+                    Text("里程按控制器速度 × 时间累加；百公里电耗 = 累计电量 ÷ 里程 × 100。清空后重新统计。")
+                }
+
+                Section {
                     Button("测试连接服务器") {
                         testServer()
                     }

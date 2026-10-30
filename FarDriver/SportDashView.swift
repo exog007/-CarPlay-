@@ -17,6 +17,7 @@ struct SportDashView: View {
     @ObservedObject var gps: GpsSpeed
     @ObservedObject var weather = WeatherService.shared
     @ObservedObject var bms = AntBmsManager.shared
+    @ObservedObject var trip = TripMeter.shared
 
     /// 融合车速
     private var speed: Double {
@@ -757,6 +758,13 @@ struct SportDashView: View {
             divider
             bottomCell("电机", "\(mgr.data.motorTemp)", "°C",
                        mgr.data.motorTemp > 50 ? red : themeMgr.color(.motorTemp))
+            divider
+            // 小计里程 / 百公里电耗 / 平均功率
+            bottomCell("小计", trip.distanceText, "km", cyan)
+            divider
+            bottomCell("百公里", trip.consumptionText, "kWh", amber)
+            divider
+            bottomCell("平均", trip.avgPowerText, "W", themeMgr.color(.motorTemp))
         }
         .frame(height: 42)
         .overlay(alignment: .top) {
