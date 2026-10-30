@@ -31,10 +31,10 @@ struct SportDashView: View {
         mgr.data.rpm * theme.rpmMultiplier
     }
 
-    /// 转速百分比
+    /// 转速百分比（自检动画期间跟着动画走）
     private var rpmRatio: Double {
         guard theme.rpmScaleMax > 0 else { return 0 }
-        return min(max(displayRpm / theme.rpmScaleMax, 0), 1)
+        return min(max(displayRpmValue / theme.rpmScaleMax, 0), 1)
     }
 
     /// 电量百分比（按电压阈值线性插值）
@@ -58,11 +58,13 @@ struct SportDashView: View {
 
     // MARK: - 故障灯状态
 
-    /// 自检模式：还没连上控制器时，所有灯全亮
+    /// 自检模式：还没连上控制器，或者开机自检动画还在播放时，所有灯全亮
     ///
     /// 这是老车/新车的自检行为——点火瞬间所有灯亮一遍，确认灯本身没坏。
     /// 连上控制器后立刻切到正常模式，按真实数据决定谁亮。
-    private var inSelfTest: Bool { !mgr.status.isConnected }
+    private var inSelfTest: Bool {
+        !mgr.status.isConnected || bootAnimating
+    }
 
     /// 电瓶故障灯：电量低于 26%
     private var batteryLampOn: Bool {
@@ -95,6 +97,24 @@ struct SportDashView: View {
     /// 自检闪烁相位
     @State private var pulsePhase: Double = 0
 
+    // MARK: - 开机自检动画
+    //
+    // 进入竞技仪表时播放一次：
+    //   速度从 0 扫到 299 再回 0
+    //   转速从 0 扫到满量程再回 0
+    //   期间所有故障灯全亮（就是自检状态）
+    /// 自检动画进行中
+    @State private var bootAnimating = false
+    /// 自检动画进度 0 → 1 → 0
+    @State private var bootProgress: Double = 0
+    /// 自检动画计时器
+    @State private var bootTimer: Timer?
+
+    /// 自检时速度表的最大值
+    private let bootSpeedMax: Double = 299
+    /// 整个自检动画时长（秒）
+    private let bootDuration: Double = 2.4
+
     var body: some View {
         VStack(spacing: 6) {
             topBar
@@ -107,11 +127,58 @@ struct SportDashView: View {
         .background(sportBackground)
         .onAppear {
             weather.refreshIfNeeded()
+            startBootAnimation()
+        }
+        .onDisappear {
+            bootTimer?.invalidate()
+            bootTimer = nil
+            bootAnimating = false
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
         .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
             tickPulse()
         }
+    }
+
+    // MARK: - 自检动画控制
+
+    /// 开始播放开机自检动画
+    private func startBootAnimation() {
+        bootTimer?.invalidate()
+        bootAnimating = true
+        bootProgress = 0
+        let start = Date()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [self] t in
+            let elapsed = Date().timeIntervalSince(start)
+            let p = min(elapsed / bootDuration, 1.0)
+            // 0 → 1 → 0 的三角波
+            let tri = p < 0.5 ? (p * 2) : (1 - p) * 2
+            bootProgress = tri
+            if p >= 1.0 {
+                t.invalidate()
+                bootTimer = nil
+                bootAnimating = false
+                bootProgress = 0
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        bootTimer = timer
+    }
+
+    /// 自检动画期间显示的速度值
+    private var displaySpeedValue: Double {
+        if bootAnimating {
+            return bootSpeedMax * bootProgress
+        }
+        return speed
+    }
+
+    /// 自检动画期间显示的转速值（已乘倍率）
+    private var displayRpmValue: Double {
+        if bootAnimating {
+            return theme.rpmScaleMax * bootProgress
+        }
+        return displayRpm
     }
 
     // MARK: - 背景
@@ -333,7 +400,7 @@ struct SportDashView: View {
                     .tracking(0.8)
                     .foregroundStyle(amber.opacity(0.7))
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text("\(Int(displayRpm.rounded()))")
+                    Text("\(Int(displayRpmValue.rounded()))")
                         .font(.system(size: 30, weight: .heavy, design: .monospaced))
                         .foregroundStyle(amber)
                         .monospacedDigit()
@@ -413,7 +480,7 @@ struct SportDashView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text("\(Int(speed.rounded()))")
+                Text("\(Int(displaySpeedValue.rounded()))")
                     .font(.system(size: 68, weight: .heavy, design: .monospaced))
                     .foregroundStyle(amber)
                     .monospacedDigit()

@@ -131,6 +131,17 @@ struct ContentView: View {
                 gps.start()
                 // 打开 App 就不自动息屏，方便骑行时一直看仪表
                 UIApplication.shared.isIdleTimerDisabled = true
+
+                // ── 启动直接进竞技仪表 ──
+                // 同时切到竞技风格 + 强制横屏，进来就是仪表盘
+                if BluetoothMemory.launchInSportMode {
+                    themeMgr.theme.dashStyle = .sport
+                    landscapeRequested = true
+                    UserDefaults.standard.set(true, forKey: "forceLandscape")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        applyOrientation(true)
+                    }
+                }
             }
             .onDisappear {
                 // 离开主界面时恢复系统自动息屏，别把电耗光
@@ -688,6 +699,17 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Toggle("打开 App 直接进竞技仪表", isOn: Binding(
+                        get: { BluetoothMemory.launchInSportMode },
+                        set: { BluetoothMemory.launchInSportMode = $0 }
+                    ))
+                } header: {
+                    Text("启动")
+                } footer: {
+                    Text("打开后，App 一启动就切到竞技风格并横屏，直接当仪表用。\n进入时会播放一次开机自检动画：速度 0→299，转速 0→满量程，故障灯全亮。")
+                }
+
                 Section {
                     Button {
                         showAppearance = true

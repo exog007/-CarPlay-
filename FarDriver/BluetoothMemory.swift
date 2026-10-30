@@ -52,4 +52,10 @@ enum BluetoothMemory {
         }
         set { UserDefaults.standard.set(newValue, forKey: "autoConnectBms") }
     }
+
+    /// 打开 App 时是否自动进入竞技仪表（横屏 + 竞技风格）
+    static var launchInSportMode: Bool {
+        get { UserDefaults.standard.bool(forKey: "launchInSportMode") }
+        set { UserDefaults.standard.set(newValue, forKey: "launchInSportMode") }
+    }
 }
