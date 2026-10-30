@@ -116,23 +116,33 @@ struct SportDashView: View {
     private let bootDuration: Double = 2.4
 
     var body: some View {
-        VStack(spacing: 6) {
-            topBar
-            rpmBand
-            middleRow
-            bottomRow
-            debugPinRow
-        }
-        .padding(10)
-        .background(sportBackground)
-        .onAppear {
-            weather.refreshIfNeeded()
-            startBootAnimation()
-        }
-        .onDisappear {
-            bootTimer?.invalidate()
-            bootTimer = nil
-            bootAnimating = false
+        // 用 GeometryReader 拿到真实尺寸，等屏幕彻底转好（宽稳定大于高）再放动画，
+        // 否则旋转过程中就开始扫表，会看到动画被裁一半或者时间轴对不上。
+        GeometryReader { geo in
+            let ready = geo.size.width > geo.size.height + 1
+
+            VStack(spacing: 6) {
+                topBar
+                rpmBand
+                middleRow
+                bottomRow
+                debugPinRow
+            }
+            .padding(10)
+            .background(sportBackground)
+            .onAppear {
+                weather.refreshIfNeeded()
+                // 已经在横屏就直接播，否则等尺寸就绪
+                if ready { scheduleBoot(after: 0.15) }
+            }
+            .onChange(of: ready) { _, isReady in
+                if isReady { scheduleBoot(after: 0.25) }
+            }
+            .onDisappear {
+                bootTimer?.invalidate()
+                bootTimer = nil
+                bootAnimating = false
+            }
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
         .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
@@ -141,6 +151,16 @@ struct SportDashView: View {
     }
 
     // MARK: - 自检动画控制
+
+    /// 延迟一会儿再开动画，确保屏幕已经彻底转好、布局也稳定了
+    private func scheduleBoot(after delay: Double) {
+        guard !bootAnimating, bootProgress == 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            // 再确认一次还没播过（防止重复触发）
+            guard !bootAnimating, bootProgress == 0 else { return }
+            startBootAnimation()
+        }
+    }
 
     /// 开始播放开机自检动画
     private func startBootAnimation() {
