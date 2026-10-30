@@ -70,25 +70,29 @@ final class GpsSpeed: NSObject, ObservableObject {
 
     // MARK: - 读数
 
-    /// 融合车速
+    /// 融合车速：GPS 为主，控制器兜底
     ///
-    /// 原则：GPS 只在「控制器没有速度、而 GPS 明确有速度」时兜底。
-    /// 不再拿 GPS 去和轮速比大值——那样一旦 GPS 读数滞后，
-    /// 就会把已经降下来的车速又顶回去，表现为「松油门后卡几秒才掉」。
+    /// 方案 C：
+    ///   ① 有 GPS 信号且精度够 → 用 GPS（真实对地速度，不受轮径/极对数误差影响）
+    ///   ② GPS 没信号（隧道/车库）→ 用控制器转速换算
+    ///   ③ GPS 读到 0 但控制器有速度（刚起步/低速 GPS 不出数）→ 用控制器
     ///
     /// - Parameter wheel: 控制器按轮径算出来的速度
     /// - Returns: 用于显示的速度
     func fused(with wheel: Double) -> Double {
-        // 控制器已经给出速度，就信控制器（它是实时的）
-        if wheel >= 1.0 { return wheel }
-        // 控制器没速度（没连上 / 免费版限速），才用 GPS 兜底
-        guard enabled, hasFix, accuracy >= 0, accuracy < 25 else { return wheel }
-        return speedKmh
+        // 没开 GPS / 没定位 / 精度太差 → 全用控制器
+        guard enabled, hasFix, accuracy >= 0, accuracy < 30 else { return wheel }
+
+        // GPS 有速度，直接用它
+        if speedKmh >= 1.0 { return speedKmh }
+
+        // GPS 是 0，但车在动（刚起步 GPS 还没出数），用控制器
+        return wheel
     }
 
     /// GPS 是否真的在参与（用于决定要不要在界面标 GPS）
     var isContributing: Bool {
-        enabled && hasFix && accuracy >= 0 && accuracy < 25
+        enabled && hasFix && accuracy >= 0 && accuracy < 30
     }
 }
 
@@ -113,8 +117,8 @@ extension GpsSpeed: CLLocationManagerDelegate {
         guard loc.speed >= 0 else { return }
         // 太旧的定位不要
         guard abs(loc.timestamp.timeIntervalSinceNow) < 5 else { return }
-        // 精度太差的定位不要：>25 米时速度基本是噪声，静止也会读出 3~10 km/h
-        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy < 25 else { return }
+        // 精度太差的定位不要：>30 米时速度基本是噪声，静止也会读出 3~10 km/h
+        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy < 30 else { return }
 
         accuracy = loc.horizontalAccuracy
         hasFix = true
