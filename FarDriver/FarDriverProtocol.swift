@@ -45,6 +45,18 @@ struct ControllerData: Codable, Equatable {
     ///
     /// 实测：捏刹车 p[3] = 0x80，松开 p[3] = 0x00
     var braking: Bool = false
+
+    /// 控制器自己算的速度（0xE2 的 p[8..9]，单位未定，配合 0xD0 参数换算）
+    var measureSpeed: Int = 0
+    /// 轮径相关参数（来自 0xD0 帧），用于把 measureSpeed 换成 km/h
+    var wheelRadius: Int = 0
+    var wheelWidth: Int = 0
+    var wheelRatio: Int = 0
+    var rateRatio: Int = 0
+    /// 控制器自己给的整车速度（0xD0 的 p[6]，直接是 km/h）
+    var controllerSpeedKmh: Double = 0
+    /// 有没有收到过 0xD0 帧
+    var d0Seen: Bool = false
     /// 有没有收到过 0xE2 帧（判断 pGearOn 是否可信）
     var e2Seen: Bool = false
     var updatedAt: Date = Date()
@@ -119,8 +131,23 @@ final class FarDriverDecoder {
             // 刹车：p[3] 的 bit7，1 = 刹车中
             // 实测：捏刹车 p[3]=0x80，松开 p[3]=0x00
             data.braking = (p[3] & 0x80) != 0
+            // 控制器自己测的速度原始值
+            data.measureSpeed = Int(UInt16(p[8]) | (UInt16(p[9]) << 8))
             data.e2Seen = true
             data.e2Byte0 = Int(p[0])
+
+        case 0xD0:
+            // 轮径参数 + 控制器算好的平均速度
+            // 布局（社区逆向）：
+            //   p[0..1] Data0        p[2] BMQHALL       p[3] AVGPower
+            //   p[4] WheelRatio      p[5] WheelRadius  p[6] AVGSpeed
+            //   p[7] WheelWidth      p[8..9] RateRatio
+            data.wheelRatio  = Int(p[4])
+            data.wheelRadius = Int(p[5])
+            data.controllerSpeedKmh = Double(p[6])
+            data.wheelWidth  = Int(p[7])
+            data.rateRatio   = Int(UInt16(p[8]) | (UInt16(p[9]) << 8))
+            data.d0Seen = true
             data.e2Raw = Self.hex(p, count: 12)
 
         case 0xEE:
@@ -170,7 +197,30 @@ final class FarDriverDecoder {
         // 换算转速和时速
         let displayRpm = data.rawRpm < 0 ? 0 : data.rawRpm
         data.rpm = Double(displayRpm) * 4.0 / Double(motorPolePairs)
-        data.speed = (data.rpm * wheelCircumferenceM * 60.0) / 1000.0
+
+        // ── 速度计算：优先用控制器自己的参数 ──
+        //
+        // 控制器里配了真实的轮径数据，用它算比手写轮周长准得多。
+        //   speed = MeasureSpeed * (0.00376991136 * (R*1270 + W*Ratio) / RateRatio)
+        var controllerDerived = 0.0
+        if data.d0Seen && data.rateRatio > 0 {
+            let wheelTerm = Double(data.wheelRadius) * 1270.0
+                + Double(data.wheelWidth) * Double(data.wheelRatio)
+            controllerDerived = Double(data.measureSpeed)
+                * (0.00376991136 * wheelTerm / Double(data.rateRatio))
+        }
+
+        // 三种来源的优先级：
+        //   ① 控制器配了轮径参数 → 公式换算（最准）
+        //   ② 控制器直接给了 km/h → 直接用
+        //   ③ 都没有 → 退回手写的轮周长
+        if controllerDerived > 0 && controllerDerived < 300 {
+            data.speed = controllerDerived
+        } else if data.d0Seen && data.controllerSpeedKmh > 0 && data.controllerSpeedKmh < 300 {
+            data.speed = data.controllerSpeedKmh
+        } else {
+            data.speed = (data.rpm * wheelCircumferenceM * 60.0) / 1000.0
+        }
 
         data.recomputePower()
         data.updatedAt = Date()

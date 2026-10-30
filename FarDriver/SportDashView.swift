@@ -718,6 +718,22 @@ struct SportDashView: View {
                     .font(.system(size: 7, weight: .bold, design: .monospaced))
                     .foregroundStyle(cyan)
             }
+            // 速度来源诊断：R=轮径 W=轮宽 ratio=比例 rate=分母 measure=原始
+            HStack(spacing: 6) {
+                Text("SPD")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.5))
+                Text(mgr.data.d0Seen
+                     ? String(format: "R%d W%d r%d rate%d meas%d avg%.0f",
+                              mgr.data.wheelRadius, mgr.data.wheelWidth,
+                              mgr.data.wheelRatio, mgr.data.rateRatio,
+                              mgr.data.measureSpeed, mgr.data.controllerSpeedKmh)
+                     : "D0 未收到")
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundStyle(amber.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 2)
