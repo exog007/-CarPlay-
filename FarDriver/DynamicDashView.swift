@@ -835,7 +835,7 @@ struct DynamicDashView: View {
 
             Spacer(minLength: 6)
 
-            // 右：大号音乐播放器（和参考图同位置、同尺寸）
+            // 右：大号音乐播放器（放大 + 往右贴）
             nowPlayingCard
 
             // 再右：导航状态（有导航才显示）
@@ -845,10 +845,8 @@ struct DynamicDashView: View {
                     .frame(width: 130)
             }
         }
-        .frame(height: 78)
+        .frame(height: 92)
     }
-
-    // MARK: - 指南针
 
     /// 参考图底部那种：刻度线 + 方位文字 + 当前度数
     private var compass: some View {
@@ -909,63 +907,73 @@ struct DynamicDashView: View {
         let cardTitle = np.hasInfo ? np.title : "未在播放"
         let cardSub = np.hasInfo ? np.artist : ""
 
-        return HStack(spacing: 10) {
-            // 大唱片图标
+        return HStack(spacing: 13) {
+            // 大唱片图标（放大到 72）
             ZStack {
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 16)
                     .fill(.white.opacity(0.13))
-                    .frame(width: 54, height: 54)
+                    .frame(width: 72, height: 72)
                 if let art = np.artwork {
                     Image(uiImage: art)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 54, height: 54)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
                 } else {
                     Image(systemName: "music.note")
-                        .font(.system(size: 24, weight: .light))
+                        .font(.system(size: 32, weight: .light))
                         .foregroundStyle(.white.opacity(0.5))
                 }
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 // 歌名
                 Text(cardTitle)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white.opacity(np.hasInfo ? 0.95 : 0.45))
                     .lineLimit(1)
-                    .frame(width: 130, alignment: .leading)
+                    .frame(width: 185, alignment: .leading)
+                // 歌手
+                if !cardSub.isEmpty {
+                    Text(cardSub)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(1)
+                        .frame(width: 185, alignment: .leading)
+                }
 
                 // 进度条
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(.white.opacity(0.18))
-                        .frame(width: 130, height: 3)
+                        .frame(width: 185, height: 4)
                     Capsule()
                         .fill(.white.opacity(0.85))
-                        .frame(width: max(0, CGFloat(np.progress) * 130), height: 3)
+                        .frame(width: max(0, CGFloat(np.progress) * 185), height: 4)
                 }
                 .animation(.linear(duration: 1), value: np.progress)
 
                 // 时间
                 HStack {
                     Text(np.hasInfo ? np.elapsedText : "0:00")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.45))
                     Spacer(minLength: 0)
                     Text(np.hasInfo ? "-\(np.durationText)" : "-0:00")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.45))
                 }
-                .frame(width: 130)
+                .frame(width: 185)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.black.opacity(0.35))
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.black.opacity(0.42))
         )
+        // 往右贴：整体右移，并且右侧不留额外间距
+        .padding(.trailing, 0)
     }
 
     /// 底部导航状态小条
