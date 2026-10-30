@@ -906,7 +906,10 @@ struct DynamicDashView: View {
     // MARK: - 音乐播放器（大号卡片，仿参考图）
 
     private var nowPlayingCard: some View {
-        HStack(spacing: 10) {
+        let cardTitle = np.hasInfo ? np.title : "未在播放"
+        let cardSub = np.hasInfo ? np.artist : ""
+
+        return HStack(spacing: 10) {
             // 大唱片图标
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
@@ -927,7 +930,7 @@ struct DynamicDashView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 // 歌名
-                Text(np.hasInfo ? np.title : "未在播放")
+                Text(cardTitle)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(np.hasInfo ? 0.95 : 0.45))
                     .lineLimit(1)
