@@ -428,14 +428,16 @@ struct SportDashView: View {
             Spacer(minLength: 0)
 
             // 中间列：档位框垂直居中，小计里程贴在底部
-            ZStack {
-                gearBoxes                              // 居中
-                VStack {
+            ZStack(alignment: .center) {
+                gearBoxes
+                VStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    tripReadout                        // 贴底
+                    tripReadout
                 }
+                .frame(maxHeight: .infinity)
             }
-            .frame(width: 120, maxHeight: .infinity)
+            .frame(width: 120)
+            .frame(maxHeight: .infinity)
 
             Spacer(minLength: 0)
 
