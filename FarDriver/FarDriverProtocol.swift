@@ -195,21 +195,19 @@ final class FarDriverDecoder {
         }
 
         // 换算转速和时速
+        //
+        // 完全回到最初那版算法，只额外乘一个用户可调的微调系数。
+        // 之前折腾过的 0xD0 轮径参数、MeasureSpeed 换算全部不再参与。
         let displayRpm = data.rawRpm < 0 ? 0 : data.rawRpm
         data.rpm = Double(displayRpm) * 4.0 / Double(motorPolePairs)
 
-        // ── 速度计算 ──
-        //
-        // 只用「转速 × 轮周长」这一条路。
-        // 之前试图用 0xD0 帧的轮径参数，实测读到的全是无效值（meas 恒为 65534），
-        // 所以那条路彻底停用。
-        //
-        // 用户可以在设置里用「速度微调」把显示值上下修正，弥补轮周长误差。
+        // 原始换算速度
         let baseSpeed = (data.rpm * wheelCircumferenceM * 60.0) / 1000.0
-        // 微调系数存在 UserDefaults，默认 1.0
+
+        // 微调系数（设置里可调），存 UserDefaults，默认 1.0
         let trim: Double = {
             let v = UserDefaults.standard.double(forKey: "speedTrim")
-            return (v > 0.1 && v < 5.0) ? v : 1.0
+            return (v > 0.05 && v < 10.0) ? v : 1.0
         }()
         data.speed = baseSpeed * trim
 

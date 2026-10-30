@@ -783,20 +783,20 @@ struct SettingsView: View {
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(themeMgr.color(.ok))
                     }
-                    Slider(value: $speedTrim, in: 0.5...1.5, step: 0.005)
+                    Slider(value: $speedTrim, in: 0.05...10.0, step: 0.01)
                         .tint(themeMgr.color(.ok))
                     HStack(spacing: 8) {
-                        Button("−0.01") { speedTrim = max(0.5, speedTrim - 0.01) }
+                        Button("÷2") { speedTrim = max(0.05, speedTrim / 2) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                        Button("−0.001") { speedTrim = max(0.5, speedTrim - 0.001) }
+                        Button("−0.01") { speedTrim = max(0.05, speedTrim - 0.01) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                         Spacer()
-                        Button("+0.001") { speedTrim = min(1.5, speedTrim + 0.001) }
+                        Button("+0.01") { speedTrim = min(10.0, speedTrim + 0.01) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                        Button("+0.01") { speedTrim = min(1.5, speedTrim + 0.01) }
+                        Button("×2") { speedTrim = min(10.0, speedTrim * 2) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                         Button("重置") { speedTrim = 1.0 }
@@ -806,7 +806,7 @@ struct SettingsView: View {
                 } header: {
                     Text("速度校准")
                 } footer: {
-                    Text("显示速度 = 转速换算值 × 这个系数。实际骑得比仪表快就调大，比仪表慢就调小。\n举例：仪表显示 30，手机 GPS 显示 33，就把系数调到 1.1。")
+                    Text("显示速度 = 转速换算值 × 这个系数（范围 0.05~10）。\n实际骑得比仪表快就调大，比仪表慢就调小。\n举例：仪表显示 5，手机 GPS 显示 30，就把系数调到 6。")
                 }
 
                 Section {
