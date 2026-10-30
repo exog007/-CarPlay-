@@ -504,26 +504,53 @@ struct SportDashView: View {
     }
 
     private var gearBoxes: some View {
-        HStack(spacing: 6) {
-            Text("P")
-                .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                .foregroundStyle(isParked ? Color.black : amber.opacity(0.35))
-                .frame(width: 24, height: 24)
-                .background(isParked ? red : Color.clear)
-                .overlay {
-                    Rectangle().stroke(amber.opacity(0.5), lineWidth: 1)
-                }
-            ForEach(1...3, id: \.self) { g in
-                Text("\(g)")
+        VStack(spacing: 5) {
+            HStack(spacing: 6) {
+                Text("P")
                     .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(mgr.data.gear == g && !isParked
-                                     ? Color.black
-                                     : amber.opacity(mgr.data.gear == 0 ? 0.2 : 0.6))
+                    .foregroundStyle(isParked ? Color.black : amber.opacity(0.35))
                     .frame(width: 24, height: 24)
-                    .background(mgr.data.gear == g && !isParked ? amber : Color.clear)
+                    .background(isParked ? red : Color.clear)
                     .overlay {
-                        Rectangle().stroke(amber.opacity(0.45), lineWidth: 1)
+                        Rectangle().stroke(amber.opacity(0.5), lineWidth: 1)
                     }
+                ForEach(1...3, id: \.self) { g in
+                    Text("\(g)")
+                        .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(mgr.data.gear == g && !isParked
+                                         ? Color.black
+                                         : amber.opacity(mgr.data.gear == 0 ? 0.2 : 0.6))
+                        .frame(width: 24, height: 24)
+                        .background(mgr.data.gear == g && !isParked ? amber : Color.clear)
+                        .overlay {
+                            Rectangle().stroke(amber.opacity(0.45), lineWidth: 1)
+                        }
+                }
+            }
+            // 小计里程 + 百公里电耗（紧贴档位框下方）
+            HStack(spacing: 8) {
+                HStack(spacing: 2) {
+                    Text("ODO")
+                        .font(.system(size: 6, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(amber.opacity(0.5))
+                    Text(trip.distanceText)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(cyan)
+                    Text("km")
+                        .font(.system(size: 6))
+                        .foregroundStyle(amber.opacity(0.5))
+                }
+                HStack(spacing: 2) {
+                    Text(trip.consumptionText)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(amber)
+                    Text("kWh/100")
+                        .font(.system(size: 6))
+                        .foregroundStyle(amber.opacity(0.5))
+                }
             }
         }
     }
@@ -758,11 +785,6 @@ struct SportDashView: View {
             divider
             bottomCell("电机", "\(mgr.data.motorTemp)", "°C",
                        mgr.data.motorTemp > 50 ? red : themeMgr.color(.motorTemp))
-            divider
-            // 小计里程 / 百公里电耗 / 平均功率
-            bottomCell("小计", trip.distanceText, "km", cyan)
-            divider
-            bottomCell("百公里", trip.consumptionText, "kWh", amber)
             divider
             bottomCell("平均", trip.avgPowerText, "W", themeMgr.color(.motorTemp))
         }
