@@ -811,25 +811,32 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextField("高德 Web 服务 Key", text: $amapKey)
+                    HStack {
+                        Text("内置 Key")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(AmapKey.builtIn)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                    }
+                    TextField("自定义 Key（留空则用内置）", text: $amapKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(.footnote, design: .monospaced))
                     HStack {
-                        Text("状态")
+                        Text("当前使用")
                             .foregroundStyle(themeMgr.foreground)
                         Spacer()
-                        Text(amapKey.trimmingCharacters(in: .whitespaces).isEmpty
-                             ? "未配置（用 Apple 地图）"
-                             : "已配置（用高德搜索）")
+                        Text(AmapKey.custom.isEmpty ? "内置 Key" : "自定义 Key")
                             .font(.caption)
-                            .foregroundStyle(amapKey.trimmingCharacters(in: .whitespaces).isEmpty
-                                             ? .secondary : themeMgr.color(.ok))
+                            .foregroundStyle(themeMgr.color(.ok))
                     }
                 } header: {
                     Text("高德地图")
                 } footer: {
-                    Text("在「高德开放平台 → 应用管理 → 我的应用」里创建应用，添加 Key 时选「Web 服务」类型（不用填 Bundle ID）。\n填了之后：搜索和路线规划走高德，地图底图仍用 Apple 地图（中国区数据就是高德提供的）。\n不填也能用，会自动回退到 Apple 地图搜索。")
+                    Text("默认已内置一个 Web 服务 Key，开箱即用。\n如果内置 Key 额度用完了，去「高德开放平台 → 应用管理 → 我的应用」申请自己的（服务平台选「Web 服务」，不用填 Bundle ID），填到上面覆盖。\n填了之后：搜索和路线走高德；地图底图仍用 Apple 地图（中国区数据就是高德提供的）。")
                 }
 
                 Section {

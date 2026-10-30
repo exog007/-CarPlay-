@@ -14,12 +14,25 @@ import CoreLocation
 
 /// 高德 API Key 存储
 enum AmapKey {
-    static var value: String {
+
+    /// 内置的默认 Key（Web 服务类型）
+    ///
+    /// 用户可以在设置里覆盖；这里只是免去每次重装都要手动填。
+    static let builtIn = "cad1b8a0263e386141633f22140d711b"
+
+    /// 用户在设置里手填的 Key（空表示没填）
+    static var custom: String {
         get { UserDefaults.standard.string(forKey: "amapKey") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "amapKey") }
     }
 
-    /// 有没有配 key
+    /// 实际使用的 Key：优先用用户填的，没有就用内置的
+    static var value: String {
+        let c = custom.trimmingCharacters(in: .whitespaces)
+        return c.isEmpty ? builtIn : c
+    }
+
+    /// 有没有可用的 key（内置的算有）
     static var configured: Bool {
         !value.trimmingCharacters(in: .whitespaces).isEmpty
     }
