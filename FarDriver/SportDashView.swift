@@ -504,7 +504,7 @@ struct SportDashView: View {
     }
 
     private var gearBoxes: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 42) {
             HStack(spacing: 6) {
                 Text("P")
                     .font(.system(size: 14, weight: .heavy, design: .monospaced))
