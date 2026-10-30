@@ -147,6 +147,8 @@ struct SportDashView: View {
         bootTimer?.invalidate()
         bootAnimating = true
         bootProgress = 0
+        // 播放自定义自检音效（有的话）
+        BootSound.shared.play()
         let start = Date()
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [self] t in
             let elapsed = Date().timeIntervalSince(start)

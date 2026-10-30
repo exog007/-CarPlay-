@@ -693,6 +693,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
     @State private var showAppearance = false
+    @State private var showBootSound = false
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
 
@@ -708,6 +709,30 @@ struct SettingsView: View {
                     Text("启动")
                 } footer: {
                     Text("打开后，App 一启动就切到竞技风格并横屏，直接当仪表用。\n进入时会播放一次开机自检动画：速度 0→299，转速 0→满量程，故障灯全亮。")
+                }
+
+                Section {
+                    Button {
+                        showBootSound = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .foregroundStyle(themeMgr.color(.rpm))
+                            Text("自检音效")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(BootSound.shared.hasSound ? "已设置" : "未设置")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("音效")
+                } footer: {
+                    Text("进入竞技仪表播放自检动画时，可以同时播放一段自定义音效。支持从相册选视频（自动抽声音）或从文件选音频。")
                 }
 
                 Section {
@@ -905,6 +930,9 @@ struct SettingsView: View {
             .onAppear { url = mgr.serverBaseURL }
             .sheet(isPresented: $showAppearance) {
                 AppearanceView(themeMgr: themeMgr)
+            }
+            .sheet(isPresented: $showBootSound) {
+                BootSoundView(themeMgr: themeMgr)
             }
         }
     }
