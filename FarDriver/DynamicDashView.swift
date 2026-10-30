@@ -48,6 +48,12 @@ struct DynamicDashView: View {
     @State private var routeOverlay: MKPolyline?
     /// 是否处于导航中（决定地图用 3D 跟车视角）
     @State private var navigating = false
+    /// 出行方式
+    @State private var travelMode: TravelMode = .scooter
+    /// 当前走到第几条指令
+    @State private var currentStepIndex = 0
+    /// 导航相机跟随计时器
+    @State private var navTimer: Timer?
 
     /// 融合车速
     private var speed: Double { gps.fused(with: mgr.data.speed) }
@@ -103,6 +109,11 @@ struct DynamicDashView: View {
 
             VStack(spacing: 0) {
                 topBar
+                // 导航中：顶部显示转向指引条
+                if navigating, let step = currentStep {
+                    navBanner(step)
+                        .padding(.top, 6)
+                }
                 Spacer(minLength: 0)
                 middleRow
                 Spacer(minLength: 0)
@@ -181,6 +192,35 @@ struct DynamicDashView: View {
     private var navSearchSheet: some View {
         NavigationStack {
             List {
+                // 出行方式
+                Section {
+                    HStack(spacing: 8) {
+                        ForEach(TravelMode.allCases) { m in
+                            Button {
+                                travelMode = m
+                            } label: {
+                                VStack(spacing: 3) {
+                                    Image(systemName: m.icon)
+                                        .font(.system(size: 16))
+                                    Text(m.title)
+                                        .font(.system(size: 9))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .background(travelMode == m
+                                            ? themeMgr.color(.ok).opacity(0.9)
+                                            : Color.clear)
+                                .foregroundStyle(travelMode == m ? .white : .secondary)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
+                } header: {
+                    Text("出行方式")
+                }
+
                 Section {
                     HStack {
                         Image(systemName: "magnifyingglass")
@@ -194,8 +234,10 @@ struct DynamicDashView: View {
                     }
                     Button("搜索") { runSearch() }
                         .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                } header: {
+                    Text("目的地")
                 } footer: {
-                    Text("输入地址或地点名，从结果里点一个开始导航")
+                    Text("输入地址或地点名，从结果里点一个选中，再点「开始导航」。")
                 }
 
                 if !results.isEmpty {
@@ -377,10 +419,10 @@ struct DynamicDashView: View {
         }
     }
 
-    /// 高德驾车路线 → 画在地图上并进入 3D 导航
+    /// 用高德/MapKit 规划路线并进入 3D 导航视角
     private func startAmapRoute(to place: AmapPlace) {
         guard let from = loc.location?.coordinate else { return }
-        AmapService.drivingRoute(from: from, to: place.coordinate) { result in
+        AmapService.route(from: from, to: place.coordinate, mode: travelMode) { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let r):
@@ -394,8 +436,8 @@ struct DynamicDashView: View {
                     route = nil
                     selectedAmap = nil
                     showSearch = false
-                    navigating = true
-                    applyNavigationCamera()
+                    currentStepIndex = 0
+                    beginNavigation()
                 case .failure:
                     // 高德失败，退回 MapKit 路线
                     let item = MKMapItem(placemark: MKPlacemark(coordinate: place.coordinate))
@@ -412,34 +454,79 @@ struct DynamicDashView: View {
         let req = MKDirections.Request()
         req.source = MKMapItem(placemark: MKPlacemark(coordinate: from))
         req.destination = item
-        req.transportType = .automobile
+        req.transportType = travelMode.mapKitTransport
         MKDirections(request: req).calculate { resp, _ in
             DispatchQueue.main.async {
                 guard let r = resp?.routes.first else { return }
                 route = r
+                routeOverlay = nil
+                amapRoute = nil
                 routeTarget = item
                 showSearch = false
                 // 进入导航：切 3D 跟车视角
-                navigating = true
-                applyNavigationCamera()
+                beginNavigation()
             }
         }
     }
 
-    /// 3D 跟车视角：低头 45°、朝向车头、贴着当前位置
+    /// 3D 跟车视角：低头 55°、朝向车头、贴着当前位置
     private func applyNavigationCamera() {
         guard let l = loc.location else { return }
-        let heading = loc.heading
-        // MapKit 的 3D 相机：pitch 45°，heading 跟车头
+        // 优先用 GPS 的 course（真实行进方向），拿不到才用磁力计 heading
+        let dir = l.course >= 0 ? l.course : loc.heading
         camera = .camera(MapCamera(
             centerCoordinate: l.coordinate,
-            distance: 260,          // 观察距离（米），越小越近
-            heading: heading,
-            pitch: 55               // 俯视角，3D 效果
+            distance: 240,
+            heading: dir,
+            pitch: 58
         ))
     }
 
+    /// 进入导航：开相机跟随 + 定位到第一条指令
+    private func beginNavigation() {
+        navigating = true
+        currentStepIndex = 0
+        applyNavigationCamera()
+        navTimer?.invalidate()
+        let t = Timer(timeInterval: 0.5, repeats: true) { _ in
+            guard navigating, let l = loc.location else { return }
+            // 相机跟车
+            applyNavigationCamera()
+            // 判断当前在第几段：找到离当前位置最近的 step 起点
+            updateCurrentStep(location: l)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        navTimer = t
+    }
+
+    /// 用当前位置找最近的 step，更新当前指令
+    private func updateCurrentStep(location: CLLocation) {
+        guard let r = amapRoute, !r.steps.isEmpty else { return }
+        var bestIdx = 0
+        var bestDist = Double.greatestFiniteMagnitude
+        for (i, s) in r.steps.enumerated() {
+            let d = location.distance(from: CLLocation(latitude: s.start.latitude,
+                                                       longitude: s.start.longitude))
+            if d < bestDist {
+                bestDist = d
+                bestIdx = i
+            }
+        }
+        // 只有明确靠近下一段（50 米内）才切换，避免来回跳
+        if bestDist < 50, bestIdx != currentStepIndex {
+            currentStepIndex = bestIdx
+        }
+    }
+
+    private func endNavigation() {
+        navTimer?.invalidate()
+        navTimer = nil
+        clearRoute()
+    }
+
     private func clearRoute() {
+        navTimer?.invalidate()
+        navTimer = nil
         route = nil
         amapRoute = nil
         routeOverlay = nil
@@ -447,6 +534,7 @@ struct DynamicDashView: View {
         selectedItem = nil
         selectedAmap = nil
         navigating = false
+        currentStepIndex = 0
         showSearch = false
         recenterMap()
     }
@@ -536,45 +624,42 @@ struct DynamicDashView: View {
         .frame(width: 62)
     }
 
-    // MARK: - 中间：左右圆环
+    // MARK: - 中间：左右两条独立弧
 
     private var middleRow: some View {
         HStack(spacing: 0) {
-            // 左：速度圆环
-            RingGauge(
+            // 左：速度弧（开口朝右，像左括号）
+            ArcGauge(
                 progress: speedRatio,
                 color: .white,
-                segments: 34,
-                lineWidth: 6,
-                startAngle: 130,
-                sweep: 240
+                side: .left
             ) {
-                VStack(spacing: -2) {
+                VStack(spacing: -3) {
                     Text("\(Int(speed.rounded()))")
-                        .font(.system(size: 40, weight: .light, design: .rounded))
+                        .font(.system(size: 44, weight: .light, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white)
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
                     Text("km/h")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.6))
                 }
+                .frame(width: 120)
             }
-            .frame(width: 160, height: 160)
+            .frame(width: 170, height: 230)
 
             Spacer(minLength: 0)
 
-            // 右：转速圆环
-            RingGauge(
+            // 右：转速弧（开口朝左，像右括号）
+            ArcGauge(
                 progress: rpmRatio,
                 color: green,
-                segments: 34,
-                lineWidth: 6,
-                startAngle: -50,
-                sweep: -240
+                side: .right
             ) {
-                VStack(spacing: -2) {
+                VStack(spacing: -3) {
                     Text("\(Int(displayRpm.rounded()))")
-                        .font(.system(size: 30, weight: .light, design: .rounded))
+                        .font(.system(size: 34, weight: .light, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(green)
                         .minimumScaleFactor(0.5)
@@ -583,10 +668,122 @@ struct DynamicDashView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.white.opacity(0.6))
                 }
-                .frame(width: 110)
+                .frame(width: 120)
             }
-            .frame(width: 160, height: 160)
+            .frame(width: 170, height: 230)
         }
+    }
+
+    // MARK: - 导航指引条（仿高德）
+
+    /// 当前指令
+    private var currentStep: AmapStep? {
+        guard let r = amapRoute, currentStepIndex < r.steps.count else { return nil }
+        return r.steps[currentStepIndex]
+    }
+
+    /// 剩余距离（从当前指令到终点）
+    private var remainDistance: Int {
+        guard let r = amapRoute else { return 0 }
+        let idx = min(currentStepIndex, max(0, r.steps.count - 1))
+        var sum = 0
+        for i in idx..<r.steps.count {
+            sum += r.steps[i].distance
+        }
+        return sum
+    }
+
+    /// 剩余时间
+    private var remainDuration: Int {
+        guard let r = amapRoute else { return 0 }
+        let idx = min(currentStepIndex, max(0, r.steps.count - 1))
+        var sum = 0
+        for i in idx..<r.steps.count {
+            sum += r.steps[i].duration
+        }
+        return sum
+    }
+
+    private func navBanner(_ step: AmapStep) -> some View {
+        HStack(spacing: 10) {
+            // 转向图标
+            Image(systemName: turnIcon(step.action))
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 34)
+
+            VStack(alignment: .leading, spacing: 1) {
+                // 距离 + 动作
+                Text(step.instruction)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !step.road.isEmpty {
+                    Text(step.road)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            // 剩余总量
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(String(format: "%.1f", Double(remainDistance) / 1000.0) + " km")
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .foregroundStyle(green)
+                Text(remainText)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+
+            // 结束导航
+            Button {
+                endNavigation()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.black.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(green.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .frame(maxWidth: 560)
+    }
+
+    private var remainText: String {
+        let m = remainDuration / 60
+        if m < 60 { return "\(m) 分钟" }
+        return "\(m / 60) 小时 \(m % 60) 分"
+    }
+
+    /// 高德 action 文字 → SF Symbol
+    private func turnIcon(_ action: String) -> String {
+        let a = action
+        if a.contains("左转") || a.contains("左") {
+            if a.contains("掉头") { return "arrow.uturn.left" }
+            return a.contains("急") ? "arrow.turn.up.left" : "arrow.turn.up.left"
+        }
+        if a.contains("右转") || a.contains("右") {
+            return "arrow.turn.up.right"
+        }
+        if a.contains("掉头") { return "arrow.uturn.backward" }
+        if a.contains("直行") { return "arrow.up" }
+        if a.contains("到达") || a.contains("终点") { return "flag.checkered" }
+        if a.contains("靠左") { return "arrow.up.left" }
+        if a.contains("靠右") { return "arrow.up.right" }
+        return "arrow.up"
     }
 
     // MARK: - 底部
@@ -729,57 +926,97 @@ struct DynamicDashView: View {
     }
 }
 
-// MARK: - 分段圆环
+// MARK: - 左右独立弧（参考图那种「」形状）
+//
+// 和之前的封闭圆环不同：这是两段单独的粗弧，
+//   左侧：从上方绕到下方，开口朝右，像「（」
+//   右侧：从上方绕到下方，开口朝左，像「）」
+// 弧本身是连续的（不分段），两端有端点帽，
+// 已走过的部分亮色，未走部分淡色。
 
-/// 分段式圆环刻度（参考动态仪表风格）
-///
-/// - progress: 0~1 当前进度
-/// - segments: 总段数（约 34 段，和参考图接近）
-/// - startAngle / sweep: 起始角和扫角，度。正数顺时针
-struct RingGauge<Content: View>: View {
+struct ArcGauge<Content: View>: View {
+    enum Side { case left, right }
+
     let progress: Double
     let color: Color
-    let segments: Int
-    let lineWidth: CGFloat
-    let startAngle: Double
-    let sweep: Double
+    let side: Side
     @ViewBuilder let content: Content
+
+    /// 弧的线宽
+    private let lineWidth: CGFloat = 7
+    /// 弧起止角度（SwiftUI：0°=右，90°=下，180°=左，270°=上）
+    private var startDeg: Double { side == .left ? 95 : 85 }
+    private var endDeg: Double   { side == .left ? 265 : 275 }
 
     var body: some View {
         GeometryReader { geo in
-            let size = min(geo.size.width, geo.size.height)
-            let radius = size / 2 - lineWidth
-            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let w = geo.size.width
+            let h = geo.size.height
+            // 圆心贴在自己那一侧的内边，这样弧刚好贴着屏幕左右边缘
+            let cx: CGFloat = side == .left ? w * 0.92 : w * 0.08
+            let cy: CGFloat = h / 2
+            let radius = min(w * 0.86, h / 2 - lineWidth)
 
             ZStack {
                 Canvas { ctx, _ in
-                    let gapRatio = 0.28     // 每段之间留 28% 空隙
-                    let segSweep = sweep / Double(segments)
-                    let lit = Int((Double(segments) * progress).rounded())
+                    // ① 底弧（全亮度的 16%）
+                    drawArc(ctx: &ctx, cx: cx, cy: cy, radius: radius,
+                            from: startDeg, to: endDeg, color: color.opacity(0.16))
 
-                    for i in 0..<segments {
-                        let a0 = startAngle + segSweep * Double(i)
-                        let a1 = a0 + segSweep * (1 - gapRatio)
-                        var path = Path()
-                        let steps = max(2, Int(abs(a1 - a0) / 3))
-                        for s in 0...steps {
-                            let t = Double(s) / Double(steps)
-                            let deg = a0 + (a1 - a0) * t
-                            let rad = deg * Double.pi / 180
-                            let p = CGPoint(x: center.x + CGFloat(cos(rad)) * radius,
-                                            y: center.y + CGFloat(sin(rad)) * radius)
-                            if s == 0 { path.move(to: p) } else { path.addLine(to: p) }
-                        }
-                        let isLit = i < lit
-                        ctx.stroke(path,
-                                   with: .color(isLit ? color : color.opacity(0.16)),
-                                   style: StrokeStyle(lineWidth: isLit ? lineWidth : lineWidth * 0.85,
-                                                      lineCap: .butt))
+                    // ② 进度弧
+                    let span = endDeg - startDeg          // 负值表示逆时针
+                    let cur = startDeg + span * progress
+                    if abs(progress) > 0.001 {
+                        drawArc(ctx: &ctx, cx: cx, cy: cy, radius: radius,
+                                from: startDeg, to: cur, color: color)
                     }
+
+                    // ③ 两端端点小圆点
+                    dot(ctx: &ctx, cx: cx, cy: cy, radius: radius,
+                        deg: startDeg, color: color.opacity(0.55), size: 3)
+                    dot(ctx: &ctx, cx: cx, cy: cy, radius: radius,
+                        deg: endDeg, color: color.opacity(0.55), size: 3)
+
+                    // ④ 当前进度位置的大亮点
+                    dot(ctx: &ctx, cx: cx, cy: cy, radius: radius,
+                        deg: cur, color: .white, size: 5.5)
                 }
+
+                // 数值显示在最靠内的一侧
                 content
+                    .offset(x: side == .left ? w * 0.10 : -w * 0.10)
             }
         }
+    }
+
+    /// 画一段圆弧
+    private func drawArc(ctx: inout GraphicsContext,
+                         cx: CGFloat, cy: CGFloat, radius: CGFloat,
+                         from: Double, to: Double, color: Color) {
+        guard abs(to - from) > 0.2 else { return }
+        var path = Path()
+        let steps = max(6, Int(abs(to - from) / 2))
+        for i in 0...steps {
+            let t = Double(i) / Double(steps)
+            let deg = from + (to - from) * t
+            let rad = deg * Double.pi / 180
+            let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
+                            y: cy + CGFloat(sin(rad)) * radius)
+            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+        }
+        ctx.stroke(path, with: .color(color),
+                   style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+    }
+
+    /// 在弧上某个角度画一个圆点
+    private func dot(ctx: inout GraphicsContext,
+                     cx: CGFloat, cy: CGFloat, radius: CGFloat,
+                     deg: Double, color: Color, size: CGFloat) {
+        let rad = deg * Double.pi / 180
+        let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
+                        y: cy + CGFloat(sin(rad)) * radius)
+        let rect = CGRect(x: p.x - size, y: p.y - size, width: size * 2, height: size * 2)
+        ctx.fill(Circle().path(in: rect), with: .color(color))
     }
 }
 
@@ -788,11 +1025,18 @@ struct RingGauge<Content: View>: View {
 #Preview {
     ZStack {
         Color.black
-        RingGauge(progress: 0.6, color: .green, segments: 34, lineWidth: 6,
-                  startAngle: 130, sweep: 240) {
-            Text("42").font(.system(size: 40, weight: .light, design: .rounded))
-                .foregroundStyle(.white)
+        HStack(spacing: 40) {
+            ArcGauge(progress: 0.6, color: .white, side: .left) {
+                Text("42").font(.system(size: 44, weight: .light, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 170, height: 230)
+
+            ArcGauge(progress: 0.4, color: .green, side: .right) {
+                Text("2536").font(.system(size: 34, weight: .light, design: .rounded))
+                    .foregroundStyle(.green)
+            }
+            .frame(width: 170, height: 230)
         }
-        .frame(width: 160, height: 160)
     }
 }
