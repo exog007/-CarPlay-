@@ -682,6 +682,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
     @State private var showAppearance = false
+    /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
+    @AppStorage("speedTrim") private var speedTrim: Double = 1.0
 
     var body: some View {
         NavigationStack {
@@ -770,6 +772,41 @@ struct SettingsView: View {
                     Text("数据上传")
                 } footer: {
                     Text("主界面的上传卡片上也有这个开关，两边同步")
+                }
+
+                Section {
+                    HStack {
+                        Text("速度微调")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "×%.3f", speedTrim))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(themeMgr.color(.ok))
+                    }
+                    Slider(value: $speedTrim, in: 0.5...1.5, step: 0.005)
+                        .tint(themeMgr.color(.ok))
+                    HStack(spacing: 8) {
+                        Button("−0.01") { speedTrim = max(0.5, speedTrim - 0.01) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("−0.001") { speedTrim = max(0.5, speedTrim - 0.001) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Spacer()
+                        Button("+0.001") { speedTrim = min(1.5, speedTrim + 0.001) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("+0.01") { speedTrim = min(1.5, speedTrim + 0.01) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("重置") { speedTrim = 1.0 }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                } header: {
+                    Text("速度校准")
+                } footer: {
+                    Text("显示速度 = 转速换算值 × 这个系数。实际骑得比仪表快就调大，比仪表慢就调小。\n举例：仪表显示 30，手机 GPS 显示 33，就把系数调到 1.1。")
                 }
 
                 Section {

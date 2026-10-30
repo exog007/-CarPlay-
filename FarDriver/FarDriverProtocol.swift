@@ -198,29 +198,20 @@ final class FarDriverDecoder {
         let displayRpm = data.rawRpm < 0 ? 0 : data.rawRpm
         data.rpm = Double(displayRpm) * 4.0 / Double(motorPolePairs)
 
-        // ── 速度计算：优先用控制器自己的参数 ──
+        // ── 速度计算 ──
         //
-        // 控制器里配了真实的轮径数据，用它算比手写轮周长准得多。
-        //   speed = MeasureSpeed * (0.00376991136 * (R*1270 + W*Ratio) / RateRatio)
-        var controllerDerived = 0.0
-        if data.d0Seen && data.rateRatio > 0 {
-            let wheelTerm = Double(data.wheelRadius) * 1270.0
-                + Double(data.wheelWidth) * Double(data.wheelRatio)
-            controllerDerived = Double(data.measureSpeed)
-                * (0.00376991136 * wheelTerm / Double(data.rateRatio))
-        }
-
-        // 三种来源的优先级：
-        //   ① 控制器配了轮径参数 → 公式换算（最准）
-        //   ② 控制器直接给了 km/h → 直接用
-        //   ③ 都没有 → 退回手写的轮周长
-        if controllerDerived > 0 && controllerDerived < 300 {
-            data.speed = controllerDerived
-        } else if data.d0Seen && data.controllerSpeedKmh > 0 && data.controllerSpeedKmh < 300 {
-            data.speed = data.controllerSpeedKmh
-        } else {
-            data.speed = (data.rpm * wheelCircumferenceM * 60.0) / 1000.0
-        }
+        // 只用「转速 × 轮周长」这一条路。
+        // 之前试图用 0xD0 帧的轮径参数，实测读到的全是无效值（meas 恒为 65534），
+        // 所以那条路彻底停用。
+        //
+        // 用户可以在设置里用「速度微调」把显示值上下修正，弥补轮周长误差。
+        let baseSpeed = (data.rpm * wheelCircumferenceM * 60.0) / 1000.0
+        // 微调系数存在 UserDefaults，默认 1.0
+        let trim: Double = {
+            let v = UserDefaults.standard.double(forKey: "speedTrim")
+            return (v > 0.1 && v < 5.0) ? v : 1.0
+        }()
+        data.speed = baseSpeed * trim
 
         data.recomputePower()
         data.updatedAt = Date()
