@@ -32,6 +32,8 @@ enum DashStyle: String, Codable, CaseIterable, Identifiable {
     case standard
     /// 竞技：黑底琥珀线框，EVA 诊断屏风格
     case sport
+    /// 动态：全屏地图 + 左右圆环 + 顶部四项数据
+    case dynamic
 
     var id: String { rawValue }
 
@@ -39,6 +41,7 @@ enum DashStyle: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .standard: return "标准风格"
         case .sport:    return "竞技风格"
+        case .dynamic:  return "动态仪表"
         }
     }
 
@@ -46,6 +49,7 @@ enum DashStyle: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .standard: return "卡片分栏，速度 / 档位 / 电压功率"
         case .sport:    return "黑底琥珀线框，转速刻度条 + 大号速度"
+        case .dynamic:  return "全屏地图 + 左右圆环 + 顶部四项"
         }
     }
 
@@ -53,6 +57,7 @@ enum DashStyle: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .standard: return "rectangle.split.3x1.fill"
         case .sport:    return "speedometer"
+        case .dynamic:  return "map"
         }
     }
 }

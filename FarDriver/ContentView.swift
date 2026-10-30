@@ -39,9 +39,14 @@ struct ContentView: View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
             let sportMode = (themeMgr.theme.dashStyle == .sport)
+            let dynamicMode = (themeMgr.theme.dashStyle == .dynamic)
+            let fullscreenDash = landscape && (sportMode || dynamicMode)
             NavigationStack {
                 Group {
-                    if landscape && sportMode {
+                    if landscape && dynamicMode {
+                        // 动态仪表：全屏地图 + 左右圆环，完全铺满，不要导航栏
+                        DynamicDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
+                    } else if landscape && sportMode {
                         // 竞技风格：整屏黑底，不要导航栏和卡片，铺满
                         ScrollView {
                             SportDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
@@ -49,7 +54,7 @@ struct ContentView: View {
                         }
                         .scrollContentBackground(.hidden)
                         .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
-                    } else if launchingSport && sportMode && !landscape {
+                    } else if launchingSport && (sportMode || dynamicMode) && !landscape {
                         // 只在「刚启动、正在等横屏生效」的这一瞬间显示遮罩，
                         // 避免闪一下标准界面。用户手动切回竖屏时 launchingSport 已经是 false，
                         // 正常走下面的标准界面，不会卡在转圈。
@@ -79,8 +84,9 @@ struct ContentView: View {
                         .background(themeMgr.backgroundView)
                     }
                 }
-                .navigationTitle(landscape && sportMode ? "" : "大肥鱼控制器")
+                .navigationTitle(fullscreenDash ? "" : "大肥鱼控制器")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar(fullscreenDash ? .hidden : .visible, for: .navigationBar)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
@@ -91,21 +97,22 @@ struct ContentView: View {
                                   : "rectangle.landscape.rotate")
                         }
                     }
-                    // 竞技/标准切换：横屏时一键换皮肤
+                    // 竞技 ↔ 动态 切换：横屏时一键换皮肤
                     if landscape {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button {
                                 withAnimation(.easeInOut(duration: 0.2)) {
-                                    themeMgr.theme.dashStyle =
-                                        sportMode ? .standard : .sport
+                                    switch themeMgr.theme.dashStyle {
+                                    case .sport:   themeMgr.theme.dashStyle = .dynamic
+                                    case .dynamic: themeMgr.theme.dashStyle = .sport
+                                    case .standard: themeMgr.theme.dashStyle = .sport
+                                    }
                                 }
                             } label: {
-                                Image(systemName: sportMode
-                                      ? "rectangle.split.3x1.fill"
-                                      : "speedometer")
-                                    .foregroundStyle(sportMode
-                                                     ? themeMgr.color(.power)
-                                                     : themeMgr.foreground)
+                                Image(systemName: dynamicMode ? "speedometer" : "map")
+                                    .foregroundStyle(dynamicMode
+                                                     ? themeMgr.color(.ok)
+                                                     : themeMgr.color(.power))
                             }
                         }
                     }
