@@ -34,6 +34,20 @@ struct DynamicDashView: View {
     @State private var routeTarget: MKMapItem?
     /// 到目标的路线
     @State private var route: MKRoute?
+    /// 搜索列表里当前选中的地点
+    @State private var selectedItem: MKMapItem?
+    /// 高德搜索结果
+    @State private var amapPlaces: [AmapPlace] = []
+    /// 高德选中的地点
+    @State private var selectedAmap: AmapPlace?
+    /// 这次搜索是否走高德
+    @State private var useAmap = false
+    /// 高德算出来的路线
+    @State private var amapRoute: AmapRoute?
+    /// 高德路线的画线对象
+    @State private var routeOverlay: MKPolyline?
+    /// 是否处于导航中（决定地图用 3D 跟车视角）
+    @State private var navigating = false
 
     /// 融合车速
     private var speed: Double { gps.fused(with: mgr.data.speed) }
@@ -103,8 +117,13 @@ struct DynamicDashView: View {
             recenterMap()
         }
         .onChange(of: loc.location) { _, _ in
-            // 位置第一次拿到时把地图居中
-            recenterMap()
+            // 导航中：每来一个新位置就把 3D 相机跟过去
+            if navigating {
+                applyNavigationCamera()
+            } else {
+                // 没导航时只居中一次（避免用户手动拖地图被拉回去）
+                if camera == .automatic { recenterMap() }
+            }
         }
     }
 
@@ -129,6 +148,12 @@ struct DynamicDashView: View {
             // 导航路线
             if let route {
                 MapPolyline(route.polyline)
+                    .stroke(themeMgr.color(.ok),
+                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+            }
+            // 高德路线
+            if let overlay = routeOverlay {
+                MapPolyline(overlay)
                     .stroke(themeMgr.color(.ok),
                             style: StrokeStyle(lineWidth: 5, lineCap: .round))
             }
@@ -174,22 +199,113 @@ struct DynamicDashView: View {
                 }
 
                 if !results.isEmpty {
-                    Section("搜索结果") {
+                    Section("搜索结果（点一下选中）") {
                         ForEach(results, id: \.self) { item in
                             Button {
-                                startRoute(to: item)
+                                selectedItem = item
+                                selectedAmap = nil
                             } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.name ?? "未命名地点")
-                                        .foregroundStyle(.primary)
-                                    if let addr = item.placemark.title {
-                                        Text(addr)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.name ?? "未命名地点")
+                                            .foregroundStyle(.primary)
+                                        if let addr = item.placemark.title {
+                                            Text(addr)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    if let sel = selectedItem, sel == item {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.green)
                                     }
                                 }
                             }
                         }
+                    }
+                }
+
+                // 高德搜索结果
+                if !amapPlaces.isEmpty {
+                    Section("搜索结果 · 高德（点一下选中）") {
+                        ForEach(amapPlaces) { p in
+                            Button {
+                                selectedAmap = p
+                                selectedItem = nil
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(p.name)
+                                            .foregroundStyle(.primary)
+                                        Text(p.address)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    if p.distance > 0 {
+                                        Text(p.distanceText)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    if let sel = selectedAmap, sel.id == p.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.green)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 选中之后才出现「开始导航」（高德结果）
+                if let sel = selectedAmap {
+                    Section {
+                        Button {
+                            startAmapRoute(to: sel)
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
+                                Text("开始导航到「\(sel.name)」")
+                                    .fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(themeMgr.color(.ok))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
+                    } header: {
+                        Text("导航 · 高德")
+                    } footer: {
+                        Text("点「开始导航」后地图会切到 3D 跟车视角。")
+                    }
+                }
+
+                // 选中之后才出现「开始导航」（MapKit 结果）
+                if let sel = selectedItem {
+                    Section {
+                        Button {
+                            startRoute(to: sel)
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
+                                Text("开始导航到「\(sel.name ?? "目的地")」")
+                                    .fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(themeMgr.color(.ok))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
+                    } header: {
+                        Text("导航")
+                    } footer: {
+                        Text("点「开始导航」后地图会切到 3D 跟车视角。")
                     }
                 }
 
@@ -215,14 +331,39 @@ struct DynamicDashView: View {
         }
     }
 
-    /// 用 MapKit 本地搜索
+    /// 搜索结果（高德优先，没 key 或失败就回退 MapKit）
     private func runSearch() {
         let q = searchText.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return }
         searching = true
+        amapPlaces = []
+        useAmap = AmapKey.configured
+
+        if AmapKey.configured {
+            AmapService.search(keyword: q, near: loc.location?.coordinate) { result in
+                DispatchQueue.main.async {
+                    searching = false
+                    switch result {
+                    case .success(let places):
+                        amapPlaces = places
+                        results = []
+                    case .failure:
+                        // 高德失败就回退 MapKit
+                        useAmap = false
+                        runMapKitSearch(q)
+                    }
+                }
+            }
+            return
+        }
+        runMapKitSearch(q)
+    }
+
+    /// MapKit 回退搜索
+    private func runMapKitSearch(_ q: String) {
+        searching = true
         let req = MKLocalSearch.Request()
         req.naturalLanguageQuery = q
-        // 以当前位置为中心，搜索半径 30km
         if let c = loc.location?.coordinate {
             req.region = MKCoordinateRegion(center: c,
                                             latitudinalMeters: 30000,
@@ -236,7 +377,36 @@ struct DynamicDashView: View {
         }
     }
 
-    /// 规划路线
+    /// 高德驾车路线 → 画在地图上并进入 3D 导航
+    private func startAmapRoute(to place: AmapPlace) {
+        guard let from = loc.location?.coordinate else { return }
+        AmapService.drivingRoute(from: from, to: place.coordinate) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let r):
+                    amapRoute = r
+                    // 用高德的坐标点造一条 MKPolyline 用来画线
+                    var coords = r.points
+                    routeOverlay = MKPolyline(coordinates: &coords, count: coords.count)
+                    // 目的地标记
+                    routeTarget = MKMapItem(placemark: MKPlacemark(coordinate: place.coordinate))
+                    routeTarget?.name = place.name
+                    route = nil
+                    selectedAmap = nil
+                    showSearch = false
+                    navigating = true
+                    applyNavigationCamera()
+                case .failure:
+                    // 高德失败，退回 MapKit 路线
+                    let item = MKMapItem(placemark: MKPlacemark(coordinate: place.coordinate))
+                    item.name = place.name
+                    startRoute(to: item)
+                }
+            }
+        }
+    }
+
+    /// 规划路线并进入 3D 导航视角
     private func startRoute(to item: MKMapItem) {
         guard let from = loc.location?.coordinate else { return }
         let req = MKDirections.Request()
@@ -249,15 +419,34 @@ struct DynamicDashView: View {
                 route = r
                 routeTarget = item
                 showSearch = false
-                // 把地图缩放到能看见整条路线
-                camera = .rect(r.polyline.boundingMapRect)
+                // 进入导航：切 3D 跟车视角
+                navigating = true
+                applyNavigationCamera()
             }
         }
     }
 
+    /// 3D 跟车视角：低头 45°、朝向车头、贴着当前位置
+    private func applyNavigationCamera() {
+        guard let l = loc.location else { return }
+        let heading = loc.heading
+        // MapKit 的 3D 相机：pitch 45°，heading 跟车头
+        camera = .camera(MapCamera(
+            centerCoordinate: l.coordinate,
+            distance: 260,          // 观察距离（米），越小越近
+            heading: heading,
+            pitch: 55               // 俯视角，3D 效果
+        ))
+    }
+
     private func clearRoute() {
         route = nil
+        amapRoute = nil
+        routeOverlay = nil
         routeTarget = nil
+        selectedItem = nil
+        selectedAmap = nil
+        navigating = false
         showSearch = false
         recenterMap()
     }
@@ -418,17 +607,9 @@ struct DynamicDashView: View {
             // 右：导航状态 + 电量
             HStack(spacing: 8) {
                 if let r = route, let t = routeTarget {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                            .font(.system(size: 10))
-                        Text(t.name ?? "导航中")
-                            .font(.system(size: 9, weight: .medium))
-                            .lineLimit(1)
-                        Text(String(format: "%.1fkm", r.distance / 1000))
-                            .font(.system(size: 9, design: .monospaced))
-                    }
-                    .foregroundStyle(themeMgr.color(.ok))
-                    .frame(maxWidth: 180)
+                    navStatus(name: t.name ?? "导航中", distance: r.distance)
+                } else if let r = amapRoute, let t = routeTarget {
+                    navStatus(name: t.name ?? "导航中", distance: Double(r.distance))
                 }
                 Image(systemName: "battery.100percent")
                     .font(.system(size: 11))
@@ -503,8 +684,22 @@ struct DynamicDashView: View {
         }
     }
 
-    private func gearChip(_ text: String, active: Bool) -> some View {
-        Text(text)
+    /// 底部导航状态小条
+    private func navStatus(name: String, distance: Double) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                .font(.system(size: 10))
+            Text(name)
+                .font(.system(size: 9, weight: .medium))
+                .lineLimit(1)
+            Text(String(format: "%.1fkm", distance / 1000))
+                .font(.system(size: 9, design: .monospaced))
+        }
+        .foregroundStyle(themeMgr.color(.ok))
+        .frame(maxWidth: 180)
+    }
+
+    private func gearChip(_ text: String, active: Bool) -> some View {        Text(text)
             .font(.system(size: 12, weight: .heavy, design: .monospaced))
             .foregroundStyle(active ? .black : .white)
             .frame(width: 24, height: 22)

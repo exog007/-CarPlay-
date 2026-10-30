@@ -734,6 +734,8 @@ struct SettingsView: View {
     @State private var url = ""
     @State private var showAppearance = false
     @State private var showBootSound = false
+    /// 高德 Web 服务 Key
+    @AppStorage("amapKey") private var amapKey: String = ""
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
 
@@ -806,6 +808,28 @@ struct SettingsView: View {
                     Text("本地 deepseek 地址")
                 } footer: {
                     Text("例如 http://192.168.100.101:38281\n手机和电脑要在同一个 WiFi 下")
+                }
+
+                Section {
+                    TextField("高德 Web 服务 Key", text: $amapKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(.footnote, design: .monospaced))
+                    HStack {
+                        Text("状态")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(amapKey.trimmingCharacters(in: .whitespaces).isEmpty
+                             ? "未配置（用 Apple 地图）"
+                             : "已配置（用高德搜索）")
+                            .font(.caption)
+                            .foregroundStyle(amapKey.trimmingCharacters(in: .whitespaces).isEmpty
+                                             ? .secondary : themeMgr.color(.ok))
+                    }
+                } header: {
+                    Text("高德地图")
+                } footer: {
+                    Text("在「高德开放平台 → 应用管理 → 我的应用」里创建应用，添加 Key 时选「Web 服务」类型（不用填 Bundle ID）。\n填了之后：搜索和路线规划走高德，地图底图仍用 Apple 地图（中国区数据就是高德提供的）。\n不填也能用，会自动回退到 Apple 地图搜索。")
                 }
 
                 Section {
