@@ -427,7 +427,15 @@ struct SportDashView: View {
 
             Spacer(minLength: 0)
 
-            gearBoxes
+            // 中间列：档位框垂直居中，小计里程贴在底部
+            ZStack {
+                gearBoxes                              // 居中
+                VStack {
+                    Spacer(minLength: 0)
+                    tripReadout                        // 贴底
+                }
+            }
+            .frame(width: 120, maxHeight: .infinity)
 
             Spacer(minLength: 0)
 
@@ -503,54 +511,56 @@ struct SportDashView: View {
         }
     }
 
+    /// 档位框（P / 1 / 2 / 3），在中间行里垂直居中
     private var gearBoxes: some View {
-        VStack(spacing: 42) {
-            HStack(spacing: 6) {
-                Text("P")
+        HStack(spacing: 6) {
+            Text("P")
+                .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                .foregroundStyle(isParked ? Color.black : amber.opacity(0.35))
+                .frame(width: 24, height: 24)
+                .background(isParked ? red : Color.clear)
+                .overlay {
+                    Rectangle().stroke(amber.opacity(0.5), lineWidth: 1)
+                }
+            ForEach(1...3, id: \.self) { g in
+                Text("\(g)")
                     .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(isParked ? Color.black : amber.opacity(0.35))
+                    .foregroundStyle(mgr.data.gear == g && !isParked
+                                     ? Color.black
+                                     : amber.opacity(mgr.data.gear == 0 ? 0.2 : 0.6))
                     .frame(width: 24, height: 24)
-                    .background(isParked ? red : Color.clear)
+                    .background(mgr.data.gear == g && !isParked ? amber : Color.clear)
                     .overlay {
-                        Rectangle().stroke(amber.opacity(0.5), lineWidth: 1)
+                        Rectangle().stroke(amber.opacity(0.45), lineWidth: 1)
                     }
-                ForEach(1...3, id: \.self) { g in
-                    Text("\(g)")
-                        .font(.system(size: 14, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(mgr.data.gear == g && !isParked
-                                         ? Color.black
-                                         : amber.opacity(mgr.data.gear == 0 ? 0.2 : 0.6))
-                        .frame(width: 24, height: 24)
-                        .background(mgr.data.gear == g && !isParked ? amber : Color.clear)
-                        .overlay {
-                            Rectangle().stroke(amber.opacity(0.45), lineWidth: 1)
-                        }
-                }
             }
-            // 小计里程 + 百公里电耗（紧贴档位框下方）
-            HStack(spacing: 8) {
-                HStack(spacing: 2) {
-                    Text("ODO")
-                        .font(.system(size: 6, weight: .semibold))
-                        .tracking(0.4)
-                        .foregroundStyle(amber.opacity(0.5))
-                    Text(trip.distanceText)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(cyan)
-                    Text("km")
-                        .font(.system(size: 6))
-                        .foregroundStyle(amber.opacity(0.5))
-                }
-                HStack(spacing: 2) {
-                    Text(trip.consumptionText)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(amber)
-                    Text("kWh/100")
-                        .font(.system(size: 6))
-                        .foregroundStyle(amber.opacity(0.5))
-                }
+        }
+    }
+
+    /// 小计里程 + 百公里电耗，贴在中间行底部
+    private var tripReadout: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 2) {
+                Text("ODO")
+                    .font(.system(size: 6, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(amber.opacity(0.5))
+                Text(trip.distanceText)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(cyan)
+                Text("km")
+                    .font(.system(size: 6))
+                    .foregroundStyle(amber.opacity(0.5))
+            }
+            HStack(spacing: 2) {
+                Text(trip.consumptionText)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(amber)
+                Text("kWh/100")
+                    .font(.system(size: 6))
+                    .foregroundStyle(amber.opacity(0.5))
             }
         }
     }
