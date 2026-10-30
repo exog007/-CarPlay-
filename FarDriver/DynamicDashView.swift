@@ -18,9 +18,22 @@ struct DynamicDashView: View {
     @ObservedObject var trip = TripMeter.shared
     @ObservedObject var weather = WeatherService.shared
     @ObservedObject var loc = LocationService.shared
+    @ObservedObject var np = NowPlayingService.shared
 
     /// 地图相机位置
     @State private var camera: MapCameraPosition = .automatic
+    /// 长按后弹出搜索
+    @State private var showSearch = false
+    /// 搜索框文字
+    @State private var searchText = ""
+    /// 搜索结果
+    @State private var results: [MKMapItem] = []
+    /// 正在搜索
+    @State private var searching = false
+    /// 导航中的目标
+    @State private var routeTarget: MKMapItem?
+    /// 到目标的路线
+    @State private var route: MKRoute?
 
     /// 融合车速
     private var speed: Double { gps.fused(with: mgr.data.speed) }
@@ -113,11 +126,140 @@ struct DynamicDashView: View {
                     }
                 }
             }
+            // 导航路线
+            if let route {
+                MapPolyline(route.polyline)
+                    .stroke(themeMgr.color(.ok),
+                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+            }
+            // 目的地标记
+            if let target = routeTarget {
+                Marker(item: target)
+                    .tint(themeMgr.color(.power))
+            }
         }
         .mapStyle(.standard(elevation: .flat))
         .mapControlVisibility(.hidden)
         .ignoresSafeArea()
         .opacity(0.55)
+        // 长按 → 打开搜索
+        .onLongPressGesture(minimumDuration: 0.45) {
+            showSearch = true
+        }
+        .sheet(isPresented: $showSearch) {
+            navSearchSheet
+        }
+    }
+
+    // MARK: - 导航搜索
+
+    private var navSearchSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("搜索目的地", text: $searchText)
+                            .submitLabel(.search)
+                            .onSubmit { runSearch() }
+                        if searching {
+                            ProgressView().scaleEffect(0.8)
+                        }
+                    }
+                    Button("搜索") { runSearch() }
+                        .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                } footer: {
+                    Text("输入地址或地点名，从结果里点一个开始导航")
+                }
+
+                if !results.isEmpty {
+                    Section("搜索结果") {
+                        ForEach(results, id: \.self) { item in
+                            Button {
+                                startRoute(to: item)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.name ?? "未命名地点")
+                                        .foregroundStyle(.primary)
+                                    if let addr = item.placemark.title {
+                                        Text(addr)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if routeTarget != nil {
+                    Section {
+                        Button(role: .destructive) {
+                            clearRoute()
+                        } label: {
+                            Label("结束导航", systemImage: "xmark.circle")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("导航")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") {
+                        showSearch = false
+                    }
+                }
+            }
+        }
+    }
+
+    /// 用 MapKit 本地搜索
+    private func runSearch() {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        searching = true
+        let req = MKLocalSearch.Request()
+        req.naturalLanguageQuery = q
+        // 以当前位置为中心，搜索半径 30km
+        if let c = loc.location?.coordinate {
+            req.region = MKCoordinateRegion(center: c,
+                                            latitudinalMeters: 30000,
+                                            longitudinalMeters: 30000)
+        }
+        MKLocalSearch(request: req).start { resp, _ in
+            DispatchQueue.main.async {
+                searching = false
+                results = resp?.mapItems ?? []
+            }
+        }
+    }
+
+    /// 规划路线
+    private func startRoute(to item: MKMapItem) {
+        guard let from = loc.location?.coordinate else { return }
+        let req = MKDirections.Request()
+        req.source = MKMapItem(placemark: MKPlacemark(coordinate: from))
+        req.destination = item
+        req.transportType = .automobile
+        MKDirections(request: req).calculate { resp, _ in
+            DispatchQueue.main.async {
+                guard let r = resp?.routes.first else { return }
+                route = r
+                routeTarget = item
+                showSearch = false
+                // 把地图缩放到能看见整条路线
+                camera = .rect(r.polyline.boundingMapRect)
+            }
+        }
+    }
+
+    private func clearRoute() {
+        route = nil
+        routeTarget = nil
+        showSearch = false
+        recenterMap()
     }
 
     private func recenterMap() {
@@ -261,20 +403,33 @@ struct DynamicDashView: View {
     // MARK: - 底部
 
     private var bottomBar: some View {
-        HStack {
+        HStack(spacing: 12) {
             // 左：档位
-            HStack(spacing: 5) {
-                gearChip(isParked ? "P" : (mgr.data.gear > 0 ? "\(mgr.data.gear)" : "—"),
-                         active: isParked)
-            }
-            Spacer()
-            // 中：媒体占位
-            Text("未在播放")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.45))
-            Spacer()
-            // 右：电量
-            HStack(spacing: 4) {
+            gearChip(isParked ? "P" : (mgr.data.gear > 0 ? "\(mgr.data.gear)" : "—"),
+                     active: isParked)
+
+            Spacer(minLength: 8)
+
+            // 中：媒体信息
+            mediaBar
+
+            Spacer(minLength: 8)
+
+            // 右：导航状态 + 电量
+            HStack(spacing: 8) {
+                if let r = route, let t = routeTarget {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                            .font(.system(size: 10))
+                        Text(t.name ?? "导航中")
+                            .font(.system(size: 9, weight: .medium))
+                            .lineLimit(1)
+                        Text(String(format: "%.1fkm", r.distance / 1000))
+                            .font(.system(size: 9, design: .monospaced))
+                    }
+                    .foregroundStyle(themeMgr.color(.ok))
+                    .frame(maxWidth: 180)
+                }
                 Image(systemName: "battery.100percent")
                     .font(.system(size: 11))
                     .foregroundStyle(batteryPercent < 0.3 ? accent : green)
@@ -283,7 +438,69 @@ struct DynamicDashView: View {
                     .foregroundStyle(.white)
             }
         }
-        .frame(height: 26)
+        .frame(height: 28)
+    }
+
+    /// 媒体条：封面 + 歌名/歌手 + 进度
+    private var mediaBar: some View {
+        HStack(spacing: 8) {
+            // 封面
+            ZStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(.white.opacity(0.12))
+                    .frame(width: 26, height: 26)
+                if let art = np.artwork {
+                    Image(uiImage: art)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 26, height: 26)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                } else {
+                    Image(systemName: np.hasInfo ? "music.note" : "music.note.slash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+            }
+
+            if np.hasInfo {
+                VStack(alignment: .leading, spacing: 1) {
+                    // 歌名
+                    Text(np.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: 150, alignment: .leading)
+                    // 歌手 · 进度
+                    HStack(spacing: 5) {
+                        Text(np.artist)
+                            .font(.system(size: 8))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                        if np.duration > 0 {
+                            Text("\(np.elapsedText)/\(np.durationText)")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.45))
+                        }
+                    }
+                }
+                // 进度条
+                if np.duration > 0 {
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(.white.opacity(0.15))
+                            .frame(width: 54, height: 2.5)
+                        Capsule()
+                            .fill(green)
+                            .frame(width: max(0, CGFloat(np.progress) * 54), height: 2.5)
+                    }
+                    .animation(.linear(duration: 1), value: np.progress)
+                }
+            } else {
+                Text("未在播放")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
     }
 
     private func gearChip(_ text: String, active: Bool) -> some View {
