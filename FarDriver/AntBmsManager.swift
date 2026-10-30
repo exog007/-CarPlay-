@@ -109,16 +109,11 @@ final class AntBmsManager: NSObject, ObservableObject {
         discovered.removeAll()
         scanning = true
         errorMsg = nil
+        // 允许重复上报：后开机/后靠近的 BMS 也能被抓到
         central.scanForPeripherals(withServices: nil,
-                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
-            guard let self = self, self.scanning else { return }
-            self.stopScan()
-            if self.discovered.isEmpty {
-                self.errorMsg = "15 秒内没搜到设备。确认 BMS 已通电、手机蓝牙已开"
-            }
-        }
+        // 不再超时停扫，只要在范围内就一直能发现
     }
 
     func stopScan() {
@@ -264,39 +259,39 @@ extension AntBmsManager: CBCentralManagerDelegate {
         let name = peripheral.name
             ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? ""
-        // 蚂蚁 BMS 通常叫 ANT-xxx / ANT@xxx
-        let looksLikeAnt = name.uppercased().contains("ANT")
-        // 已经连过的优先显示
+
+        // ── 蓝牙记忆判断放最前面（必须在去重之前）──
+        //
+        // 开启 AllowDuplicates 后同一台设备会反复回调，
+        // 先去重的话第 2 次以后就被拦住，自动连接没机会执行。
+        if !connected,
+           self.peripheral == nil,
+           BluetoothMemory.autoConnectBms {
+
+            let idMatch: Bool = {
+                guard let lastID = BluetoothMemory.lastBmsID else { return false }
+                return peripheral.identifier.uuidString == lastID
+            }()
+            let nameMatch: Bool = {
+                guard let lastName = BluetoothMemory.lastBmsName,
+                      !lastName.isEmpty,
+                      lastName != "ANT BMS" else { return false }
+                return name == lastName
+            }()
+
+            if idMatch || nameMatch {
+                central.stopScan()
+                scanning = false
+                self.peripheral = peripheral
+                peripheral.delegate = self
+                central.connect(peripheral, options: nil)
+                return
+            }
+        }
+
+        // 去重 + 加入列表
         if discovered.contains(where: { $0.id == peripheral.identifier }) { return }
         discovered.append((id: peripheral.identifier, name: name.isEmpty ? "(未命名设备)" : name, rssi: RSSI.intValue))
-        _ = looksLikeAnt
-
-        // ── 蓝牙记忆：搜到上次连过的 BMS 就自动连 ──
-        //
-        // 匹配规则（满足任一即可）：
-        //   ① UUID 完全一致
-        //   ② 名字一致（iOS 有时会给同一台设备换 UUID）
-        guard !connected,
-              self.peripheral == nil,
-              BluetoothMemory.autoConnectBms else { return }
-
-        let idMatch: Bool = {
-            guard let lastID = BluetoothMemory.lastBmsID else { return false }
-            return peripheral.identifier.uuidString == lastID
-        }()
-        let nameMatch: Bool = {
-            guard let lastName = BluetoothMemory.lastBmsName,
-                  !lastName.isEmpty,
-                  lastName != "ANT BMS" else { return false }
-            return name == lastName
-        }()
-        guard idMatch || nameMatch else { return }
-
-        central.stopScan()
-        scanning = false
-        self.peripheral = peripheral
-        peripheral.delegate = self
-        central.connect(peripheral, options: nil)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {

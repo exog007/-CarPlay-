@@ -199,23 +199,13 @@ final class ControllerManager: NSObject, ObservableObject {
         discovered.removeAll()
         status = .scanning
         uploadError = nil
-        // 不指定 service UUID，扫描所有设备，兼容性更好
+        // 允许重复上报：同一台设备会持续回调，这样「后开机」或「后靠近」的
+        // 控制器也能被抓到，而不是只在第一次被发现时才有机会。
         central.scanForPeripherals(withServices: nil,
-                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
 
-        // 20 秒后停止
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-            guard let self = self else { return }
-            if self.status == .scanning {
-                self.central.stopScan()
-                if self.discovered.isEmpty {
-                    self.status = .disconnected
-                    self.uploadError = "20 秒内没搜到任何蓝牙设备。请确认：1) 控制器已通电 2) 远驱官方 App 已完全关闭 3) 手机蓝牙已开"
-                } else {
-                    self.status = .idle
-                }
-            }
-        }
+        // 不再 20 秒超时停扫。控制器只要在范围内，随时都能被发现并自动连接。
+        // 只有连上了或者用户手动停止，才停扫。
     }
 
     /// 手动连接某个设备
@@ -355,40 +345,44 @@ extension ControllerManager: CBCentralManagerDelegate {
             ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
             ?? "未知设备"
 
-        // 已经记录过就跳过
-        if discovered.contains(where: { $0.id == peripheral.identifier }) { return }
-
-        // 只记录，不自动连接，由用户自己选
-        discovered.append((id: peripheral.identifier, name: name, rssi: RSSI.intValue))
-
-        // ── 蓝牙记忆：搜到上次连过的设备就自动连 ──
+        // ── 蓝牙记忆判断放最前面 ──
+        //
+        // 必须在去重之前判断：开启 AllowDuplicates 后同一台设备会反复回调，
+        // 如果先去重再判断，第 2 次以后的回调会被拦住，自动连接永远没机会执行。
         //
         // 匹配规则（满足任一即可）：
         //   ① UUID 完全一致（最可靠）
         //   ② 名字一致（iOS 有时会给同一台设备换 UUID）
-        guard autoConnect,
-              peripheral == nil,
-              BluetoothMemory.autoConnectController else { return }
+        if autoConnect,
+           self.peripheral == nil,
+           BluetoothMemory.autoConnectController {
 
-        let idMatch: Bool = {
-            guard let lastID = BluetoothMemory.lastControllerID else { return false }
-            return peripheral.identifier.uuidString == lastID
-        }()
-        let nameMatch: Bool = {
-            guard let lastName = BluetoothMemory.lastControllerName,
-                  !lastName.isEmpty,
-                  lastName != "FarDriver" else { return false }
-            return name == lastName
-        }()
-        guard idMatch || nameMatch else { return }
+            let idMatch: Bool = {
+                guard let lastID = BluetoothMemory.lastControllerID else { return false }
+                return peripheral.identifier.uuidString == lastID
+            }()
+            let nameMatch: Bool = {
+                guard let lastName = BluetoothMemory.lastControllerName,
+                      !lastName.isEmpty,
+                      lastName != "FarDriver" else { return false }
+                return name == lastName
+            }()
 
-        // 找到了，停扫并连
-        stopScan()
-        self.peripheral = peripheral
-        peripheral.delegate = self
-        status = .scanning
-        uploadError = "找到记忆设备 \(name)，正在自动连接…"
-        central.connect(peripheral, options: nil)
+            if idMatch || nameMatch {
+                // 找到了，停扫并连
+                stopScan()
+                self.peripheral = peripheral
+                peripheral.delegate = self
+                status = .scanning
+                uploadError = "找到记忆设备 \(name)，正在自动连接…"
+                central.connect(peripheral, options: nil)
+                return
+            }
+        }
+
+        // 去重：列表里已经有就不再追加（但自动连接判断已经执行过了）
+        if discovered.contains(where: { $0.id == peripheral.identifier }) { return }
+        discovered.append((id: peripheral.identifier, name: name, rssi: RSSI.intValue))
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
