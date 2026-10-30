@@ -43,6 +43,14 @@ struct ContentView: View {
                         }
                         .scrollContentBackground(.hidden)
                         .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
+                    } else if sportMode && BluetoothMemory.launchInSportMode && !landscape {
+                        // 开了「直接进竞技仪表」，但屏幕还没转成横屏：
+                        // 显示纯色遮罩，不要闪一下标准界面，等横屏生效后自动切过去。
+                        ZStack {
+                            Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea()
+                            ProgressView()
+                                .tint(themeMgr.color(.power))
+                        }
                     } else {
                         ScrollView {
                             VStack(spacing: 12) {
@@ -133,12 +141,18 @@ struct ContentView: View {
                 UIApplication.shared.isIdleTimerDisabled = true
 
                 // ── 启动直接进竞技仪表 ──
-                // 同时切到竞技风格 + 强制横屏，进来就是仪表盘
+                // 关键：分三步走，尽量把「主界面闪一下」压到最短
+                //   ① App 启动的那一刻就切好风格（存储层已设），这里做兜底
+                //   ② 立刻申请横屏，不等任何延迟
+                //   ③ 用 launchSettled 标记，首帧就只画竞技仪表
                 if BluetoothMemory.launchInSportMode {
                     themeMgr.theme.dashStyle = .sport
                     landscapeRequested = true
                     UserDefaults.standard.set(true, forKey: "forceLandscape")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    // 立即请求横屏，不留 0.35 秒延迟
+                    applyOrientation(true)
+                    // 再补一次，防止首次调用时窗口还没挂好
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         applyOrientation(true)
                     }
                 }
