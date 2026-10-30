@@ -15,6 +15,12 @@ struct ContentView: View {
     @State private var showBms = false
     @State private var landscapeRequested = false
 
+    /// 「刚启动、正在等横屏生效」这个短暂窗口
+    ///
+    /// 只在这个窗口里用纯色遮罩盖住标准界面，
+    /// 横屏一生效、或者超过 1.5 秒，就置回 false，之后正常显示界面。
+    @State private var launchingSport = false
+
     /// 最终显示的车速：控制器轮速和 GPS 融合
     private var displaySpeed: Double {
         gps.fused(with: mgr.data.speed)
@@ -43,9 +49,10 @@ struct ContentView: View {
                         }
                         .scrollContentBackground(.hidden)
                         .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
-                    } else if sportMode && BluetoothMemory.launchInSportMode && !landscape {
-                        // 开了「直接进竞技仪表」，但屏幕还没转成横屏：
-                        // 显示纯色遮罩，不要闪一下标准界面，等横屏生效后自动切过去。
+                    } else if launchingSport && sportMode && !landscape {
+                        // 只在「刚启动、正在等横屏生效」的这一瞬间显示遮罩，
+                        // 避免闪一下标准界面。用户手动切回竖屏时 launchingSport 已经是 false，
+                        // 正常走下面的标准界面，不会卡在转圈。
                         ZStack {
                             Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea()
                             ProgressView()
@@ -143,13 +150,20 @@ struct ContentView: View {
                 // ── 启动直接进竞技仪表 ──
                 // 关键：分三步走，尽量把「主界面闪一下」压到最短
                 //   ① App 启动的那一刻就切好风格（存储层已设），这里做兜底
-                //   ② 立刻申请横屏，不等任何延迟
-                //   ③ 用 launchSettled 标记，首帧就只画竞技仪表
+                //   ② 立刻申请横屏，不留延迟
+                //   ③ launchingSport 只在等横屏的这一小段时间里为 true
                 if BluetoothMemory.launchInSportMode {
                     themeMgr.theme.dashStyle = .sport
                     landscapeRequested = true
                     UserDefaults.standard.set(true, forKey: "forceLandscape")
-                    // 立即请求横屏，不留 0.35 秒延迟
+
+                    // 打开「等横屏」窗口，最多持续 1.5 秒
+                    launchingSport = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        launchingSport = false
+                    }
+
+                    // 立即请求横屏
                     applyOrientation(true)
                     // 再补一次，防止首次调用时窗口还没挂好
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -168,6 +182,9 @@ struct ContentView: View {
 
     private func rotateScreen(currentLandscape: Bool) {
         let target = !currentLandscape
+        // 用户手动转屏时立刻退出「等横屏」窗口，
+        // 否则切到竖屏会一直显示加载圈。
+        launchingSport = false
         landscapeRequested = target
         UserDefaults.standard.set(target, forKey: "forceLandscape")
         applyOrientation(target)
