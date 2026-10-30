@@ -15,8 +15,10 @@ final class GpsSpeed: NSObject, ObservableObject {
 
     static let shared = GpsSpeed()
 
-    /// 当前 GPS 速度 km/h
+    /// 当前 GPS 原始速度 km/h（每 1 秒跳一次）
     @Published private(set) var speedKmh: Double = 0
+    /// 平滑后的显示速度（每 50ms 追一次，看起来连续）
+    @Published private(set) var smoothSpeed: Double = 0
     /// 有没有定位授权
     @Published private(set) var authorized: Bool = false
     /// 定位精度（米），越小越可信
@@ -32,6 +34,10 @@ final class GpsSpeed: NSObject, ObservableObject {
     }
 
     private let manager = CLLocationManager()
+    /// 60Hz 平滑定时器：每帧朝目标速度靠一点，把 1 秒一次的数字跳变变成连续变化
+    private var smoothTimer: Timer?
+    /// 平滑系数：每帧追 18%，约 0.25 秒追到 90%
+    private let smoothFactor: Double = 0.18
     /// 最后一次 GPS 读到「在动」的时间
     private var lastMovingAt: Date = .distantPast
     /// 最后一次收到定位回调的时间（用来判断 GPS 是否还在喂数据）
@@ -51,6 +57,7 @@ final class GpsSpeed: NSObject, ObservableObject {
 
     func start() {
         guard enabled else { return }
+        startSmoothTimer()
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
             authorized = true
@@ -65,7 +72,26 @@ final class GpsSpeed: NSObject, ObservableObject {
     func stop() {
         manager.stopUpdatingLocation()
         speedKmh = 0
+        smoothSpeed = 0
         hasFix = false
+        smoothTimer?.invalidate()
+        smoothTimer = nil
+    }
+
+    /// 启动平滑定时器：每 16ms 让 smoothSpeed 朝 speedKmh 追一步
+    private func startSmoothTimer() {
+        guard smoothTimer == nil else { return }
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let diff = self.speedKmh - self.smoothSpeed
+            if abs(diff) < 0.05 {
+                self.smoothSpeed = self.speedKmh
+            } else {
+                self.smoothSpeed += diff * self.smoothFactor
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        smoothTimer = t
     }
 
     // MARK: - 读数
@@ -83,8 +109,8 @@ final class GpsSpeed: NSObject, ObservableObject {
         // 没开 GPS / 没定位 / 精度太差 → 全用控制器
         guard enabled, hasFix, accuracy >= 0, accuracy < 30 else { return wheel }
 
-        // GPS 有速度，直接用它
-        if speedKmh >= 1.0 { return speedKmh }
+        // GPS 有速度，用平滑后的值（数字连续变化，不跳）
+        if smoothSpeed >= 1.0 { return smoothSpeed }
 
         // GPS 是 0，但车在动（刚起步 GPS 还没出数），用控制器
         return wheel
