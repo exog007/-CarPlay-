@@ -96,6 +96,11 @@ struct AmapStep: Identifiable, Equatable {
     /// 本段起点坐标（用来判断当前在第几段）
     let start: CLLocationCoordinate2D
 
+    /// CLLocationCoordinate2D 不符合 Equatable，这里手动实现
+    static func == (lhs: AmapStep, rhs: AmapStep) -> Bool {
+        lhs.id == rhs.id
+    }
+
     var distanceText: String {
         if distance < 1000 { return "\(distance)m" }
         return String(format: "%.1fkm", Double(distance) / 1000.0)
