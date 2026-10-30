@@ -18,6 +18,11 @@ import Combine
 /// 系统音频中断通知（播放器状态变化时会发）
 private let audioStateChanged = Notification.Name("AVAudioSessionInterruptionNotification")
 
+/// 系统正在播放信息变化通知
+/// 注意：这是 MediaRemote 的私有通知名，不是公开 API。
+/// 拿不到也不影响功能——下面还有 1 秒一次的定时器兜底。
+private let nowPlayingChanged = Notification.Name("MPNowPlayingInfoCenterDidChangeNotification")
+
 final class NowPlayingService: ObservableObject {
 
     static let shared = NowPlayingService()
@@ -65,9 +70,9 @@ final class NowPlayingService: ObservableObject {
     // MARK: - 监听
 
     private func startMonitoring() {
-        // 每次系统媒体信息变化都会发这个通知
+        // 系统媒体信息变化时发这个通知（名字来自 MediaRemote 框架）
         NotificationCenter.default.addObserver(
-            forName: .MPNowPlayingInfoCenterDidChange,
+            forName: nowPlayingChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
