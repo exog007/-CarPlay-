@@ -94,15 +94,35 @@ struct DynamicDashView: View {
             // 地图铺满背景，四周压暗
             mapBackground
 
-            // 上下遮罩，让文字更清楚
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.black.opacity(0.85), .clear],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 90)
-                Spacer()
-                LinearGradient(colors: [.clear, .black.opacity(0.85)],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 80)
+            // 四周渐晕：中间清楚、边缘压黑（参考图那种边框泛黑效果）
+            GeometryReader { g in
+                let w = g.size.width
+                let h = g.size.height
+                ZStack {
+                    // 径向渐晕
+                    RadialGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .clear, location: 0.34),
+                            .init(color: .black.opacity(0.35), location: 0.62),
+                            .init(color: .black.opacity(0.88), location: 0.88),
+                            .init(color: .black, location: 1.0),
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: max(w, h) * 0.60
+                    )
+                    // 上下再补一层，让顶部/底部文字更实
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.black.opacity(0.75), .clear],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(height: h * 0.16)
+                        Spacer()
+                        LinearGradient(colors: [.clear, .black.opacity(0.8)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(height: h * 0.20)
+                    }
+                }
             }
             .ignoresSafeArea()
             .allowsHitTesting(false)
@@ -624,53 +644,62 @@ struct DynamicDashView: View {
         .frame(width: 62)
     }
 
-    // MARK: - 中间：左右两条独立弧
+    // MARK: - 中间：左右分段能量条
 
     private var middleRow: some View {
         HStack(spacing: 0) {
-            // 左：速度弧（开口朝右，像左括号）
-            ArcGauge(
-                progress: speedRatio,
-                color: .white,
-                side: .left
-            ) {
-                VStack(spacing: -3) {
+            // 左：速度能量条（白色系）
+            ZStack {
+                SegmentArc(progress: speedRatio, tone: .plain, side: .left)
+                    .frame(width: 190, height: 250)
+
+                VStack(spacing: -4) {
                     Text("\(Int(speed.rounded()))")
-                        .font(.system(size: 44, weight: .light, design: .rounded))
+                        .font(.system(size: 46, weight: .light, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white)
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
                     Text("km/h")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.65))
                 }
-                .frame(width: 120)
+                .offset(x: 22)
             }
-            .frame(width: 170, height: 230)
+            .frame(width: 190, height: 250)
 
             Spacer(minLength: 0)
 
-            // 右：转速弧（开口朝左，像右括号）
-            ArcGauge(
-                progress: rpmRatio,
-                color: green,
-                side: .right
-            ) {
-                VStack(spacing: -3) {
-                    Text("\(Int(displayRpm.rounded()))")
-                        .font(.system(size: 34, weight: .light, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(green)
-                        .minimumScaleFactor(0.5)
-                        .lineLimit(1)
-                    Text("rpm")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.6))
+            // 右：电量能量条（黄绿渐变），数值是两个百分比（和参考图一致）
+            ZStack {
+                SegmentArc(progress: batteryPercent, tone: .energy, side: .right)
+                    .frame(width: 190, height: 250)
+
+                // 上：100% 刻度说明；下：当前电量
+                VStack {
+                    HStack(spacing: 3) {
+                        Text("100%")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 26)
+
+                    Spacer()
+
+                    HStack(spacing: 3) {
+                        Text("\(Int(batteryPercent * 100))%")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(batteryPercent < 0.3 ? accent : .white)
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 26)
                 }
-                .frame(width: 120)
+                .frame(height: 200)
+                .offset(x: -14)
             }
-            .frame(width: 170, height: 230)
+            .frame(width: 190, height: 250)
         }
     }
 
@@ -789,96 +818,151 @@ struct DynamicDashView: View {
     // MARK: - 底部
 
     private var bottomBar: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .bottom, spacing: 10) {
             // 左：档位
-            gearChip(isParked ? "P" : (mgr.data.gear > 0 ? "\(mgr.data.gear)" : "—"),
-                     active: isParked)
+            VStack {
+                Spacer()
+                gearChip(isParked ? "P" : (mgr.data.gear > 0 ? "\(mgr.data.gear)" : "—"),
+                         active: isParked)
+            }
+            .frame(height: 74)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
-            // 中：媒体信息
-            mediaBar
+            // 中：指南针（同款）
+            compass
+                .frame(width: 190, height: 62)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
 
-            // 右：导航状态 + 电量
-            HStack(spacing: 8) {
-                if let r = route, let t = routeTarget {
-                    navStatus(name: t.name ?? "导航中", distance: r.distance)
-                } else if let r = amapRoute, let t = routeTarget {
-                    navStatus(name: t.name ?? "导航中", distance: Double(r.distance))
-                }
-                Image(systemName: "battery.100percent")
-                    .font(.system(size: 11))
-                    .foregroundStyle(batteryPercent < 0.3 ? accent : green)
-                Text("\(Int(batteryPercent * 100))%")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white)
+            // 右：大号音乐播放器（和参考图同位置、同尺寸）
+            nowPlayingCard
+
+            // 再右：导航状态（有导航才显示）
+            if let t = routeTarget {
+                navStatus(name: t.name ?? "导航中",
+                          distance: Double(amapRoute?.distance ?? Int(route?.distance ?? 0)))
+                    .frame(width: 130)
             }
         }
-        .frame(height: 28)
+        .frame(height: 78)
     }
 
-    /// 媒体条：封面 + 歌名/歌手 + 进度
-    private var mediaBar: some View {
-        HStack(spacing: 8) {
-            // 封面
+    // MARK: - 指南针
+
+    /// 参考图底部那种：刻度线 + 方位文字 + 当前度数
+    private var compass: some View {
+        // GPS course 优先，没有就用磁力计
+        let deg = loc.location?.course ?? 0
+        let heading = deg >= 0 ? deg : loc.heading
+
+        return VStack(spacing: 2) {
+            // 刻度条
+            Canvas { ctx, size in
+                let w = size.width
+                let h = size.height
+                let mid = w / 2
+                // 每 5° 一个小刻度，每 30° 一个大刻度
+                for d in stride(from: -60, through: 60, by: 5) {
+                    let x = mid + CGFloat(d) / 60.0 * (w / 2 - 6)
+                    let isMajor = (d % 30 == 0)
+                    let isCenter = (d == 0)
+                    let len: CGFloat = isMajor ? h * 0.55 : (isCenter ? h * 0.8 : h * 0.32)
+                    let color: Color = isCenter ? accent : .white.opacity(isMajor ? 0.75 : 0.35)
+                    var p = Path()
+                    p.move(to: CGPoint(x: x, y: h - len))
+                    p.addLine(to: CGPoint(x: x, y: h))
+                    ctx.stroke(p, with: .color(color),
+                               style: StrokeStyle(lineWidth: isCenter ? 1.8 : 1, lineCap: .butt))
+                }
+            }
+            .frame(height: 22)
+
+            // 方位文字
+            HStack(spacing: 0) {
+                ForEach(CompassPoint.marks, id: \.offset) { m in
+                    Text(m.name)
+                        .font(.system(size: 8))
+                        .foregroundStyle(.white.opacity(0.5))
+                    if m.offset < CompassPoint.marks.count - 1 {
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+
+            // 当前度数
+            HStack(spacing: 3) {
+                Text("\(Int(heading.rounded()))°")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white)
+                Text(CompassPoint.name(for: heading))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+    }
+
+    // MARK: - 音乐播放器（大号卡片，仿参考图）
+
+    private var nowPlayingCard: some View {
+        HStack(spacing: 10) {
+            // 大唱片图标
             ZStack {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(.white.opacity(0.12))
-                    .frame(width: 26, height: 26)
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.white.opacity(0.13))
+                    .frame(width: 54, height: 54)
                 if let art = np.artwork {
                     Image(uiImage: art)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 26, height: 26)
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .frame(width: 54, height: 54)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 } else {
-                    Image(systemName: np.hasInfo ? "music.note" : "music.note.slash")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.45))
+                    Image(systemName: "music.note")
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundStyle(.white.opacity(0.5))
                 }
             }
 
-            if np.hasInfo {
-                VStack(alignment: .leading, spacing: 1) {
-                    // 歌名
-                    Text(np.title)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .frame(maxWidth: 150, alignment: .leading)
-                    // 歌手 · 进度
-                    HStack(spacing: 5) {
-                        Text(np.artist)
-                            .font(.system(size: 8))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(1)
-                        if np.duration > 0 {
-                            Text("\(np.elapsedText)/\(np.durationText)")
-                                .font(.system(size: 8, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.45))
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                // 歌名
+                Text(np.hasInfo ? np.title : "未在播放")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(np.hasInfo ? 0.95 : 0.45))
+                    .lineLimit(1)
+                    .frame(width: 130, alignment: .leading)
+
                 // 进度条
-                if np.duration > 0 {
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(.white.opacity(0.15))
-                            .frame(width: 54, height: 2.5)
-                        Capsule()
-                            .fill(green)
-                            .frame(width: max(0, CGFloat(np.progress) * 54), height: 2.5)
-                    }
-                    .animation(.linear(duration: 1), value: np.progress)
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.18))
+                        .frame(width: 130, height: 3)
+                    Capsule()
+                        .fill(.white.opacity(0.85))
+                        .frame(width: max(0, CGFloat(np.progress) * 130), height: 3)
                 }
-            } else {
-                Text("未在播放")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.4))
+                .animation(.linear(duration: 1), value: np.progress)
+
+                // 时间
+                HStack {
+                    Text(np.hasInfo ? np.elapsedText : "0:00")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Spacer(minLength: 0)
+                    Text(np.hasInfo ? "-\(np.durationText)" : "-0:00")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                .frame(width: 130)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.black.opacity(0.35))
+        )
     }
 
     /// 底部导航状态小条
@@ -926,97 +1010,149 @@ struct DynamicDashView: View {
     }
 }
 
-// MARK: - 左右独立弧（参考图那种「」形状）
-//
-// 和之前的封闭圆环不同：这是两段单独的粗弧，
-//   左侧：从上方绕到下方，开口朝右，像「（」
-//   右侧：从上方绕到下方，开口朝左，像「）」
-// 弧本身是连续的（不分段），两端有端点帽，
-// 已走过的部分亮色，未走部分淡色。
+// MARK: - 指南针方位
 
-struct ArcGauge<Content: View>: View {
+enum CompassPoint {
+    /// 刻度下方的方位文字（和参考图一致：南 西南 西 西北）
+    struct Mark {
+        let offset: Int
+        let name: String
+    }
+
+    static let marks: [Mark] = [
+        Mark(offset: 0, name: "南"),
+        Mark(offset: 1, name: "西南"),
+        Mark(offset: 2, name: "西"),
+        Mark(offset: 3, name: "西北"),
+    ]
+
+    /// 度数 → 中文方位
+    static func name(for deg: Double) -> String {
+        var d = deg.truncatingRemainder(dividingBy: 360)
+        if d < 0 { d += 360 }
+        switch d {
+        case 22.5..<67.5:   return "东北"
+        case 67.5..<112.5:  return "东"
+        case 112.5..<157.5: return "东南"
+        case 157.5..<202.5: return "南"
+        case 202.5..<247.5: return "西南"
+        case 247.5..<292.5: return "西"
+        case 292.5..<337.5: return "西北"
+        default:            return "北"
+        }
+    }
+}
+
+// MARK: - 分段能量条弧（参考图那种一段一段的刻度条）
+//
+// 和连续弧不同：沿弧线排一排独立的小短段，段间留空隙。
+// 已填充的段是亮色（带渐变），未填充是暗灰。
+//   左侧：白色系（速度）
+//   右侧：黄→绿→黄 渐变（电量）
+
+struct SegmentArc: View {
     enum Side { case left, right }
+    /// 电量低时的警示色
+    enum Tone {
+        case plain      // 白色系
+        case energy     // 黄色能量条
+    }
 
     let progress: Double
-    let color: Color
+    let tone: Tone
     let side: Side
-    @ViewBuilder let content: Content
+    /// 段数（参考图约 28 段）
+    var segments: Int = 28
+    var lineWidth: CGFloat = 9
 
-    /// 弧的线宽
-    private let lineWidth: CGFloat = 7
-    /// 弧起止角度（SwiftUI：0°=右，90°=下，180°=左，270°=上）
-    private var startDeg: Double { side == .left ? 95 : 85 }
-    private var endDeg: Double   { side == .left ? 265 : 275 }
+    /// 扫角范围
+    private var startDeg: Double { side == .left ? 96 : 84 }
+    private var endDeg: Double   { side == .left ? 268 : 272 }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            // 圆心贴在自己那一侧的内边，这样弧刚好贴着屏幕左右边缘
-            let cx: CGFloat = side == .left ? w * 0.92 : w * 0.08
+            let cx: CGFloat = side == .left ? w * 0.90 : w * 0.10
             let cy: CGFloat = h / 2
-            let radius = min(w * 0.86, h / 2 - lineWidth)
+            let radius = min(w * 0.84, h / 2 - lineWidth * 1.5)
 
-            ZStack {
-                Canvas { ctx, _ in
-                    // ① 底弧（全亮度的 16%）
-                    drawArc(ctx: &ctx, cx: cx, cy: cy, radius: radius,
-                            from: startDeg, to: endDeg, color: color.opacity(0.16))
+            Canvas { ctx, _ in
+                let span = endDeg - startDeg
+                let step = span / Double(segments)
+                let lit = Int((Double(segments) * progress).rounded())
 
-                    // ② 进度弧
-                    let span = endDeg - startDeg          // 负值表示逆时针
-                    let cur = startDeg + span * progress
-                    if abs(progress) > 0.001 {
-                        drawArc(ctx: &ctx, cx: cx, cy: cy, radius: radius,
-                                from: startDeg, to: cur, color: color)
+                for i in 0..<segments {
+                    let a0 = startDeg + step * Double(i)
+                    // 每段留 42% 空隙
+                    let a1 = a0 + step * 0.58
+
+                    var path = Path()
+                    let steps = max(3, Int(abs(a1 - a0) / 2))
+                    for s in 0...steps {
+                        let t = Double(s) / Double(steps)
+                        let deg = a0 + (a1 - a0) * t
+                        let rad = deg * Double.pi / 180
+                        let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
+                                        y: cy + CGFloat(sin(rad)) * radius)
+                        if s == 0 { path.move(to: p) } else { path.addLine(to: p) }
                     }
 
-                    // ③ 两端端点小圆点
-                    dot(ctx: &ctx, cx: cx, cy: cy, radius: radius,
-                        deg: startDeg, color: color.opacity(0.55), size: 3)
-                    dot(ctx: &ctx, cx: cx, cy: cy, radius: radius,
-                        deg: endDeg, color: color.opacity(0.55), size: 3)
+                    let isOn = i < lit
+                    let color: Color
+                    if !isOn {
+                        color = .white.opacity(0.13)
+                    } else if tone == .plain {
+                        // 速度：暗→白，越靠上越亮
+                        let t = Double(i) / Double(max(1, segments - 1))
+                        color = Color(white: 0.55 + 0.45 * t)
+                    } else {
+                        // 电量：底部黄 → 中段绿 → 顶部黄（和参考图一致）
+                        let t = Double(i) / Double(max(1, segments - 1))
+                        color = SegmentArc.energyColor(t)
+                    }
 
-                    // ④ 当前进度位置的大亮点
-                    dot(ctx: &ctx, cx: cx, cy: cy, radius: radius,
-                        deg: cur, color: .white, size: 5.5)
+                    ctx.stroke(path, with: .color(color),
+                               style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
                 }
 
-                // 数值显示在最靠内的一侧
-                content
-                    .offset(x: side == .left ? w * 0.10 : -w * 0.10)
+                // 两端端点小方块（参考图两端的方形标记）
+                for deg in [startDeg, endDeg] {
+                    let rad = deg * Double.pi / 180
+                    let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
+                                    y: cy + CGFloat(sin(rad)) * radius)
+                    let r: CGFloat = 3.5
+                    let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+                    ctx.stroke(Path(roundedRect: rect, cornerRadius: 1),
+                               with: .color(.white.opacity(0.45)),
+                               style: StrokeStyle(lineWidth: 1.2))
+                }
             }
         }
     }
 
-    /// 画一段圆弧
-    private func drawArc(ctx: inout GraphicsContext,
-                         cx: CGFloat, cy: CGFloat, radius: CGFloat,
-                         from: Double, to: Double, color: Color) {
-        guard abs(to - from) > 0.2 else { return }
-        var path = Path()
-        let steps = max(6, Int(abs(to - from) / 2))
-        for i in 0...steps {
-            let t = Double(i) / Double(steps)
-            let deg = from + (to - from) * t
-            let rad = deg * Double.pi / 180
-            let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
-                            y: cy + CGFloat(sin(rad)) * radius)
-            if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+    /// 能量条配色：0 → 黄，0.35 → 绿，0.7 → 绿，1 → 亮黄
+    static func energyColor(_ t: Double) -> Color {
+        if t < 0.35 {
+            // 黄 → 绿
+            let k = t / 0.35
+            return Color(.sRGB,
+                         red: 1.0 - 0.55 * k,
+                         green: 0.78 + 0.10 * k,
+                         blue: 0.0 + 0.25 * k,
+                         opacity: 1)
+        } else if t < 0.72 {
+            // 绿段
+            return Color(.sRGB, red: 0.30, green: 0.90, blue: 0.32, opacity: 1)
+        } else {
+            // 绿 → 亮黄（顶部）
+            let k = (t - 0.72) / 0.28
+            return Color(.sRGB,
+                         red: 0.30 + 0.95 * k,
+                         green: 0.90 - 0.05 * k,
+                         blue: 0.32 - 0.32 * k,
+                         opacity: 1)
         }
-        ctx.stroke(path, with: .color(color),
-                   style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-    }
-
-    /// 在弧上某个角度画一个圆点
-    private func dot(ctx: inout GraphicsContext,
-                     cx: CGFloat, cy: CGFloat, radius: CGFloat,
-                     deg: Double, color: Color, size: CGFloat) {
-        let rad = deg * Double.pi / 180
-        let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
-                        y: cy + CGFloat(sin(rad)) * radius)
-        let rect = CGRect(x: p.x - size, y: p.y - size, width: size * 2, height: size * 2)
-        ctx.fill(Circle().path(in: rect), with: .color(color))
     }
 }
 
@@ -1025,18 +1161,11 @@ struct ArcGauge<Content: View>: View {
 #Preview {
     ZStack {
         Color.black
-        HStack(spacing: 40) {
-            ArcGauge(progress: 0.6, color: .white, side: .left) {
-                Text("42").font(.system(size: 44, weight: .light, design: .rounded))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 170, height: 230)
-
-            ArcGauge(progress: 0.4, color: .green, side: .right) {
-                Text("2536").font(.system(size: 34, weight: .light, design: .rounded))
-                    .foregroundStyle(.green)
-            }
-            .frame(width: 170, height: 230)
+        HStack {
+            SegmentArc(progress: 0.6, tone: .plain, side: .left)
+                .frame(width: 170, height: 230)
+            SegmentArc(progress: 0.65, tone: .energy, side: .right)
+                .frame(width: 170, height: 230)
         }
     }
 }
