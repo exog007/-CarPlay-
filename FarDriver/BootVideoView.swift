@@ -20,7 +20,7 @@ struct BootVideoView: View {
 
     @AppStorage("bootVideoEnabled") private var videoEnabled = false
     /// 画面适配模式：stretch（默认，铺满全屏）/ fill / fit
-    @AppStorage("bootVideoFitMode") private var fitModeRaw: String = "stretch"
+    @AppStorage("bootVideoFitModeV2") private var fitModeRaw: String = "stretch"
     /// 额外缩放
     @AppStorage("bootVideoZoom") private var zoom: Double = 1.0
     /// 水平偏移
@@ -53,6 +53,14 @@ struct BootVideoView: View {
                             Text(String(format: "%.1f 秒", bootVideo.duration))
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Image(systemName: bootVideo.hasAudio ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                                .foregroundStyle(bootVideo.hasAudio ? themeMgr.color(.ok) : themeMgr.color(.warn))
+                            Text(bootVideo.hasAudio ? "视频含音轨（会播放声音）" : "这个视频没有音轨（不会有声音）")
+                                .font(.caption)
+                                .foregroundStyle(bootVideo.hasAudio ? themeMgr.secondary : themeMgr.color(.warn))
+                            Spacer()
                         }
                         Button(role: .destructive) {
                             BootVideo.shared.deleteVideo()

@@ -21,17 +21,17 @@ struct ContentView: View {
     /// 横屏一生效、或者超过 1.5 秒，就置回 false，之后正常显示界面。
     @State private var launchingSport = false
 
-    /// 开机动画：正在播放用户上传的视频
+    /// 开机动画：是否处于「视频阶段」（含等待转屏的黑屏期）
     ///
-    /// 只有「启动直接进竞技仪表」+「开机动画开关」+「有视频」三个条件都满足时才为 true。
-    /// 视频播完回调里置回 false，然后才进入竞技仪表自检画面。
-    @State private var playingBootVideo = false
+    /// ⚠️ 关键：这个值必须在 View 初始化时就确定，不能等 onAppear 再设。
+    /// 因为 onAppear 是在首帧渲染完才执行的 —— 那时 SportDashView 已经被创建、
+    /// 它的 onAppear 也已经跑了，自检动画和音效就提前开播了。
+    /// 用 @State 的初始值在 init 里算好，首帧就只渲染黑屏/视频，仪表不会提前出现。
+    @State private var bootVideoPhase: Bool =
+        BluetoothMemory.launchInSportMode && BootVideo.enabled && BootVideo.shared.hasVideo
 
-    /// 开机视频已排程、但还没开始播的这段时间（黑屏等待转屏）
-    ///
-    /// 作用：防止 SportDashView 在这个空档里被渲染出来，
-    /// 否则它的自检动画和音效会提前在视频背后开跑。
-    @State private var bootVideoPending = false
+    /// 正在播放视频（视频阶段里的「已经开播」子状态）
+    @State private var playingBootVideo = false
 
     /// 最终显示的车速：控制器轮速和 GPS 融合
     private var displaySpeed: Double {
@@ -55,16 +55,16 @@ struct ContentView: View {
             let fullscreenDash = landscape && (sportMode || dynamicMode)
             NavigationStack {
                 Group {
-                    if playingBootVideo {
-                        // 开机动画：全屏播放用户上传的视频，播完自动切走
-                        BootVideoPlayerView {
-                            playingBootVideo = false
-                        }
-                    } else if bootVideoPending && (sportMode || dynamicMode) {
-                        // 开机视频马上就要播了，这段时间先盖住界面，
-                        // 避免 SportDashView 提前出现、导致自检音效提前响。
-                        ZStack {
-                            Color.black.ignoresSafeArea()
+                    if bootVideoPhase {
+                        // 开机动画阶段：视频还没开播时是纯黑，开播后是视频
+                        if playingBootVideo {
+                            BootVideoPlayerView {
+                                // 播完 → 退出视频阶段，才让仪表出现
+                                playingBootVideo = false
+                                bootVideoPhase = false
+                            }
+                        } else {
+                            ZStack { Color.black.ignoresSafeArea() }
                         }
                     } else if landscape && dynamicMode {
                         // 动态仪表：全屏地图 + 左右圆环，完全铺满，不要导航栏
@@ -203,15 +203,13 @@ struct ContentView: View {
                     }
 
                     // ── 开机动画 ──
-                    // 开关打开且有视频，就等屏幕转成横屏后再播视频。
-                    // 播完由 BootVideoPlayerView 的回调把 playingBootVideo 置回 false，
-                    // 之后自然进入竞技仪表的自检动画。
-                    if BootVideo.enabled && BootVideo.shared.hasVideo {
-                        // 立刻进入等待态：这段时间界面是纯黑，不会渲染仪表
-                        bootVideoPending = true
+                    // bootVideoPhase 已经在 init 里置好了，这里只负责延后开播。
+                    if bootVideoPhase {
+                        // bootVideoPhase 为 true 时 launchingSport 不用管，
+                        // 界面已经是纯黑/视频，仪表压根没被创建。
+                        launchingSport = false
                         // 等横屏完全生效再开始播，避免视频被竖屏裁切
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            bootVideoPending = false
                             playingBootVideo = true
                         }
                     }

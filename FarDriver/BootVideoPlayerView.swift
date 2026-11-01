@@ -13,14 +13,20 @@ import AVKit
 
 struct BootVideoPlayerView: View {
 
+    /// 全局标记：视频正在播放时，其它地方（比如自检音效）别再抢音频会话
+    static var isVideoPlaying = false
+
     /// 播完或出错时调用
     let onFinished: () -> Void
 
     @State private var player: AVPlayer?
     @State private var endObserver: NSObjectProtocol?
 
-    /// 缩放模式：fill / fit / stretch
-    @AppStorage("bootVideoFitMode") private var fitModeRaw: String = "stretch"
+    /// 缩放模式：stretch / fill / fit
+    ///
+    /// ⚠️ 用新 key（v2）：旧版本存的是 "fill"，换成 stretch 默认值不会生效，
+    /// 会一直保持裁切模式。换 key 让老用户也拿到新的「拉伸铺满」默认值。
+    @AppStorage("bootVideoFitModeV2") private var fitModeRaw: String = "stretch"
     /// 额外放大倍数 0.5 ~ 2.0
     @AppStorage("bootVideoZoom") private var zoom: Double = 1.0
     /// 水平偏移 -0.5 ~ 0.5（占屏幕宽度的比例）
@@ -63,6 +69,19 @@ struct BootVideoPlayerView: View {
             return
         }
 
+        // 标记「视频在播」，阻止自检音效抢音频会话
+        Self.isVideoPlaying = true
+
+        // 先配好音频会话，再创建播放器，避免第一声被系统掐掉
+        do {
+            let session = AVAudioSession.sharedInstance()
+            // .playback：静音键打开也能出声；不混音，确保声音不被别的音源压掉
+            try session.setCategory(.playback, mode: .moviePlayback)
+            try session.setActive(true)
+        } catch {
+            // 失败也继续播，最多没声音
+        }
+
         let item = AVPlayerItem(url: url)
         let p = AVPlayer(playerItem: item)
         // 播放视频自带的声音
@@ -70,21 +89,13 @@ struct BootVideoPlayerView: View {
         p.volume = 1.0
         p.actionAtItemEnd = .pause
 
-        // 音画同步：先让音频会话就绪，避免视频有声但系统静音
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback,
-                                                            options: [.mixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            // 失败也继续播，最多没声音
-        }
-
         // 播完的通知
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
             queue: .main
         ) { _ in
+            Self.isVideoPlaying = false
             onFinished()
         }
 
@@ -93,6 +104,7 @@ struct BootVideoPlayerView: View {
     }
 
     private func cleanup() {
+        Self.isVideoPlaying = false
         if let o = endObserver {
             NotificationCenter.default.removeObserver(o)
             endObserver = nil

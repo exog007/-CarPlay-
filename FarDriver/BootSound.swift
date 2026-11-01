@@ -109,12 +109,15 @@ final class BootSound: NSObject, ObservableObject {
     /// 播放一次自检音效
     func play() {
         guard Self.enabled else { return }
+        // 开机视频正在播时不放自检音效，避免抢音频会话把视频声音弄哑
+        if BootVideoPlayerView.isVideoPlaying { return }
         guard let url = Self.fileURL,
               FileManager.default.fileExists(atPath: url.path) else { return }
 
         do {
-            // 和别的 App 的音频共存，不要抢占
-            try AVAudioSession.sharedInstance().setCategory(.ambient,
+            // 用 playback，保证在静音键打开时也能出声；
+            // mixWithOthers 让其它 App 的音乐继续播
+            try AVAudioSession.sharedInstance().setCategory(.playback,
                                                             options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
 
