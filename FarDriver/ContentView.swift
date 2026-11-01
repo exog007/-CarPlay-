@@ -21,6 +21,12 @@ struct ContentView: View {
     /// 横屏一生效、或者超过 1.5 秒，就置回 false，之后正常显示界面。
     @State private var launchingSport = false
 
+    /// 开机动画：正在播放用户上传的视频
+    ///
+    /// 只有「启动直接进竞技仪表」+「开机动画开关」+「有视频」三个条件都满足时才为 true。
+    /// 视频播完回调里置回 false，然后才进入竞技仪表自检画面。
+    @State private var playingBootVideo = false
+
     /// 最终显示的车速：控制器轮速和 GPS 融合
     private var displaySpeed: Double {
         gps.fused(with: mgr.data.speed)
@@ -43,7 +49,12 @@ struct ContentView: View {
             let fullscreenDash = landscape && (sportMode || dynamicMode)
             NavigationStack {
                 Group {
-                    if landscape && dynamicMode {
+                    if playingBootVideo {
+                        // 开机动画：全屏播放用户上传的视频，播完自动切走
+                        BootVideoPlayerView {
+                            playingBootVideo = false
+                        }
+                    } else if landscape && dynamicMode {
                         // 动态仪表：全屏地图 + 左右圆环，完全铺满，不要导航栏
                         DynamicDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
                     } else if landscape && sportMode {
@@ -177,6 +188,17 @@ struct ContentView: View {
                     // 再补一次，防止首次调用时窗口还没挂好
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         applyOrientation(true)
+                    }
+
+                    // ── 开机动画 ──
+                    // 开关打开且有视频，就等屏幕转成横屏后再播视频。
+                    // 播完由 BootVideoPlayerView 的回调把 playingBootVideo 置回 false，
+                    // 之后自然进入竞技仪表的自检动画。
+                    if BootVideo.enabled && BootVideo.shared.hasVideo {
+                        // 等横屏完全生效再开始播，避免视频被竖屏裁切
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            playingBootVideo = true
+                        }
                     }
                 }
             }
@@ -734,6 +756,7 @@ struct SettingsView: View {
     @State private var url = ""
     @State private var showAppearance = false
     @State private var showBootSound = false
+    @State private var showBootVideo = false
     /// 高德 Web 服务 Key
     @AppStorage("amapKey") private var amapKey: String = ""
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
@@ -751,6 +774,40 @@ struct SettingsView: View {
                     Text("启动")
                 } footer: {
                     Text("打开后，App 一启动就切到竞技风格并横屏，直接当仪表用。\n进入时会播放一次开机自检动画：速度 0→299，转速 0→满量程，故障灯全亮。")
+                }
+
+                Section {
+                    Button {
+                        showBootVideo = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "film.stack")
+                                .foregroundStyle(themeMgr.color(.rpm))
+                            Text("开机动画")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            if BootVideo.enabled && BootVideo.shared.hasVideo {
+                                Text("已开启")
+                                    .font(.caption)
+                                    .foregroundStyle(themeMgr.color(.ok))
+                            } else if BootVideo.shared.hasVideo {
+                                Text("已上传")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("未设置")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("开机动画")
+                } footer: {
+                    Text("上传一段视频，启动时先全屏横屏播放（视频多长就播多久），播完再进入竞技仪表的自检画面。只在「直接进竞技仪表」打开时生效。")
                 }
 
                 Section {
@@ -1004,6 +1061,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)
+            }
+            .sheet(isPresented: $showBootVideo) {
+                BootVideoView(themeMgr: themeMgr)
             }
         }
     }
