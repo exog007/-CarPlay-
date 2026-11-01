@@ -69,11 +69,12 @@ final class BootVideo: NSObject, ObservableObject {
         let asset = AVURLAsset(url: url)
         let d = CMTimeGetSeconds(asset.duration)
         duration = (d.isFinite && d > 0) ? d : 0
-        // 读一下有没有音轨，界面上能看出来
-        if let tracks = try? asset.loadTracks(withMediaType: .audio) {
-            hasAudio = !tracks.isEmpty
-        } else {
-            hasAudio = false
+        // 音轨检查是异步的，放到后台读，读完刷新界面
+        Task {
+            let tracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
+            await MainActor.run {
+                self.hasAudio = !tracks.isEmpty
+            }
         }
     }
 
