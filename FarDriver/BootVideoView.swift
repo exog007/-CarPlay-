@@ -19,6 +19,14 @@ struct BootVideoView: View {
     @State private var errorText = ""
 
     @AppStorage("bootVideoEnabled") private var videoEnabled = false
+    /// 画面适配模式：fill / fit / stretch
+    @AppStorage("bootVideoFitMode") private var fitModeRaw: String = "fill"
+    /// 额外缩放
+    @AppStorage("bootVideoZoom") private var zoom: Double = 1.0
+    /// 水平偏移
+    @AppStorage("bootVideoOffsetX") private var offsetX: Double = 0
+    /// 垂直偏移
+    @AppStorage("bootVideoOffsetY") private var offsetY: Double = 0
 
     var body: some View {
         NavigationStack {
@@ -96,7 +104,69 @@ struct BootVideoView: View {
                 } header: {
                     Text("上传")
                 } footer: {
-                    Text("视频会转成 720p mp4 存在本机，时长原样保留：视频多长就播多久。\n播放时会静音，避免和自检音效重叠。")
+                    Text("视频会转成 720p mp4 存在本机，时长原样保留：视频多长就播多久。\n视频自带的声音会一起播放。")
+                }
+
+                // 画面适配：裁剪 / 拉伸 / 缩放 / 偏移
+                Section {
+                    Picker("画面适配", selection: $fitModeRaw) {
+                        Text("填充（裁剪）").tag("fill")
+                        Text("适应（留黑边）").tag("fit")
+                        Text("拉伸（铺满变形）").tag("stretch")
+                    }
+                    .pickerStyle(.segmented)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("缩放")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(String(format: "×%.2f", zoom))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $zoom, in: 0.5...2.0, step: 0.01)
+                            .tint(themeMgr.color(.rpm))
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("水平偏移")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(String(format: "%+.0f%%", offsetX * 100))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $offsetX, in: -0.5...0.5, step: 0.01)
+                            .tint(themeMgr.color(.ok))
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("垂直偏移")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(String(format: "%+.0f%%", offsetY * 100))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $offsetY, in: -0.5...0.5, step: 0.01)
+                            .tint(themeMgr.color(.ok))
+                    }
+
+                    Button {
+                        fitModeRaw = "fill"
+                        zoom = 1.0
+                        offsetX = 0
+                        offsetY = 0
+                    } label: {
+                        Label("恢复默认适配", systemImage: "arrow.counterclockwise")
+                    }
+                } header: {
+                    Text("画面适配")
+                } footer: {
+                    Text("填充 = 铺满屏幕但裁掉一部分；适应 = 完整显示但可能留黑边；拉伸 = 强行铺满可能变形。\n如果需要画面左右移动，用水平偏移微调。")
                 }
             }
             .navigationTitle("开机动画")
