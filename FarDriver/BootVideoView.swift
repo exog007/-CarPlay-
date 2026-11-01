@@ -19,8 +19,8 @@ struct BootVideoView: View {
     @State private var errorText = ""
 
     @AppStorage("bootVideoEnabled") private var videoEnabled = false
-    /// 画面适配模式：fill / fit / stretch
-    @AppStorage("bootVideoFitMode") private var fitModeRaw: String = "fill"
+    /// 画面适配模式：stretch（默认，铺满全屏）/ fill / fit
+    @AppStorage("bootVideoFitMode") private var fitModeRaw: String = "stretch"
     /// 额外缩放
     @AppStorage("bootVideoZoom") private var zoom: Double = 1.0
     /// 水平偏移
@@ -110,9 +110,9 @@ struct BootVideoView: View {
                 // 画面适配：裁剪 / 拉伸 / 缩放 / 偏移
                 Section {
                     Picker("画面适配", selection: $fitModeRaw) {
-                        Text("填充（裁剪）").tag("fill")
-                        Text("适应（留黑边）").tag("fit")
-                        Text("拉伸（铺满变形）").tag("stretch")
+                        Text("拉伸铺满").tag("stretch")
+                        Text("裁剪铺满").tag("fill")
+                        Text("完整显示").tag("fit")
                     }
                     .pickerStyle(.segmented)
 
@@ -156,7 +156,7 @@ struct BootVideoView: View {
                     }
 
                     Button {
-                        fitModeRaw = "fill"
+                        fitModeRaw = "stretch"
                         zoom = 1.0
                         offsetX = 0
                         offsetY = 0
@@ -166,7 +166,7 @@ struct BootVideoView: View {
                 } header: {
                     Text("画面适配")
                 } footer: {
-                    Text("填充 = 铺满屏幕但裁掉一部分；适应 = 完整显示但可能留黑边；拉伸 = 强行铺满可能变形。\n如果需要画面左右移动，用水平偏移微调。")
+                    Text("拉伸铺满 = 强行拉满整个屏幕（可能变形，但绝不留黑边，默认）；\n裁剪铺满 = 等比放大到铺满，超出部分裁掉；\n完整显示 = 完整看到整个视频，可能留黑边。\n画面想左右上下移动，用下面的偏移滑块。")
                 }
             }
             .navigationTitle("开机动画")

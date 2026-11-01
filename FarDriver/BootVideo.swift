@@ -67,7 +67,9 @@ final class BootVideo: NSObject, ObservableObject {
         }
 
         guard let export = AVAssetExportSession(asset: asset,
-                                                presetName: AVAssetExportPreset1280x720)
+                                                presetName: AVAssetExportPresetHighestQuality)
+                ?? AVAssetExportSession(asset: asset,
+                                        presetName: AVAssetExportPreset1280x720)
                 ?? AVAssetExportSession(asset: asset,
                                         presetName: AVAssetExportPresetMediumQuality) else {
             return false

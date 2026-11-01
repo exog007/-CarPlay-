@@ -27,6 +27,12 @@ struct ContentView: View {
     /// 视频播完回调里置回 false，然后才进入竞技仪表自检画面。
     @State private var playingBootVideo = false
 
+    /// 开机视频已排程、但还没开始播的这段时间（黑屏等待转屏）
+    ///
+    /// 作用：防止 SportDashView 在这个空档里被渲染出来，
+    /// 否则它的自检动画和音效会提前在视频背后开跑。
+    @State private var bootVideoPending = false
+
     /// 最终显示的车速：控制器轮速和 GPS 融合
     private var displaySpeed: Double {
         gps.fused(with: mgr.data.speed)
@@ -53,6 +59,12 @@ struct ContentView: View {
                         // 开机动画：全屏播放用户上传的视频，播完自动切走
                         BootVideoPlayerView {
                             playingBootVideo = false
+                        }
+                    } else if bootVideoPending && (sportMode || dynamicMode) {
+                        // 开机视频马上就要播了，这段时间先盖住界面，
+                        // 避免 SportDashView 提前出现、导致自检音效提前响。
+                        ZStack {
+                            Color.black.ignoresSafeArea()
                         }
                     } else if landscape && dynamicMode {
                         // 动态仪表：全屏地图 + 左右圆环，完全铺满，不要导航栏
@@ -195,8 +207,11 @@ struct ContentView: View {
                     // 播完由 BootVideoPlayerView 的回调把 playingBootVideo 置回 false，
                     // 之后自然进入竞技仪表的自检动画。
                     if BootVideo.enabled && BootVideo.shared.hasVideo {
+                        // 立刻进入等待态：这段时间界面是纯黑，不会渲染仪表
+                        bootVideoPending = true
                         // 等横屏完全生效再开始播，避免视频被竖屏裁切
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            bootVideoPending = false
                             playingBootVideo = true
                         }
                     }
