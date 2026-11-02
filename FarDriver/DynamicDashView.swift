@@ -94,33 +94,32 @@ struct DynamicDashView: View {
             // 地图铺满背景，四周压暗
             mapBackground
 
-            // 四周渐晕：中间清楚、边缘压黑（参考图那种边框泛黑效果）
+            // 四周渐晕：只压边缘一圈，中间保持地图清晰（参考图那种）
             GeometryReader { g in
                 let w = g.size.width
                 let h = g.size.height
                 ZStack {
-                    // 径向渐晕
+                    // 只压最外圈，半径范围收窄，中间完全透明
                     RadialGradient(
                         stops: [
                             .init(color: .clear, location: 0.0),
-                            .init(color: .clear, location: 0.34),
-                            .init(color: .black.opacity(0.35), location: 0.62),
-                            .init(color: .black.opacity(0.88), location: 0.88),
-                            .init(color: .black, location: 1.0),
+                            .init(color: .clear, location: 0.62),
+                            .init(color: .black.opacity(0.30), location: 0.84),
+                            .init(color: .black.opacity(0.75), location: 1.0),
                         ],
                         center: .center,
                         startRadius: 0,
-                        endRadius: max(w, h) * 0.60
+                        endRadius: max(w, h) * 0.56
                     )
-                    // 上下再补一层，让顶部/底部文字更实
+                    // 顶部和底部薄薄一层，保证文字可读，但不要糊住地图
                     VStack(spacing: 0) {
-                        LinearGradient(colors: [.black.opacity(0.75), .clear],
+                        LinearGradient(colors: [.black.opacity(0.55), .clear],
                                        startPoint: .top, endPoint: .bottom)
-                            .frame(height: h * 0.16)
+                            .frame(height: h * 0.12)
                         Spacer()
-                        LinearGradient(colors: [.clear, .black.opacity(0.8)],
+                        LinearGradient(colors: [.clear, .black.opacity(0.55)],
                                        startPoint: .top, endPoint: .bottom)
-                            .frame(height: h * 0.20)
+                            .frame(height: h * 0.14)
                     }
                 }
             }
@@ -147,6 +146,8 @@ struct DynamicDashView: View {
             weather.refreshIfNeeded()
             recenterMap()
         }
+        // 地图强制深色，才是参考图那种深蓝灰配色
+        .preferredColorScheme(.dark)
         .onChange(of: loc.location) { _, _ in
             // 导航中：每来一个新位置就把 3D 相机跟过去
             if navigating {
@@ -164,15 +165,15 @@ struct DynamicDashView: View {
         Map(position: $camera) {
             if let l = loc.location {
                 Annotation("", coordinate: l.coordinate) {
-                    // 蓝色定位点
+                    // 参考图那种：外圈半透明白环 + 中心小蓝点
                     ZStack {
                         Circle()
-                            .fill(Color.blue.opacity(0.25))
-                            .frame(width: 34, height: 34)
+                            .stroke(.white.opacity(0.85), lineWidth: 2.5)
+                            .frame(width: 46, height: 46)
                         Circle()
-                            .fill(Color.blue)
-                            .frame(width: 14, height: 14)
-                            .overlay(Circle().stroke(.white, lineWidth: 2.5))
+                            .fill(Color(red: 0.25, green: 0.55, blue: 1.0))
+                            .frame(width: 13, height: 13)
+                            .overlay(Circle().stroke(.white, lineWidth: 2))
                     }
                 }
             }
@@ -180,13 +181,13 @@ struct DynamicDashView: View {
             if let route {
                 MapPolyline(route.polyline)
                     .stroke(themeMgr.color(.ok),
-                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            style: StrokeStyle(lineWidth: 7, lineCap: .round))
             }
             // 高德路线
             if let overlay = routeOverlay {
                 MapPolyline(overlay)
                     .stroke(themeMgr.color(.ok),
-                            style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            style: StrokeStyle(lineWidth: 7, lineCap: .round))
             }
             // 目的地标记
             if let target = routeTarget {
@@ -194,10 +195,12 @@ struct DynamicDashView: View {
                     .tint(themeMgr.color(.power))
             }
         }
-        .mapStyle(.standard(elevation: .flat))
+        // realistic = 3D 建筑；standard 底图在深色模式下就是参考图那种深蓝灰配色
+        .mapStyle(.standard(elevation: .realistic,
+                            pointsOfInterest: .all,
+                            showsTraffic: false))
         .mapControlVisibility(.hidden)
         .ignoresSafeArea()
-        .opacity(0.55)
         // 长按 → 打开搜索
         .onLongPressGesture(minimumDuration: 0.45) {
             showSearch = true
@@ -560,148 +563,208 @@ struct DynamicDashView: View {
     }
 
     private func recenterMap() {
-        guard let l = loc.location else { return }
-        camera = .region(MKCoordinateRegion(
-            center: l.coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
+        guard let l = loc.location else {
+            // 拿不到定位就先给个默认 3D 视角，避免地图一片空白
+            camera = .camera(MapCamera(centerCoordinate: CLLocationCoordinate2D(latitude: 39.9087,
+                                                                               longitude: 116.3975),
+                                       distance: 700,
+                                       heading: 0,
+                                       pitch: 45))
+            return
+        }
+        // 参考图那种：稍微俯视的 3D 视角，能看到建筑
+        camera = .camera(MapCamera(
+            centerCoordinate: l.coordinate,
+            distance: 620,
+            heading: loc.location?.course ?? 0,
+            pitch: 45
         ))
     }
 
     // MARK: - 顶部
 
     private var topBar: some View {
-        HStack(alignment: .top, spacing: 0) {
-            // 左：日期时间
-            VStack(alignment: .leading, spacing: -1) {
-                Text(dateText)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.65))
-                Text(timeText)
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 120, alignment: .leading)
-
-            Spacer(minLength: 8)
-
-            // 中：四项数据
+        VStack(spacing: 4) {
+            // 第一行：日期 + 时间（居中，参考图那样）
             HStack(spacing: 0) {
-                topStat("电压", String(format: "%.1f", mgr.data.voltage), "V", cyan)
-                statDivider
-                topStat("MOS", "\(mgr.data.mosTemp)", "°C",
-                        mgr.data.mosTemp > 60 ? accent : .white)
-                statDivider
-                topStat("电流", String(format: "%.1f", mgr.data.current), "A",
-                        mgr.data.isRegen ? green : .white)
-                statDivider
-                topStat("小计", trip.distanceText, "km", .white)
+                Spacer(minLength: 0)
+                VStack(spacing: -2) {
+                    Text(dateText)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                    Text(timeText)
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 0)
             }
-            .fixedSize()
 
-            Spacer(minLength: 8)
+            // 第二行：四项数据 + 右侧海拔
+            HStack(alignment: .center, spacing: 0) {
+                Spacer(minLength: 0)
 
-            // 右：天气 + 切换按钮
-            HStack(spacing: 10) {
-                if let t = weather.temperature {
-                    HStack(spacing: 3) {
-                        Image(systemName: weather.symbolName)
-                            .font(.system(size: 12))
-                        Text("\(Int(t.rounded()))°")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    }
-                    .foregroundStyle(.white.opacity(0.8))
+                HStack(spacing: 22) {
+                    topStat(icon: "stopwatch", value: tripTimeText)
+                    topStat(icon: "gauge.with.dots.needle.bottom.50percent",
+                            value: String(format: "%.3f", trip.distanceKm) + "km")
+                    topStat(icon: "speedometer",
+                            value: String(format: "%.2f", avgSpeed) + "km/h")
+                    topStat(icon: "location.north.circle",
+                            value: String(format: "%.2f", speed) + "km/h")
+                }
+
+                Spacer(minLength: 12)
+
+                // 海拔
+                HStack(spacing: 5) {
+                    Image(systemName: "mountain.2.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text(String(format: "%.1f m", elevation))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
                 }
             }
-            .frame(width: 120, alignment: .trailing)
         }
-        .frame(height: 44)
+        .frame(height: 58)
     }
 
-    private var statDivider: some View {
-        Rectangle()
-            .fill(.white.opacity(0.18))
-            .frame(width: 1, height: 22)
-            .padding(.horizontal, 14)
-    }
-
-    private func topStat(_ title: String, _ value: String, _ unit: String,
-                         _ color: Color) -> some View {
-        VStack(spacing: -1) {
-            Text(title)
-                .font(.system(size: 7, weight: .semibold))
-                .tracking(0.5)
-                .foregroundStyle(.white.opacity(0.5))
-            HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text(value)
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
-                    .monospacedDigit()
-                    .foregroundStyle(color)
-                Text(unit)
-                    .font(.system(size: 7))
-                    .foregroundStyle(.white.opacity(0.5))
+    /// 顶部小图标 + 文字（参考图那种圆形图标 + 数字）
+    private func topStat(icon: String, value: String) -> some View {
+        HStack(spacing: 5) {
+            ZStack {
+                Circle()
+                    .fill(.black.opacity(0.35))
+                    .frame(width: 20, height: 20)
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
             }
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
+                .monospacedDigit()
         }
-        .frame(width: 62)
     }
 
-    // MARK: - 中间：左右分段能量条
+    /// 行程时间 HH:mm:ss
+    private var tripTimeText: String {
+        let s = Int(trip.movingSeconds)
+        return String(format: "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+    }
+
+    /// 平均速度 km/h
+    private var avgSpeed: Double {
+        guard trip.movingSeconds > 5 else { return 0 }
+        return trip.distanceKm / (trip.movingSeconds / 3600.0)
+    }
+
+    /// 海拔（米）
+    private var elevation: Double {
+        loc.location?.altitude ?? 0
+    }
+
+    // MARK: - 中间：左右分段能量条（贴屏幕边缘）
 
     private var middleRow: some View {
         HStack(spacing: 0) {
-            // 左：速度能量条（白色系）
-            ZStack {
+            // 左：速度能量条 + 满量程标签 + 当前速度
+            ZStack(alignment: .leading) {
                 SegmentArc(progress: speedRatio, tone: .plain, side: .left)
-                    .frame(width: 190, height: 250)
+                    .frame(width: 210, height: 300)
 
-                VStack(spacing: -4) {
-                    Text("\(Int(speed.rounded()))")
-                        .font(.system(size: 46, weight: .light, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .minimumScaleFactor(0.5)
-                        .lineLimit(1)
-                    Text("km/h")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.65))
-                }
-                .offset(x: 22)
-            }
-            .frame(width: 190, height: 250)
-
-            Spacer(minLength: 0)
-
-            // 右：电量能量条（黄绿渐变），数值是两个百分比（和参考图一致）
-            ZStack {
-                SegmentArc(progress: batteryPercent, tone: .energy, side: .right)
-                    .frame(width: 190, height: 250)
-
-                // 上：100% 刻度说明；下：当前电量
-                VStack {
-                    HStack(spacing: 3) {
-                        Text("100%")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    // 左上角：满量程说明（参考图 "180 km/h"）
+                    Text("\(Int(speedScaleMax)) km/h")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
 
                     Spacer()
 
-                    HStack(spacing: 3) {
+                    // 中下：当前速度
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text("\(Int(speed.rounded()))")
+                            .font(.system(size: 54, weight: .light, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .minimumScaleFactor(0.5)
+                            .lineLimit(1)
+                        Text("km/h")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+
+                    Spacer()
+
+                    // 左下角：起点标记（参考图那个小圈）
+                    Circle()
+                        .stroke(.white.opacity(0.5), lineWidth: 1.5)
+                        .frame(width: 11, height: 11)
+                        .padding(.bottom, 6)
+                }
+                .padding(.leading, 44)
+                .padding(.vertical, 14)
+                .frame(width: 210, height: 300, alignment: .leading)
+            }
+            .frame(width: 210, height: 300)
+
+            Spacer(minLength: 0)
+
+            // 右：电量能量条 + 100% 刻度 + 当前电量 + 充电图标
+            ZStack(alignment: .trailing) {
+                SegmentArc(progress: batteryPercent, tone: .energy, side: .right)
+                    .frame(width: 210, height: 300)
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    // 右上角：满电参考
+                    Text("100%")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+
+                    Spacer()
+
+                    // 中下：充电图标 + 电量百分比
+                    HStack(spacing: 6) {
+                        ZStack {
+                            Circle()
+                                .fill(green.opacity(0.18))
+                                .frame(width: 42, height: 42)
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(green)
+                        }
                         Text("\(Int(batteryPercent * 100))%")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(batteryPercent < 0.3 ? accent : .white)
                             .monospacedDigit()
                     }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 26)
+
+                    Spacer()
+
+                    // 右下角：电量低时亮红色警示段（参考图右下角那抹红）
+                    if batteryPercent < 0.2 {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(accent)
+                            .frame(width: 10, height: 34)
+                    } else {
+                        Circle()
+                            .stroke(.white.opacity(0.5), lineWidth: 1.5)
+                            .frame(width: 11, height: 11)
+                            .padding(.bottom, 6)
+                    }
                 }
-                .frame(height: 200)
-                .offset(x: -14)
+                .padding(.trailing, 44)
+                .padding(.vertical, 14)
+                .frame(width: 210, height: 300, alignment: .trailing)
             }
-            .frame(width: 190, height: 250)
+            .frame(width: 210, height: 300)
         }
     }
+
+    /// 速度表满量程（km/h）
+    private var speedScaleMax: Double { 180 }
 
     // MARK: - 导航指引条（仿高德）
 
@@ -819,23 +882,29 @@ struct DynamicDashView: View {
 
     private var bottomBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            // 左：档位
-            VStack {
+            // 左：白色圆角方按钮（参考图左侧那个白色块）+ 档位
+            VStack(spacing: 6) {
                 Spacer()
-                gearChip(isParked ? "P" : (mgr.data.gear > 0 ? "\(mgr.data.gear)" : "—"),
-                         active: isParked)
+                HStack(spacing: 8) {
+                    // 大号白色圆角方块
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.white.opacity(0.92))
+                        .frame(width: 42, height: 42)
+                    gearChip(isParked ? "P" : (mgr.data.gear > 0 ? "\(mgr.data.gear)" : "—"),
+                             active: isParked)
+                }
             }
-            .frame(height: 74)
+            .frame(height: 92)
 
             Spacer(minLength: 6)
 
-            // 中：指南针（同款）
+            // 中：指南针
             compass
                 .frame(width: 190, height: 62)
 
             Spacer(minLength: 6)
 
-            // 右：大号音乐播放器（放大 + 往右贴）
+            // 右：音乐播放器
             nowPlayingCard
 
             // 再右：导航状态（有导航才显示）
@@ -845,55 +914,56 @@ struct DynamicDashView: View {
                     .frame(width: 130)
             }
         }
-        .frame(height: 92)
+        .frame(height: 100)
     }
 
     /// 参考图底部那种：刻度线 + 方位文字 + 当前度数
     private var compass: some View {
         // GPS course 优先，没有就用磁力计
-        let deg = loc.location?.course ?? 0
-        let heading = deg >= 0 ? deg : loc.heading
+        let rawDeg = loc.location?.course ?? 0
+        let heading = rawDeg >= 0 ? rawDeg : loc.heading
 
-        return VStack(spacing: 2) {
-            // 刻度条
+        return VStack(spacing: 3) {
+            // 刻度条（跟随当前朝向滚动）
             Canvas { ctx, size in
                 let w = size.width
                 let h = size.height
                 let mid = w / 2
-                // 每 5° 一个小刻度，每 30° 一个大刻度
-                for d in stride(from: -60, through: 60, by: 5) {
+                // 每 3° 一个小刻度，每 15° 一个大刻度
+                for d in stride(from: -60, through: 60, by: 3) {
                     let x = mid + CGFloat(d) / 60.0 * (w / 2 - 6)
-                    let isMajor = (d % 30 == 0)
+                    let isMajor = (d % 15 == 0)
                     let isCenter = (d == 0)
-                    let len: CGFloat = isMajor ? h * 0.55 : (isCenter ? h * 0.8 : h * 0.32)
-                    let color: Color = isCenter ? accent : .white.opacity(isMajor ? 0.75 : 0.35)
+                    let len: CGFloat = isCenter ? h * 0.85 : (isMajor ? h * 0.6 : h * 0.32)
+                    let color: Color = isCenter ? accent : .white.opacity(isMajor ? 0.8 : 0.4)
                     var p = Path()
                     p.move(to: CGPoint(x: x, y: h - len))
                     p.addLine(to: CGPoint(x: x, y: h))
                     ctx.stroke(p, with: .color(color),
-                               style: StrokeStyle(lineWidth: isCenter ? 1.8 : 1, lineCap: .butt))
+                               style: StrokeStyle(lineWidth: isCenter ? 2 : 1, lineCap: .butt))
                 }
             }
-            .frame(height: 22)
+            .frame(height: 24)
 
-            // 方位文字
+            // 方位文字：按当前朝向算左右两侧的方位
             HStack(spacing: 0) {
-                ForEach(CompassPoint.marks, id: \.offset) { m in
+                ForEach(CompassPoint.labels(for: heading), id: \.offset) { m in
                     Text(m.name)
                         .font(.system(size: 8))
-                        .foregroundStyle(.white.opacity(0.5))
-                    if m.offset < CompassPoint.marks.count - 1 {
+                        .foregroundStyle(.white.opacity(0.55))
+                    if m.offset < 3 {
                         Spacer(minLength: 0)
                     }
                 }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
 
             // 当前度数
             HStack(spacing: 3) {
                 Text("\(Int(heading.rounded()))°")
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
+                    .monospacedDigit()
                 Text(CompassPoint.name(for: heading))
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.7))
@@ -1036,6 +1106,17 @@ enum CompassPoint {
         Mark(offset: 2, name: "西"),
         Mark(offset: 3, name: "西北"),
     ]
+
+    /// 按当前朝向算出刻度条下方的方位文字
+    ///
+    /// 参考图里四个位置分别是「西北 北 东北 东」，说明文字是跟着朝向滚动的。
+    /// 这里换算：中心 -30°、-10°、+10°、+30° 对应的方位名。
+    static func labels(for heading: Double) -> [Mark] {
+        let offsets: [Double] = [-30, -10, 10, 30]
+        return offsets.enumerated().map { idx, d in
+            Mark(offset: idx, name: name(for: heading + d))
+        }
+    }
 
     /// 度数 → 中文方位
     static func name(for deg: Double) -> String {
