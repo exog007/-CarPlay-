@@ -52,9 +52,9 @@ struct AMapView: UIViewRepresentable {
         map.cameraDegree = cameraDegree
         map.zoomLevel = zoomLevel
         if let c = center {
-            map.setCenter(c, animated: false)
+            map.setCenterCoordinate(c, animated: false)
         }
-        map.setRotationDegree(CGFloat(heading), animated: false)
+        map.setRotationDegree(CGFloat(heading), animated: false, duration: 0)
         return map
     }
 
@@ -66,7 +66,7 @@ struct AMapView: UIViewRepresentable {
         }
         // 朝向跟随
         if abs(map.rotationDegree - CGFloat(heading)) > 2 {
-            map.setRotationDegree(CGFloat(heading), animated: true)
+            map.setRotationDegree(CGFloat(heading), animated: true, duration: 0.25)
         }
         // 俯角
         if abs(map.cameraDegree - cameraDegree) > 1 {
@@ -186,8 +186,8 @@ struct AMapView: UIViewRepresentable {
                 let r = MAPolylineRenderer(polyline: line)
                 r?.lineWidth = 7
                 r?.strokeColor = UIColor(red: 0.20, green: 0.90, blue: 0.35, alpha: 1.0)
-                r?.lineCapType = kCGLineCapRound
-                r?.lineJoinType = kCGLineJoinRound
+                r?.lineCapType = kMALineCapRound
+                r?.lineJoinType = kMALineJoinRound
                 return r
             }
             return nil
