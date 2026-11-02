@@ -80,7 +80,7 @@ struct AMapView: UIViewRepresentable {
 
     /// 设置 apiKey / 开启 HTTPS（幂等，可以重复调）
     static func configureIfNeeded() {
-        let key = AmapKey.iosKey.trimmingCharacters(in: .whitespaces)
+        let key = AmapKey.iosValue.trimmingCharacters(in: .whitespaces)
         guard !key.isEmpty else { return }
         AMapServices.shared().apiKey = key
         AMapServices.shared().enableHTTPS = true
@@ -145,6 +145,18 @@ struct AMapView: UIViewRepresentable {
         }
 
         // MARK: MAMapViewDelegate
+
+        /// 地图加载失败时把错误码丢出来，界面上会显示
+        func mapViewDidFailLoadingMap(_ mapView: MAMapView!, withError error: Error!) {
+            let ns = error as NSError
+            let msg = "地图加载失败 \(ns.code)：\(ns.localizedDescription)"
+            AmapErrorLog.shared.report(msg)
+        }
+
+        /// 地图加载成功，清掉错误
+        func mapViewDidFinishLoadingMap(_ mapView: MAMapView!) {
+            AmapErrorLog.shared.clear()
+        }
 
         /// 自定义标注视图
         func mapView(_ mapView: MAMapView!, viewFor annotation: MAAnnotation!) -> MAAnnotationView! {

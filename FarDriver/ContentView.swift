@@ -924,6 +924,31 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(AmapKey.iosConfigured ? themeMgr.color(.ok) : .secondary)
                     }
+                    if AmapKey.iosConfigured {
+                        HStack {
+                            Text("生效的 Key")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(AmapKey.iosValue)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                        }
+                        HStack {
+                            Text("Bundle ID")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text("com.exog007.fardriver")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if !AmapErrorLog.shared.lastError.isEmpty {
+                        Text(AmapErrorLog.shared.lastError)
+                            .font(.caption2)
+                            .foregroundStyle(themeMgr.color(.warn))
+                    }
                 } header: {
                     Text("高德原生地图（动态仪表）")
                 } footer: {

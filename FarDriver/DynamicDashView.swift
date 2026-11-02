@@ -19,6 +19,8 @@ struct DynamicDashView: View {
     @ObservedObject var weather = WeatherService.shared
     @ObservedObject var loc = LocationService.shared
     @ObservedObject var np = NowPlayingService.shared
+    /// 高德地图错误（有错才显示在仪表上）
+    @ObservedObject var amapErr = AmapErrorLog.shared
 
     /// 地图相机位置
     @State private var camera: MapCameraPosition = .automatic
@@ -93,6 +95,23 @@ struct DynamicDashView: View {
 
             // 地图铺满背景，四周压暗
             mapBackground
+
+            // 高德地图出错时把错误码显示出来（排查用，正常不显示）
+            if usingAMap && !amapErr.lastError.isEmpty {
+                VStack {
+                    Spacer()
+                    Text(amapErr.lastError)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.75))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .padding(.bottom, 110)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+            }
 
             // 四周渐晕：只压边缘一圈，中间保持地图清晰（参考图那种）
             GeometryReader { g in

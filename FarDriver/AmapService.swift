@@ -55,9 +55,49 @@ enum AmapKey {
         set { UserDefaults.standard.set(newValue, forKey: "amapIOSKey") }
     }
 
+    /// 内置的 iOS 平台 Key（写死在代码里，免去每次重装手动填）
+    ///
+    /// 必须是「iOS平台」类型的 Key，且 Bundle ID 绑定 com.exog007.fardriver
+    static let iosBuiltIn = "34da13381203855c5dde596a215b14f8"
+
+    /// 实际使用的 iOS Key：优先用户填的，没有就用内置的
+    static var iosValue: String {
+        let c = iosKey.trimmingCharacters(in: .whitespaces)
+        return c.isEmpty ? iosBuiltIn : c
+    }
+
     /// 有没有可用的 iOS Key（决定是否启用高德原生地图）
     static var iosConfigured: Bool {
-        !iosKey.trimmingCharacters(in: .whitespaces).isEmpty
+        !iosValue.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+}
+
+// MARK: - 高德地图错误收集（给界面显示用）
+
+final class AmapErrorLog: ObservableObject {
+
+    static let shared = AmapErrorLog()
+
+    /// 最近一次地图加载失败的信息
+    @Published var lastError: String = ""
+
+    private init() {}
+
+    func report(_ text: String) {
+        // 只在主线程改 @Published
+        if Thread.isMainThread {
+            lastError = text
+        } else {
+            DispatchQueue.main.async { self.lastError = text }
+        }
+    }
+
+    func clear() {
+        if Thread.isMainThread {
+            lastError = ""
+        } else {
+            DispatchQueue.main.async { self.lastError = "" }
+        }
     }
 }
 
