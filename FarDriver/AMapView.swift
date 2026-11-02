@@ -52,7 +52,7 @@ struct AMapView: UIViewRepresentable {
         map.cameraDegree = cameraDegree
         map.zoomLevel = zoomLevel
         if let c = center {
-            map.setCenterCoordinate(c, animated: false)
+            map.setCenter(c, animated: false)
         }
         map.setRotationDegree(CGFloat(heading), animated: false, duration: 0)
         return map
@@ -119,14 +119,14 @@ struct AMapView: UIViewRepresentable {
         func syncRoute(on map: MAMapView, coords: [CLLocationCoordinate2D]) {
             // 先清掉旧的
             if let old = routePolyline {
-                map.removeOverlay(old)
+                map.remove(old)
                 routePolyline = nil
             }
             guard coords.count >= 2 else { return }
             var c = coords
             if let line = MAPolyline(coordinates: &c, count: UInt(c.count)) {
                 routePolyline = line
-                map.addOverlay(line)
+                map.add(line)
             }
         }
 
