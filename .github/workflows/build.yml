@@ -24,6 +24,25 @@ jobs:
         run: |
           brew install xcodegen
 
+      - name: 下载高德地图 SDK
+        run: |
+          set -e
+          mkdir -p vendor/amap
+          echo "下载 3D 地图库（约 63MB）..."
+          curl -L --retry 4 --retry-delay 5 --max-time 600 \
+            -o /tmp/map.zip \
+            "https://a.amap.com/lbs/static/zip/AMap_iOS_3DMap_Lib_V11.2.100.zip"
+          echo "下载基础库（约 1MB）..."
+          curl -L --retry 4 --retry-delay 5 --max-time 300 \
+            -o /tmp/found.zip \
+            "https://amappc.oss-cn-zhangjiakou.aliyuncs.com/lbs/static/zip/AMap_iOS_Foundation_Lib_V1.9.1.zip"
+          unzip -q /tmp/map.zip -d vendor/amap
+          unzip -q /tmp/found.zip -d vendor/amap
+          echo "=== vendor/amap 内容 ==="
+          ls -la vendor/amap
+          test -d vendor/amap/MAMapKit.framework || { echo "缺少 MAMapKit.framework"; exit 1; }
+          test -d vendor/amap/AMapFoundationKit.framework || { echo "缺少 AMapFoundationKit.framework"; exit 1; }
+
       - name: 生成 Xcode 工程
         run: |
           xcodegen generate

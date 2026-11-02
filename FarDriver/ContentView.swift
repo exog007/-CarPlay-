@@ -772,6 +772,8 @@ struct SettingsView: View {
     @State private var showBootVideo = false
     /// 高德 Web 服务 Key
     @AppStorage("amapKey") private var amapKey: String = ""
+    /// 高德 iOS 平台 Key（原生地图 SDK 用，需绑定 Bundle ID）
+    @AppStorage("amapIOSKey") private var amapIOSKey: String = ""
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
 
@@ -906,7 +908,26 @@ struct SettingsView: View {
                 } header: {
                     Text("高德地图")
                 } footer: {
-                    Text("默认已内置一个 Web 服务 Key，开箱即用。\n如果内置 Key 额度用完了，去「高德开放平台 → 应用管理 → 我的应用」申请自己的（服务平台选「Web 服务」，不用填 Bundle ID），填到上面覆盖。\n填了之后：搜索和路线走高德；地图底图仍用 Apple 地图（中国区数据就是高德提供的）。")
+                    Text("默认已内置一个 Web 服务 Key，开箱即用。\n如果内置 Key 额度用完了，去「高德开放平台 → 应用管理 → 我的应用」申请自己的（服务平台选「Web 服务」，不用填 Bundle ID），填到上面覆盖。\n填了之后：搜索和路线走高德。")
+                }
+
+                Section {
+                    TextField("iOS 平台 Key（留空则用 Apple 地图）", text: $amapIOSKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(.footnote, design: .monospaced))
+                    HStack {
+                        Text("当前地图")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(AmapKey.iosConfigured ? "高德原生地图" : "Apple 地图")
+                            .font(.caption)
+                            .foregroundStyle(AmapKey.iosConfigured ? themeMgr.color(.ok) : .secondary)
+                    }
+                } header: {
+                    Text("高德原生地图（动态仪表）")
+                } footer: {
+                    Text("填了才会用高德原生地图（深色 3D + 3D 建筑 + 中文 POI），动态仪表会明显更像参考图。\n\n申请方法：高德开放平台 → 应用管理 → 我的应用 → 新建应用\n· 服务平台选「iOS平台」\n· Bundle ID 必须填 **com.exog007.fardriver**（不填收不到图）\n· 拿到 Key 填到上面\n\n注意：这个 Key 和上面的 Web 服务 Key 不是同一个，要单独申请。")
                 }
 
                 Section {

@@ -38,9 +38,31 @@ targets:
         SUPPORTS_MACCATALYST: "NO"
         GENERATE_INFOPLIST_FILE: "NO"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # 高德 SDK 需要的链接参数
+        OTHER_LDFLAGS: "$(inherited) -lz -lc++"
+        # 让 Xcode 能找到 vendor 目录里的 framework
+        FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/vendor/amap"
     dependencies:
       - target: FarDriverWidgetExtension
         embed: true
+      # ── 高德地图 SDK（由 CI 在构建前下载到 vendor/amap）──
+      - framework: vendor/amap/MAMapKit.framework
+        embed: true
+        codeSign: false
+      - framework: vendor/amap/AMapFoundationKit.framework
+        embed: true
+        codeSign: false
+      # 高德 SDK 依赖的系统框架
+      - sdk: QuartzCore.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: CoreTelephony.framework
+      - sdk: Security.framework
+      - sdk: OpenGLES.framework
+      - sdk: CoreText.framework
+      - sdk: CoreGraphics.framework
+      - sdk: GLKit.framework
+      - sdk: libz.tbd
+      - sdk: libc++.tbd
     entitlements:
       path: FarDriver/FarDriver.entitlements
       properties:

@@ -37,6 +37,28 @@ enum AmapKey {
     static var configured: Bool {
         !value.trimmingCharacters(in: .whitespaces).isEmpty
     }
+
+    // MARK: - iOS 平台 Key（原生地图 SDK 用）
+    //
+    // 和上面的 Web 服务 Key 是两个东西：
+    //   · Web 服务 Key：REST 接口（搜索/路线），不用绑 Bundle ID
+    //   · iOS 平台 Key：原生地图 SDK，**必须绑定 Bundle ID**
+    //
+    // 申请路径：高德开放平台 → 应用管理 → 我的应用 → 新建应用
+    //   服务平台选「iOS平台」，Bundle ID 填 com.exog007.fardriver
+    //
+    // 填了才会用高德原生地图；没填就退回 Apple 地图。
+
+    /// 用户在设置里填的 iOS 平台 Key
+    static var iosKey: String {
+        get { UserDefaults.standard.string(forKey: "amapIOSKey") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "amapIOSKey") }
+    }
+
+    /// 有没有可用的 iOS Key（决定是否启用高德原生地图）
+    static var iosConfigured: Bool {
+        !iosKey.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 }
 
 /// 高德返回的一个地点

@@ -161,7 +161,59 @@ struct DynamicDashView: View {
 
     // MARK: - 地图
 
+    /// 有 iOS 平台 Key 就用高德原生地图，否则退回 Apple 地图
+    private var usingAMap: Bool { AmapKey.iosConfigured }
+
+    @ViewBuilder
     private var mapBackground: some View {
+        if usingAMap {
+            aMapBackground
+        } else {
+            appleMapBackground
+        }
+    }
+
+    // MARK: 高德地图
+
+    private var aMapBackground: some View {
+        AMapView(
+            center: loc.location?.coordinate,
+            heading: {
+                let c = loc.location?.course ?? -1
+                return c >= 0 ? c : loc.heading
+            }(),
+            zoomLevel: 17.2,
+            cameraDegree: 45,
+            route: amapRoutePoints,
+            destination: routeTarget?.placemark.coordinate
+        )
+        // 长按 → 打开搜索
+        .onLongPressGesture(minimumDuration: 0.45) {
+            showSearch = true
+        }
+        .sheet(isPresented: $showSearch) {
+            navSearchSheet
+        }
+    }
+
+    /// 当前要画的路线点（高德路线优先，其次 MapKit 路线）
+    private var amapRoutePoints: [CLLocationCoordinate2D] {
+        if let r = amapRoute, !r.points.isEmpty {
+            return r.points
+        }
+        if let r = route {
+            let n = r.polyline.pointCount
+            var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid,
+                                                  count: n)
+            r.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: n))
+            return coords
+        }
+        return []
+    }
+
+    // MARK: Apple 地图
+
+    private var appleMapBackground: some View {
         Map(position: $camera) {
             if let l = loc.location {
                 Annotation("", coordinate: l.coordinate) {

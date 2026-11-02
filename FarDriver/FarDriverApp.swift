@@ -14,6 +14,9 @@ struct FarDriverApp: App {
         // 允许代码里主动触发屏幕旋转
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
 
+        // 高德地图 SDK：apiKey 必须在创建 MAMapView 之前设好
+        AMapView.configureIfNeeded()
+
         // ── 启动直接进竞技仪表 ──
         //
         // 必须在 init 里把风格写进磁盘，不能等 onAppear：
