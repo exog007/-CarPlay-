@@ -309,9 +309,9 @@ struct AntBmsView: View {
 
             // 下半：剩余时间
             HStack(spacing: 0) {
-                timeCell("充电剩余", bms.data.chargeRemainMin, themeMgr.color(.ok))
+                timeCell("充电剩余", chargeRemainMinutes, themeMgr.color(.ok))
                 Divider().frame(height: 30)
-                timeCell("放电剩余", bms.data.dischargeRemainMin, themeMgr.color(.power))
+                timeCell("放电剩余", dischargeRemainMinutes, themeMgr.color(.power))
                 Divider().frame(height: 30)
                 VStack(spacing: 3) {
                     Text("化学类型")
@@ -409,6 +409,53 @@ struct AntBmsView: View {
         guard min > 0 else { return "—" }
         if min >= 60 { return "\(min / 60)时\(min % 60)分" }
         return "\(min)分"
+    }
+
+    // MARK: - 剩余时间（自己算，不用 BMS 上报值）
+
+    /// 电池总电压（V）
+    private var packVoltage: Double {
+        bms.data.totalVoltage
+    }
+
+    /// 当前功率（W，恒为正数，只看大小）
+    private var absPower: Double {
+        abs(bms.data.power)
+    }
+
+    /// 充电剩余时间（分钟）
+    ///
+    /// 算法：要充进去的能量 ÷ 当前充电功率
+    ///   要充进去的能量 = (总容量 - 剩余容量) × 总电压   → 单位 Wh
+    ///   时间(h) = Wh ÷ W，再 ×60 换成分钟
+    ///
+    /// 没有充电（功率太小）时返回 0，界面显示 —
+    private var chargeRemainMinutes: Int {
+        guard bms.data.hasData, bms.data.capacityTotal > 0, packVoltage > 1 else { return 0 }
+        // 只算真正在充电的时候（功率 > 5W）
+        guard absPower > 5 else { return 0 }
+        let needAh = max(bms.data.capacityTotal - bms.data.capacityRemaining, 0)
+        guard needAh > 0.5 else { return 0 }
+        let needWh = needAh * packVoltage
+        let hours = needWh / absPower
+        let min = Int((hours * 60).rounded())
+        // 超过 24 小时视为无效（数据异常）
+        return (min > 0 && min <= 24 * 60) ? min : 0
+    }
+
+    /// 放电剩余时间（分钟）
+    ///
+    /// 算法：剩余能量 ÷ 当前放电功率
+    ///   剩余能量 = 剩余容量 × 总电压   → Wh
+    ///   时间(h) = Wh ÷ W，再 ×60 换成分钟
+    private var dischargeRemainMinutes: Int {
+        guard bms.data.hasData, packVoltage > 1 else { return 0 }
+        guard absPower > 5 else { return 0 }
+        guard bms.data.capacityRemaining > 0.5 else { return 0 }
+        let leftWh = bms.data.capacityRemaining * packVoltage
+        let hours = leftWh / absPower
+        let min = Int((hours * 60).rounded())
+        return (min > 0 && min <= 24 * 60) ? min : 0
     }
 
     // MARK: - ② 单体极值条
