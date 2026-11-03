@@ -131,6 +131,8 @@ struct SportDashView: View {
                     bottomRow
                     debugPinRow
                 }
+                .padding(.top, 6)
+                .padding(.bottom, 4)
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
             }

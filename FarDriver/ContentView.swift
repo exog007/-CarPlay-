@@ -70,13 +70,13 @@ struct ContentView: View {
                         // 动态仪表：全屏地图 + 左右圆环，完全铺满，不要导航栏
                         DynamicDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
                     } else if landscape && sportMode {
-                        // 竞技风格：整屏黑底，不要导航栏和卡片，铺满
-                        ScrollView {
-                            SportDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
-                                .frame(minHeight: geo.size.height - 60)
-                        }
-                        .scrollContentBackground(.hidden)
-                        .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
+                        // 竞技风格：整屏铺满，不要导航栏、不要 ScrollView
+                        //
+                        // 之前套了 ScrollView + minHeight(高-60)，还会被导航栏压住顶部，
+                        // 导致顶部那一排信息被挡住。这里直接铺满，并隐藏导航栏。
+                        SportDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
+                            .toolbar(.hidden, for: .navigationBar)
+                            .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
                     } else if launchingSport && (sportMode || dynamicMode) && !landscape {
                         // 只在「刚启动、正在等横屏生效」的这一瞬间显示遮罩，
                         // 避免闪一下标准界面。用户手动切回竖屏时 launchingSport 已经是 false，
