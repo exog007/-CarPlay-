@@ -89,95 +89,75 @@ struct DynamicDashView: View {
     private var cyan: Color { themeMgr.color(.rpm) }
 
     var body: some View {
-        ZStack {
-            // 底色
-            Color.black.ignoresSafeArea()
+        GeometryReader { geo in
+            let s = ScreenFit.scale(for: geo.size)
 
-            // 地图铺满背景，四周压暗
-            mapBackground
+            ZStack {
+                // 底色
+                Color.black.ignoresSafeArea()
 
-            // 高德地图出错时把错误码显示出来（排查用，正常不显示）
-            if usingAMap && !amapErr.lastError.isEmpty {
-                VStack {
-                    Spacer()
-                    Text(amapErr.lastError)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.red.opacity(0.75))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .padding(.bottom, 110)
-                    Spacer()
-                }
-                .allowsHitTesting(false)
-            }
+                // 地图铺满背景（地图本身不做缩放，始终铺满）
+                mapBackground
 
-            // 高德地图一直没加载完 → 显示诊断（Key 前 8 位 + 坐标 + 状态）
-            if usingAMap && !amapErr.mapReady && amapErr.lastError.isEmpty {
-                VStack {
-                    HStack(spacing: 6) {
-                        ProgressView().scaleEffect(0.6).tint(.white)
-                        Text("地图加载中… key=\(String(AmapKey.iosValue.prefix(8)))…  坐标=\(coordText)")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.black.opacity(0.55))
-                    .clipShape(Capsule())
-                    Spacer()
-                }
-                .padding(.top, 78)
-                .allowsHitTesting(false)
-            }
-
-            // 四周渐晕：只压边缘一圈，中间保持地图清晰（参考图那种）
-            GeometryReader { g in
-                let w = g.size.width
-                let h = g.size.height
+                // ── 叠层 UI：按参考画布 1904×878 排版，再整体缩放到实际屏幕 ──
                 ZStack {
-                    // 只压最外圈，半径范围收窄，中间完全透明
-                    RadialGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.0),
-                            .init(color: .clear, location: 0.62),
-                            .init(color: .black.opacity(0.30), location: 0.84),
-                            .init(color: .black.opacity(0.75), location: 1.0),
-                        ],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: max(w, h) * 0.56
-                    )
-                    // 顶部和底部薄薄一层，保证文字可读，但不要糊住地图
-                    VStack(spacing: 0) {
-                        LinearGradient(colors: [.black.opacity(0.55), .clear],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: h * 0.12)
-                        Spacer()
-                        LinearGradient(colors: [.clear, .black.opacity(0.55)],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: h * 0.14)
+                    // 高德地图出错时把错误码显示出来（排查用，正常不显示）
+                    if usingAMap && !amapErr.lastError.isEmpty {
+                        VStack {
+                            Spacer()
+                            Text(amapErr.lastError)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.red.opacity(0.75))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .padding(.bottom, 110)
+                            Spacer()
+                        }
+                        .allowsHitTesting(false)
                     }
-                }
-            }
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
 
-            VStack(spacing: 0) {
-                topBar
-                // 导航中：顶部显示转向指引条
-                if navigating, let step = currentStep {
-                    navBanner(step)
-                        .padding(.top, 6)
+                    // 高德地图一直没加载完 → 显示诊断
+                    if usingAMap && !amapErr.mapReady && amapErr.lastError.isEmpty {
+                        VStack {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.6).tint(.white)
+                                Text("地图加载中… key=\(String(AmapKey.iosValue.prefix(8)))…  坐标=\(coordText)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.85))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.black.opacity(0.55))
+                            .clipShape(Capsule())
+                            Spacer()
+                        }
+                        .padding(.top, 78)
+                        .allowsHitTesting(false)
+                    }
+
+                    VStack(spacing: 0) {
+                        topBar
+                        // 导航中：顶部显示转向指引条
+                        if navigating, let step = currentStep {
+                            navBanner(step)
+                                .padding(.top, 6)
+                        }
+                        Spacer(minLength: 0)
+                        middleRow
+                        Spacer(minLength: 0)
+                        bottomBar
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
-                Spacer(minLength: 0)
-                middleRow
-                Spacer(minLength: 0)
-                bottomBar
+                .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
+                .scaleEffect(s, anchor: .center)
+
+                // 四周渐晕：铺满实际屏幕，跟着屏幕走
+                vignette
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
         }
         .onAppear {
             loc.start()
@@ -195,6 +175,38 @@ struct DynamicDashView: View {
                 if camera == .automatic { recenterMap() }
             }
         }
+    }
+
+    /// 四周渐晕（铺满真实屏幕，不参与参考画布缩放）
+    private var vignette: some View {
+        GeometryReader { g in
+            let w = g.size.width
+            let h = g.size.height
+            ZStack {
+                RadialGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .clear, location: 0.62),
+                        .init(color: .black.opacity(0.30), location: 0.84),
+                        .init(color: .black.opacity(0.75), location: 1.0),
+                    ],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: max(w, h) * 0.56
+                )
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.black.opacity(0.55), .clear],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: h * 0.12)
+                    Spacer()
+                    LinearGradient(colors: [.clear, .black.opacity(0.55)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: h * 0.14)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     // MARK: - 地图

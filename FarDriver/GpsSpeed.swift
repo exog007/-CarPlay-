@@ -96,23 +96,14 @@ final class GpsSpeed: NSObject, ObservableObject {
 
     // MARK: - 读数
 
-    /// 融合车速：GPS 为主，控制器兜底
+    /// 显示车速
     ///
-    /// 方案 C：
-    ///   ① 有 GPS 信号且精度够 → 用 GPS（真实对地速度，不受轮径/极对数误差影响）
-    ///   ② GPS 没信号（隧道/车库）→ 用控制器转速换算
-    ///   ③ GPS 读到 0 但控制器有速度（刚起步/低速 GPS 不出数）→ 用控制器
+    /// 按用户要求：**只用控制器转速换算**（原始值 × 微调系数）。
+    /// GPS 不再参与显示速度，只用于地图定位和「一键校准」参考。
     ///
-    /// - Parameter wheel: 控制器按轮径算出来的速度
+    /// - Parameter wheel: 控制器转速换算出的时速（已含微调系数）
     /// - Returns: 用于显示的速度
     func fused(with wheel: Double) -> Double {
-        // 没开 GPS / 没定位 / 精度太差 → 全用控制器
-        guard enabled, hasFix, accuracy >= 0, accuracy < 30 else { return wheel }
-
-        // GPS 有速度，用平滑后的值（数字连续变化，不跳）
-        if smoothSpeed >= 1.0 { return smoothSpeed }
-
-        // GPS 是 0，但车在动（刚起步 GPS 还没出数），用控制器
         return wheel
     }
 

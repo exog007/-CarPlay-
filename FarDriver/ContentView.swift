@@ -776,6 +776,32 @@ struct SettingsView: View {
     @AppStorage("amapIOSKey") private var amapIOSKey: String = ""
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
+    /// GPS 校准结果提示
+    @State private var calibrateMessage: String? = nil
+
+    /// 用 GPS 实测速度反算微调系数
+    ///
+    /// 原理：rawSpeed 是转速换算出的未修正值，GPS 是对地真实速度。
+    /// 系数 = GPS ÷ rawSpeed，这样显示值就正好等于 GPS 值。
+    private func calibrateByGps() {
+        let raw = mgr.data.rawSpeed
+        let real = gps.smoothSpeed
+        guard raw > 1, real > 1 else {
+            calibrateMessage = "速度太低"
+            return
+        }
+        let k = real / raw
+        guard k > 0.05, k < 10 else {
+            calibrateMessage = "系数异常"
+            return
+        }
+        speedTrim = k
+        calibrateMessage = String(format: "已设为 %.4f", k)
+        // 3 秒后清掉提示
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            calibrateMessage = nil
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -1013,14 +1039,34 @@ struct SettingsView: View {
                         Text("速度微调")
                             .foregroundStyle(themeMgr.foreground)
                         Spacer()
-                        Text(String(format: "×%.3f", speedTrim))
-                            .font(.system(.caption, design: .monospaced))
+                        Text(String(format: "×%.4f", speedTrim))
+                            .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(themeMgr.color(.ok))
                     }
+
+                    // 直接输入系数（精确到小数点后四位）
+                    HStack {
+                        Text("输入系数")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        TextField("1.0000", value: Binding(
+                            get: { speedTrim },
+                            set: { speedTrim = min(10.0, max(0.05, $0)) }
+                        ), format: .number.precision(.fractionLength(0...4)))
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .font(.system(.footnote, design: .monospaced))
+                        .frame(width: 90)
+                    }
+
                     Slider(value: $speedTrim, in: 0.05...10.0, step: 0.01)
                         .tint(themeMgr.color(.ok))
+
                     HStack(spacing: 8) {
                         Button("÷2") { speedTrim = max(0.05, speedTrim / 2) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("−0.1") { speedTrim = max(0.05, speedTrim - 0.1) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                         Button("−0.01") { speedTrim = max(0.05, speedTrim - 0.01) }
@@ -1030,17 +1076,59 @@ struct SettingsView: View {
                         Button("+0.01") { speedTrim = min(10.0, speedTrim + 0.01) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                        Button("+0.1") { speedTrim = min(10.0, speedTrim + 0.1) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         Button("×2") { speedTrim = min(10.0, speedTrim * 2) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                        Button("重置") { speedTrim = 1.0 }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
                     }
+
+                    Button {
+                        speedTrim = 1.0
+                    } label: {
+                        Label("重置为 1.0", systemImage: "arrow.counterclockwise")
+                    }
+
+                    // ── GPS 一键校准 ──
+                    HStack {
+                        Text("当前转速换算")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(String(format: "%.2f km/h", mgr.data.rawSpeed))
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("GPS 实测")
+                            .foregroundStyle(themeMgr.foreground)
+                        Spacer()
+                        Text(gps.hasFix
+                             ? String(format: "%.2f km/h", gps.smoothSpeed)
+                             : "无 GPS 信号")
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(gps.hasFix ? themeMgr.color(.rpm) : .secondary)
+                    }
+
+                    Button {
+                        calibrateByGps()
+                    } label: {
+                        HStack {
+                            Image(systemName: "location.fill.viewfinder")
+                            Text("用 GPS 自动校准")
+                            Spacer()
+                            if let msg = calibrateMessage {
+                                Text(msg)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(!gps.hasFix || mgr.data.rawSpeed < 3 || gps.smoothSpeed < 3)
                 } header: {
-                    Text("速度校准")
+                    Text("速度校准（纯转速计算）")
                 } footer: {
-                    Text("显示速度 = 转速换算值 × 这个系数（范围 0.05~10）。\n实际骑得比仪表快就调大，比仪表慢就调小。\n举例：仪表显示 5，手机 GPS 显示 30，就把系数调到 6。")
+                    Text("显示速度 = 转速换算值 × 微调系数。\nGPS 不再参与显示，只用来帮你校准系数。\n\n校准方法：骑到 20 km/h 以上保持匀速，点「用 GPS 自动校准」，会自动算出正确系数。\n也可以手动调：实际比仪表快就调大，比仪表慢就调小。")
                 }
 
                 Section {

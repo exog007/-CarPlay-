@@ -120,15 +120,23 @@ struct SportDashView: View {
         // 否则旋转过程中就开始扫表，会看到动画被裁一半或者时间轴对不上。
         GeometryReader { geo in
             let ready = geo.size.width > geo.size.height + 1
+            // 按参考画布等比缩放，适配不同屏幕尺寸
+            let s = ScreenFit.scale(for: geo.size)
 
-            VStack(spacing: 6) {
-                topBar
-                rpmBand
-                middleRow
-                bottomRow
-                debugPinRow
+            HStack {
+                Spacer(minLength: 0)
+                VStack(spacing: 6) {
+                    topBar
+                    rpmBand
+                    middleRow
+                    bottomRow
+                    debugPinRow
+                }
+                .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
+                .scaleEffect(s, anchor: .center)
+                Spacer(minLength: 0)
             }
-            .padding(10)
+            .frame(width: geo.size.width, height: geo.size.height)
             .background(sportBackground)
             .onAppear {
                 weather.refreshIfNeeded()

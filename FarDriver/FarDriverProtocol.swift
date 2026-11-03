@@ -19,7 +19,9 @@ struct ControllerData: Codable, Equatable {
     var rpm: Double = 0              // 电机转速
     var rawRpm: Int16 = 0
     var gear: Int = 0                // 档位
-    var speed: Double = 0            // 时速 km/h
+    var speed: Double = 0            // 显示时速 km/h（原始值 × 微调系数）
+    /// 未乘微调系数的原始时速（转速换算值），校准用
+    var rawSpeed: Double = 0
     var mosTemp: Int = 0             // 控制器/MOS 温度 °C
     var motorTemp: Int = 0           // 电机温度 °C
     var soc: Int = 0                 // 电量 %
@@ -209,6 +211,7 @@ final class FarDriverDecoder {
             let v = UserDefaults.standard.double(forKey: "speedTrim")
             return (v > 0.05 && v < 10.0) ? v : 1.0
         }()
+        data.rawSpeed = baseSpeed
         data.speed = baseSpeed * trim
 
         data.recomputePower()
