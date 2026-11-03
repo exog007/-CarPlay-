@@ -80,6 +80,8 @@ final class AmapErrorLog: ObservableObject {
 
     /// 最近一次地图加载失败的信息
     @Published var lastError: String = ""
+    /// 地图是否已经加载完成（拿到瓦片）
+    @Published var mapReady = false
 
     private init() {}
 
@@ -89,6 +91,18 @@ final class AmapErrorLog: ObservableObject {
             lastError = text
         } else {
             DispatchQueue.main.async { self.lastError = text }
+        }
+    }
+
+    func markReady() {
+        if Thread.isMainThread {
+            mapReady = true
+            lastError = ""
+        } else {
+            DispatchQueue.main.async {
+                self.mapReady = true
+                self.lastError = ""
+            }
         }
     }
 

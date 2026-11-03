@@ -39,7 +39,10 @@ targets:
         GENERATE_INFOPLIST_FILE: "NO"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # 高德 SDK 需要的链接参数
-        OTHER_LDFLAGS: "$(inherited) -lz -lc++"
+        # ⚠️ -ObjC 必须有：MAMapKit 是静态框架，它依赖很多 Objective-C 分类
+        #   （NSValue 坐标转换、NSString 扩展等）。不加 -ObjC 这些分类不会被链接进来，
+        #   结果是地图一片黑/空白，而且不报任何错误。
+        OTHER_LDFLAGS: "$(inherited) -ObjC -lz -lc++"
         # 让 Xcode 能找到 vendor 目录里的 framework
         FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/vendor/amap"
     dependencies:

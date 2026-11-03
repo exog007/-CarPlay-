@@ -113,6 +113,25 @@ struct DynamicDashView: View {
                 .allowsHitTesting(false)
             }
 
+            // 高德地图一直没加载完 → 显示诊断（Key 前 8 位 + 坐标 + 状态）
+            if usingAMap && !amapErr.mapReady && amapErr.lastError.isEmpty {
+                VStack {
+                    HStack(spacing: 6) {
+                        ProgressView().scaleEffect(0.6).tint(.white)
+                        Text("地图加载中… key=\(String(AmapKey.iosValue.prefix(8)))…  坐标=\(coordText)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.black.opacity(0.55))
+                    .clipShape(Capsule())
+                    Spacer()
+                }
+                .padding(.top, 78)
+                .allowsHitTesting(false)
+            }
+
             // 四周渐晕：只压边缘一圈，中间保持地图清晰（参考图那种）
             GeometryReader { g in
                 let w = g.size.width
@@ -837,6 +856,12 @@ struct DynamicDashView: View {
     /// 速度表满量程（km/h）
     private var speedScaleMax: Double { 180 }
 
+    /// 坐标文字（排查用）
+    private var coordText: String {
+        guard let c = loc.location?.coordinate else { return "无定位" }
+        return String(format: "%.4f,%.4f", c.latitude, c.longitude)
+    }
+
     // MARK: - 导航指引条（仿高德）
 
     /// 当前指令
@@ -1045,8 +1070,10 @@ struct DynamicDashView: View {
     // MARK: - 音乐播放器（大号卡片，仿参考图）
 
     private var nowPlayingCard: some View {
-        let cardTitle = np.hasInfo ? np.title : "未在播放"
-        let cardSub = np.hasInfo ? np.artist : ""
+        // iOS 不允许读取第三方 App（网易云、QQ音乐等）正在播放的信息，
+        // 只能读本 App 自己设置的。所以没信息时显示「点击打开音乐」按钮。
+        let cardTitle = np.hasInfo ? np.title : "打开网易云音乐"
+        let cardSub = np.hasInfo ? np.artist : "系统不开放读取第三方歌曲"
 
         return HStack(spacing: 13) {
             // 大唱片图标（放大到 72）
@@ -1115,6 +1142,24 @@ struct DynamicDashView: View {
         )
         // 往右贴：整体右移，并且右侧不留额外间距
         .padding(.trailing, 0)
+        // 没有歌曲信息时，点一下直接跳到网易云
+        .onTapGesture {
+            if !np.hasInfo { openMusicApp() }
+        }
+    }
+
+    /// 打开网易云音乐（没装就试 Apple Music）
+    private func openMusicApp() {
+        let candidates = ["orpheus://", "neteasecloudmusic://", "music://"]
+        for scheme in candidates {
+            if let url = URL(string: scheme),
+               UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return
+            }
+        }
+        // 都不行就提示
+        AmapErrorLog.shared.report("没有找到音乐 App")
     }
 
     /// 底部导航状态小条

@@ -155,7 +155,7 @@ struct AMapView: UIViewRepresentable {
 
         /// 地图加载成功，清掉错误
         func mapViewDidFinishLoadingMap(_ mapView: MAMapView!) {
-            AmapErrorLog.shared.clear()
+            AmapErrorLog.shared.markReady()
         }
 
         /// 自定义标注视图

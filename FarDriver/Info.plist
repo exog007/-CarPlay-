@@ -41,6 +41,14 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>需要定位来显示 GPS 实时车速（公里表）</string>
 
+	<!-- 允许检测并打开音乐 App（动态仪表底部的音乐卡片）-->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>orpheus</string>
+		<string>neteasecloudmusic</string>
+		<string>music</string>
+	</array>
+
 	<!-- 允许 HTTP 明文（局域网内网）-->
 	<key>NSAppTransportSecurity</key>
 	<dict>
