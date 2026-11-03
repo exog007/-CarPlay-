@@ -173,6 +173,8 @@ struct DynamicDashView: View {
             recenterMap()
             startAmapWatchdog()
         }
+        // 拿到全屏尺寸（不被刘海/状态栏缩掉），缩放比才准
+        .ignoresSafeArea()
         // 地图强制深色，才是参考图那种深蓝灰配色
         .preferredColorScheme(.dark)
         .onChange(of: loc.location) { _, _ in

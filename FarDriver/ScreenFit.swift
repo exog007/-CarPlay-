@@ -11,21 +11,21 @@ import SwiftUI
 
 enum ScreenFit {
 
-    /// 参考画布尺寸（横屏）
-    static let refWidth: CGFloat = 1904
-    static let refHeight: CGFloat = 878
+    /// 参考画布尺寸：按 iPhone 横屏的逻辑尺寸设计（852×393 = iPhone 15 横屏）
+    ///
+    /// ⚠️ 这里必须是「手机实际逻辑尺寸」，不能用参考图那种 1904 像素。
+    /// 用 1904 会导致缩放系数只有 0.45，整个仪表被缩小一半，看着完全不对。
+    static let refWidth: CGFloat = 852
+    static let refHeight: CGFloat = 393
 
     /// 按实际屏幕算缩放比
     ///
-    /// - Parameter size: 实际可用区域尺寸
-    /// - Returns: 缩放比，限制在 0.55 ~ 1.9 之间，避免极端机型上过大/过小
+    /// 手机横屏普遍在 393~430 高度之间，算出来约 1.0~1.1，几乎不缩放；
+    /// 平板/大屏才会放大。下限锁 1.0，保证小屏手机上不会被缩小。
     static func scale(for size: CGSize) -> CGFloat {
         guard size.width > 1, size.height > 1 else { return 1 }
-        let sx = size.width / refWidth
-        let sy = size.height / refHeight
-        // 取小的那个，保证内容完整放得下
-        let s = min(sx, sy)
-        return min(max(s, 0.55), 1.9)
+        let s = min(size.width / refWidth, size.height / refHeight)
+        return min(max(s, 1.0), 1.9)
     }
 
     /// 竖屏参考画布（标准界面用）

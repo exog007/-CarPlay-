@@ -151,6 +151,8 @@ struct SportDashView: View {
                 bootAnimating = false
             }
         }
+        // 拿到全屏尺寸，缩放比才准
+        .ignoresSafeArea()
         // 自检模式下让灯呼吸闪，用时间线驱动
         .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
             tickPulse()
