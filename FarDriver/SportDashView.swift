@@ -11,6 +11,15 @@
 import SwiftUI
 import Combine
 
+// MARK: - 通知（竞技仪表顶部悬浮按钮用）
+
+extension Notification.Name {
+    /// 退出竞技仪表、切回竖屏标准界面
+    static let sportExitToPortrait = Notification.Name("sportExitToPortrait")
+    /// 从竞技仪表打开设置
+    static let sportOpenSettings = Notification.Name("sportOpenSettings")
+}
+
 struct SportDashView: View {
     @ObservedObject var mgr: ControllerManager
     @ObservedObject var themeMgr: ThemeManager
@@ -120,8 +129,16 @@ struct SportDashView: View {
         // 否则旋转过程中就开始扫表，会看到动画被裁一半或者时间轴对不上。
         GeometryReader { geo in
             let ready = geo.size.width > geo.size.height + 1
-            // 按参考画布等比缩放，适配不同屏幕尺寸
-            let s = ScreenFit.scale(for: geo.size)
+            // 留出灵动岛/刘海和四周边距后的可用高度
+            let insets = geo.safeAreaInsets
+            let padTop = max(insets.top, 8) + 8
+            let padBottom = max(insets.bottom, 6) + 6
+            let padSide = max(insets.leading, insets.trailing) + 12
+            let usableW = max(geo.size.width - padSide * 2, 200)
+            let usableH = max(geo.size.height - padTop - padBottom, 120)
+            // 缩放比：以实际可用区域为准，绝不超出
+            let s = min(usableW / ScreenFit.refWidth,
+                        usableH / ScreenFit.refHeight)
 
             ZStack {
                 VStack(spacing: 6) {
@@ -131,14 +148,22 @@ struct SportDashView: View {
                     bottomRow
                     debugPinRow
                 }
-                .padding(.top, 6)
-                .padding(.bottom, 4)
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
+                .frame(width: usableW, height: usableH)
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .padding(.top, padTop)
+            .padding(.bottom, padBottom)
+            .padding(.horizontal, padSide)
             .clipped()
             .background(sportBackground)
+            .overlay(alignment: .topTrailing) {
+                // 顶部悬浮按钮（不占布局，浮在仪表上面）
+                topButtons
+                    .padding(.trailing, padSide + 4)
+                    .padding(.top, max(insets.top, 8) + 2)
+            }
             .onAppear {
                 weather.refreshIfNeeded()
                 // 已经在横屏就直接播，否则等尺寸就绪
@@ -153,11 +178,41 @@ struct SportDashView: View {
                 bootAnimating = false
             }
         }
-        // 拿到全屏尺寸，缩放比才准
-        .ignoresSafeArea()
         // 自检模式下让灯呼吸闪，用时间线驱动
         .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
             tickPulse()
+        }
+    }
+
+    // MARK: - 顶部悬浮按钮
+
+    /// 悬浮在仪表上层的按钮组：切竖屏 / 进设置
+    ///
+    /// 用 overlay 画，不占布局空间，所以不会把仪表挤小。
+    private var topButtons: some View {
+        HStack(spacing: 8) {
+            Button {
+                // 切回竖屏：调回标准界面
+                NotificationCenter.default.post(name: .sportExitToPortrait, object: nil)
+            } label: {
+                Image(systemName: "rectangle.portrait.rotate")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.95))
+                    .frame(width: 30, height: 30)
+                    .background(.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+
+            Button {
+                NotificationCenter.default.post(name: .sportOpenSettings, object: nil)
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.95))
+                    .frame(width: 30, height: 30)
+                    .background(.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
         }
     }
 

@@ -219,7 +219,14 @@ struct ContentView: View {
                 // 离开主界面时恢复系统自动息屏，别把电耗光
                 UIApplication.shared.isIdleTimerDisabled = false
             }
-        }
+            // 竞技仪表顶部悬浮按钮：切回竖屏
+            .onReceive(NotificationCenter.default.publisher(for: .sportExitToPortrait)) { _ in
+                rotateScreen(currentLandscape: true)
+            }
+            // 竞技仪表顶部悬浮按钮：打开设置
+            .onReceive(NotificationCenter.default.publisher(for: .sportOpenSettings)) { _ in
+                showSettings = true
+            }        }
     }
 
     // MARK: - 横竖屏切换
