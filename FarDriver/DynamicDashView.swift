@@ -760,10 +760,10 @@ struct DynamicDashView: View {
 
     private var middleRow: some View {
         HStack(spacing: 0) {
-            // 左：速度能量条 + 满量程标签 + 当前速度
+            // 左：速度小半圆 + 满量程标签 + 当前速度
             ZStack(alignment: .leading) {
                 SegmentArc(progress: speedRatio, tone: .plain, side: .left)
-                    .frame(width: 210, height: 300)
+                    .frame(width: 170, height: 260)
 
                 VStack(alignment: .leading, spacing: 2) {
                     // 左上角：满量程说明（参考图 "180 km/h"）
@@ -794,18 +794,18 @@ struct DynamicDashView: View {
                         .frame(width: 11, height: 11)
                         .padding(.bottom, 6)
                 }
-                .padding(.leading, 44)
+                .padding(.leading, 26)
                 .padding(.vertical, 14)
-                .frame(width: 210, height: 300, alignment: .leading)
+                .frame(width: 170, height: 260, alignment: .leading)
             }
-            .frame(width: 210, height: 300)
+            .frame(width: 170, height: 260)
 
             Spacer(minLength: 0)
 
             // 右：电量能量条 + 100% 刻度 + 当前电量 + 充电图标
             ZStack(alignment: .trailing) {
                 SegmentArc(progress: batteryPercent, tone: .energy, side: .right)
-                    .frame(width: 210, height: 300)
+                    .frame(width: 170, height: 260)
 
                 VStack(alignment: .trailing, spacing: 2) {
                     // 右上角：满电参考
@@ -845,11 +845,11 @@ struct DynamicDashView: View {
                             .padding(.bottom, 6)
                     }
                 }
-                .padding(.trailing, 44)
+                .padding(.trailing, 26)
                 .padding(.vertical, 14)
-                .frame(width: 210, height: 300, alignment: .trailing)
+                .frame(width: 170, height: 260, alignment: .trailing)
             }
-            .frame(width: 210, height: 300)
+            .frame(width: 170, height: 260)
         }
     }
 
@@ -1269,47 +1269,57 @@ struct SegmentArc: View {
     let progress: Double
     let tone: Tone
     let side: Side
-    /// 段数（参考图约 28 段）
-    var segments: Int = 28
-    var lineWidth: CGFloat = 9
-
-    /// 扫角范围
-    private var startDeg: Double { side == .left ? 96 : 84 }
-    private var endDeg: Double   { side == .left ? 268 : 272 }
+    /// 段数
+    var segments: Int = 24
+    var lineWidth: CGFloat = 8
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let cx: CGFloat = side == .left ? w * 0.90 : w * 0.10
+            let margin = lineWidth * 1.4
+
+            // 真正的半圆（180°）：
+            //   圆心放在离屏幕边缘 margin + r 的位置，
+            //   这样弧的顶点正好距边缘 margin，形成「贴边的小半圆」。
+            //   半径取高度的 0.40，保证 2r 不超过可用高度。
+            let radius = min(h * 0.40, (w - margin) * 0.92)
+            let cx: CGFloat = side == .left ? (margin + radius) : (w - margin - radius)
             let cy: CGFloat = h / 2
-            let radius = min(w * 0.84, h / 2 - lineWidth * 1.5)
 
             Canvas { ctx, _ in
-                let span = endDeg - startDeg
-                let step = span / Double(segments)
-                let lit = Int((Double(segments) * progress).rounded())
+                // 角度：都从「6 点钟方向（90°）」开始，向上走到「12 点钟（270° 或 -90°）」
+                // 左侧：90° → 270°（经过 180°，向左鼓）
+                // 右侧：90° → -90°（经过 0°，向右鼓）
+                func angle(_ t: Double) -> Double {
+                    side == .left ? (90 + 180 * t) : (90 - 180 * t)
+                }
+                func point(at t: Double, radius r: CGFloat) -> CGPoint {
+                    let rad = angle(t) * Double.pi / 180
+                    return CGPoint(x: cx + CGFloat(cos(rad)) * r,
+                                   y: cy + CGFloat(sin(rad)) * r)
+                }
+
+                let step = 1.0 / Double(segments)
+                let lit = Double(segments) * progress
 
                 for i in 0..<segments {
-                    let a0 = startDeg + step * Double(i)
-                    // 每段留 42% 空隙
-                    let a1 = a0 + step * 0.58
+                    let t0 = step * Double(i)
+                    // 每段留 45% 空隙
+                    let t1 = t0 + step * 0.55
 
                     var path = Path()
-                    let steps = max(3, Int(abs(a1 - a0) / 2))
-                    for s in 0...steps {
-                        let t = Double(s) / Double(steps)
-                        let deg = a0 + (a1 - a0) * t
-                        let rad = deg * Double.pi / 180
-                        let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
-                                        y: cy + CGFloat(sin(rad)) * radius)
+                    let sub = 8
+                    for s in 0...sub {
+                        let t = t0 + (t1 - t0) * Double(s) / Double(sub)
+                        let p = point(at: t, radius: radius)
                         if s == 0 { path.move(to: p) } else { path.addLine(to: p) }
                     }
 
-                    let isOn = i < lit
+                    let isOn = Double(i) < lit
                     let color: Color
                     if !isOn {
-                        color = .white.opacity(0.13)
+                        color = .white.opacity(0.12)
                     } else if tone == .plain {
                         // 速度：暗→白，越靠上越亮
                         let t = Double(i) / Double(max(1, segments - 1))
@@ -1325,10 +1335,8 @@ struct SegmentArc: View {
                 }
 
                 // 两端端点小方块（参考图两端的方形标记）
-                for deg in [startDeg, endDeg] {
-                    let rad = deg * Double.pi / 180
-                    let p = CGPoint(x: cx + CGFloat(cos(rad)) * radius,
-                                    y: cy + CGFloat(sin(rad)) * radius)
+                for t in [0.0, 1.0] {
+                    let p = point(at: t, radius: radius)
                     let r: CGFloat = 3.5
                     let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
                     ctx.stroke(Path(roundedRect: rect, cornerRadius: 1),
