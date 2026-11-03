@@ -91,20 +91,15 @@ struct AntBmsView: View {
                 VStack(spacing: 12) {
                     connectionCard
 
-                    // 连上就把所有卡片都画出来，数据还没到时显示占位符（—），到了自动填上
-                    if bms.connected {
-                        mainCard          // ① 顶部大卡片
-                        cellExtremeCard   // ② 单体极值
-                        statusCard        // ③ 状态提示
-                        temperatureCard   // ④ 温度
-                        cellsCard         // ⑤ 单体电压网格
-                        adviceCard        // 充电建议
-                    } else {
-                        // 还没连上：先把界面骨架画出来，
-                        // 数据一到（bms.connected 变 true）自动替换成真实卡片
-                        skeletonMain
-                        skeletonCells
-                    }
+                    // 不管连没连上，界面结构完全一致：
+                    // 数据没到就是占位符（--），到了自动填上。
+                    // 这样打开页面看到的就是完整仪表，不会像之前只有两个灰块。
+                    mainCard          // ① 顶部大卡片
+                    cellExtremeCard   // ② 单体极值
+                    statusCard        // ③ 状态提示
+                    temperatureCard   // ④ 温度
+                    cellsCard         // ⑤ 单体电压网格
+                    adviceCard        // ⑥ 充电建议
                     debugCard
                 }
                 .padding(.horizontal, 14)
@@ -134,93 +129,6 @@ struct AntBmsView: View {
             .navigationBarBackButtonHidden(true)
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
-    }
-
-    // MARK: - 未连接时的骨架屏（预显示界面）
-
-    /// 顶部大卡片骨架：SOC 大圆 + 电压/电流/功率占位
-    private var skeletonMain: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text("正在等待 BMS 数据…")
-                    .font(.caption)
-                    .foregroundStyle(themeMgr.secondary)
-                Spacer()
-                ProgressView().scaleEffect(0.7)
-            }
-
-            HStack(spacing: 18) {
-                // SOC 圆环占位
-                ZStack {
-                    Circle()
-                        .stroke(Color.gray.opacity(0.18), lineWidth: 12)
-                        .frame(width: 118, height: 118)
-                    Text("—%")
-                        .font(.system(size: 26, weight: .bold, design: .rounded))
-                        .foregroundStyle(themeMgr.secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    skeletonRow("总电压", "— V")
-                    skeletonRow("电流", "— A")
-                    skeletonRow("功率", "— W")
-                    skeletonRow("剩余容量", "— Ah")
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity)
-        .background(themeMgr.cardBG)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-    }
-
-    /// 单体电压网格骨架
-    private var skeletonCells: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("单体电压")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(themeMgr.foreground)
-                Spacer()
-                Text("等待数据")
-                    .font(.caption)
-                    .foregroundStyle(themeMgr.secondary)
-            }
-            // 占位格子（典型 21 串）
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7),
-                      spacing: 6) {
-                ForEach(0..<21, id: \.self) { i in
-                    VStack(spacing: 2) {
-                        Text("\(i + 1)")
-                            .font(.system(size: 8))
-                            .foregroundStyle(themeMgr.secondary)
-                        Text("—")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(themeMgr.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Color.gray.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity)
-        .background(themeMgr.cardBG)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-    }
-
-    private func skeletonRow(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(themeMgr.secondary)
-            Spacer()
-            Text(value)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(themeMgr.secondary)
-        }
     }
 
     // MARK: - 连接卡
@@ -650,8 +558,10 @@ struct AntBmsView: View {
                 // 均衡温度
                 tempCell("均衡", bms.data.temps.isEmpty ? nil : mosBalanceTemp, themeMgr.color(.rpm))
                 Divider().frame(height: 34)
-                // MOS 温度
-                tempCell("MOS", bms.data.mosTemp, bms.data.mosTemp > 60 ? themeMgr.color(.warn) : themeMgr.color(.power))
+                // MOS 温度：没数据时显示占位符，不要显示 0°
+                tempCell("MOS",
+                         bms.data.hasData ? bms.data.mosTemp : nil,
+                         bms.data.mosTemp > 60 ? themeMgr.color(.warn) : themeMgr.color(.power))
                 // 各电芯温度
                 ForEach(Array(bms.data.temps.enumerated()), id: \.offset) { idx, t in
                     Divider().frame(height: 34)
