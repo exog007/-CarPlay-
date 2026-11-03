@@ -765,6 +765,8 @@ struct StatCard: View {
 struct SettingsView: View {
     @ObservedObject var mgr: ControllerManager
     @ObservedObject var themeMgr: ThemeManager = .shared
+    /// GPS（速度校准要用实测速度做参考）
+    @ObservedObject var gps: GpsSpeed = .shared
     @Environment(\.dismiss) private var dismiss
     @State private var url = ""
     @State private var showAppearance = false
