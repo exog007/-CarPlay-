@@ -197,7 +197,8 @@ struct DynamicDashView: View {
         }
     }
 
-    /// 四周渐晕（铺满真实屏幕，不参与参考画布缩放）    private var vignette: some View {
+    /// 四周渐晕（铺满真实屏幕，不参与参考画布缩放）
+    private var vignette: some View {
         GeometryReader { g in
             let w = g.size.width
             let h = g.size.height
