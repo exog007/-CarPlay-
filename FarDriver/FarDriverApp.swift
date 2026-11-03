@@ -17,6 +17,16 @@ struct FarDriverApp: App {
         // 高德地图 SDK：apiKey 必须在创建 MAMapView 之前设好
         AMapView.configureIfNeeded()
 
+        // ── ANT BMS 预加载 ──
+        //
+        // 开机就开始扫描并自动连接，不等用户打开 BMS 页面。
+        // 这样打开页面时数据已经在刷新了，不会先看半天骨架屏。
+        if BluetoothMemory.autoConnectBms {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                AntBmsManager.shared.startScan()
+            }
+        }
+
         // ── 启动直接进竞技仪表 ──
         //
         // 必须在 init 里把风格写进磁盘，不能等 onAppear：

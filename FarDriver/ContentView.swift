@@ -776,6 +776,8 @@ struct SettingsView: View {
     @AppStorage("amapKey") private var amapKey: String = ""
     /// 高德 iOS 平台 Key（原生地图 SDK 用，需绑定 Bundle ID）
     @AppStorage("amapIOSKey") private var amapIOSKey: String = ""
+    /// 地图引擎：auto / amap / apple
+    @AppStorage("mapEngine") private var mapEngine: String = "auto"
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
     /// GPS 校准结果提示
@@ -940,6 +942,11 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Picker("地图引擎", selection: $mapEngine) {
+                        Text("自动（高德优先）").tag("auto")
+                        Text("只用高德").tag("amap")
+                        Text("只用 Apple 地图").tag("apple")
+                    }
                     TextField("iOS 平台 Key（留空则用 Apple 地图）", text: $amapIOSKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()

@@ -21,6 +21,10 @@ struct DynamicDashView: View {
     @ObservedObject var np = NowPlayingService.shared
     /// 高德地图错误（有错才显示在仪表上）
     @ObservedObject var amapErr = AmapErrorLog.shared
+    /// 地图引擎：auto / amap / apple
+    @AppStorage("mapEngine") private var mapEngine: String = "auto"
+    /// 高德地图是否已经判定为失败（自动模式下会切回 Apple 地图）
+    @State private var amapFailed = false
 
     /// 地图相机位置
     @State private var camera: MapCameraPosition = .automatic
@@ -154,6 +158,10 @@ struct DynamicDashView: View {
                 }
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
+                // 关键：缩放后把布局尺寸还原成真实屏幕，
+                // 否则父容器仍按 1904×878 排版，内容会偏出屏幕。
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
 
                 // 四周渐晕：铺满实际屏幕，跟着屏幕走
                 vignette
@@ -163,6 +171,7 @@ struct DynamicDashView: View {
             loc.start()
             weather.refreshIfNeeded()
             recenterMap()
+            startAmapWatchdog()
         }
         // 地图强制深色，才是参考图那种深蓝灰配色
         .preferredColorScheme(.dark)
@@ -177,8 +186,18 @@ struct DynamicDashView: View {
         }
     }
 
-    /// 四周渐晕（铺满真实屏幕，不参与参考画布缩放）
-    private var vignette: some View {
+    /// 高德地图看门狗：8 秒还没加载出来就切回 Apple 地图
+    private func startAmapWatchdog() {
+        guard AmapKey.iosConfigured, mapEngine != "apple" else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            if !AmapErrorLog.shared.mapReady {
+                amapFailed = true
+                AmapErrorLog.shared.report("高德地图加载超时，已切回 Apple 地图")
+            }
+        }
+    }
+
+    /// 四周渐晕（铺满真实屏幕，不参与参考画布缩放）    private var vignette: some View {
         GeometryReader { g in
             let w = g.size.width
             let h = g.size.height
@@ -212,7 +231,16 @@ struct DynamicDashView: View {
     // MARK: - 地图
 
     /// 有 iOS 平台 Key 就用高德原生地图，否则退回 Apple 地图
-    private var usingAMap: Bool { AmapKey.iosConfigured }
+    ///
+    /// 另外：如果高德地图 8 秒内没加载出来，自动切回 Apple 地图，
+    /// 避免一直黑屏看不到任何东西。
+    private var usingAMap: Bool {
+        guard AmapKey.iosConfigured else { return false }
+        guard mapEngine != "apple" else { return false }
+        if mapEngine == "amap" { return true }
+        // 自动模式：高德加载失败过就永久回退
+        return !amapFailed
+    }
 
     @ViewBuilder
     private var mapBackground: some View {

@@ -123,8 +123,7 @@ struct SportDashView: View {
             // 按参考画布等比缩放，适配不同屏幕尺寸
             let s = ScreenFit.scale(for: geo.size)
 
-            HStack {
-                Spacer(minLength: 0)
+            ZStack {
                 VStack(spacing: 6) {
                     topBar
                     rpmBand
@@ -134,9 +133,9 @@ struct SportDashView: View {
                 }
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
-                Spacer(minLength: 0)
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
             .background(sportBackground)
             .onAppear {
                 weather.refreshIfNeeded()
