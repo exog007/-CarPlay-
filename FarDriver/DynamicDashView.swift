@@ -94,7 +94,12 @@ struct DynamicDashView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let s = ScreenFit.scale(for: geo.size)
+            // 按安全区（避开灵动岛/横条）算缩放比
+            let insets = geo.safeAreaInsets
+            let availW = max(geo.size.width  - 20, 200)
+            let availH = max(geo.size.height - insets.top - insets.bottom - 8, 120)
+            let s = min(availW / ScreenFit.refWidth,
+                        availH / ScreenFit.refHeight)
 
             ZStack {
                 // 底色
@@ -103,7 +108,7 @@ struct DynamicDashView: View {
                 // 地图铺满背景（地图本身不做缩放，始终铺满）
                 mapBackground
 
-                // ── 叠层 UI：按参考画布 1904×878 排版，再整体缩放到实际屏幕 ──
+                // ── 叠层 UI：按参考画布 852×393 排版，再整体缩放到实际屏幕 ──
                 ZStack {
                     // 高德地图出错时把错误码显示出来（排查用，正常不显示）
                     if usingAMap && !amapErr.lastError.isEmpty {
@@ -158,10 +163,11 @@ struct DynamicDashView: View {
                 }
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
-                // 关键：缩放后把布局尺寸还原成真实屏幕，
-                // 否则父容器仍按 1904×878 排版，内容会偏出屏幕。
+                // 关键：缩放后把布局尺寸收缩成实际画出来的大小，
+                // 否则父容器按 852×393 排版，内容会被挤小/偏位。
+                .frame(width: ScreenFit.refWidth * s,
+                       height: ScreenFit.refHeight * s)
                 .frame(width: geo.size.width, height: geo.size.height)
-                .clipped()
 
                 // 四周渐晕：铺满实际屏幕，跟着屏幕走
                 vignette

@@ -129,18 +129,30 @@ struct SportDashView: View {
         // 否则旋转过程中就开始扫表，会看到动画被裁一半或者时间轴对不上。
         GeometryReader { geo in
             let ready = geo.size.width > geo.size.height + 1
-            // 留出灵动岛/刘海和四周边距后的可用高度
-            let insets = geo.safeAreaInsets
-            let padTop = max(insets.top, 8) + 8
-            let padBottom = max(insets.bottom, 6) + 6
-            let padSide = max(insets.leading, insets.trailing) + 12
-            let usableW = max(geo.size.width - padSide * 2, 200)
-            let usableH = max(geo.size.height - padTop - padBottom, 120)
-            // 缩放比：以实际可用区域为准，绝不超出
-            let s = min(usableW / ScreenFit.refWidth,
-                        usableH / ScreenFit.refHeight)
 
-            ZStack {
+            // 只给灵动岛/底部横条留位置，左右留一点点就好
+            let insets = geo.safeAreaInsets
+            let padTop = insets.top + 2
+            let padBottom = insets.bottom + 2
+            let padSide: CGFloat = 10
+
+            let availW = max(geo.size.width  - padSide * 2, 200)
+            let availH = max(geo.size.height - padTop - padBottom, 120)
+
+            // 缩放到「恰好铺满可用区域」：
+            //   取宽高两个方向需要的缩放比中较小的那个，保证不超出；
+            //   画布按 852×393 设计，手机横屏算出来接近 1.0。
+            let sW = availW / ScreenFit.refWidth
+            let sH = availH / ScreenFit.refHeight
+            let s = min(sW, sH)
+
+            // 缩放后画布实际占用的尺寸（缩放是以中心为锚点，所以要还原）
+            let drawnW = ScreenFit.refWidth  * s
+            let drawnH = ScreenFit.refHeight * s
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
                 VStack(spacing: 6) {
                     topBar
                     rpmBand
@@ -150,13 +162,15 @@ struct SportDashView: View {
                 }
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
-                .frame(width: usableW, height: usableH)
+                // 关键：缩放后把布局尺寸收缩成实际画出来的大小，
+                // 否则父容器仍按 852×393 排版，内容会被挤到中间变小。
+                .frame(width: drawnW, height: drawnH)
+
+                Spacer(minLength: 0)
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .padding(.top, padTop)
             .padding(.bottom, padBottom)
-            .padding(.horizontal, padSide)
-            .clipped()
             .background(sportBackground)
             .overlay(alignment: .topTrailing) {
                 // 顶部悬浮按钮（不占布局，浮在仪表上面）
