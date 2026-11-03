@@ -405,10 +405,28 @@ struct AntBmsView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// 分钟数 → 可读时长
+    ///
+    ///   < 60 分       → "45分"
+    ///   < 24 小时      → "2时5分"
+    ///   >= 24 小时     → "3天2时"   （例：74小时 → 3天2时）
     private func minutesText(_ min: Int) -> String {
         guard min > 0 else { return "—" }
-        if min >= 60 { return "\(min / 60)时\(min % 60)分" }
-        return "\(min)分"
+
+        if min < 60 {
+            return "\(min)分"
+        }
+        if min < 60 * 24 {
+            return "\(min / 60)时\(min % 60)分"
+        }
+        // 超过 24 小时：换算成天 + 小时
+        let totalHours = min / 60
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        if hours == 0 {
+            return "\(days)天"
+        }
+        return "\(days)天\(hours)时"
     }
 
     // MARK: - 剩余时间（自己算，不用 BMS 上报值）
@@ -439,8 +457,8 @@ struct AntBmsView: View {
         let needWh = needAh * packVoltage
         let hours = needWh / absPower
         let min = Int((hours * 60).rounded())
-        // 超过 24 小时视为无效（数据异常）
-        return (min > 0 && min <= 24 * 60) ? min : 0
+        // 上限放宽到 99 天，防止极端脏数据；正常范围内都照实显示
+        return (min > 0 && min <= 99 * 24 * 60) ? min : 0
     }
 
     /// 放电剩余时间（分钟）
@@ -455,7 +473,7 @@ struct AntBmsView: View {
         let leftWh = bms.data.capacityRemaining * packVoltage
         let hours = leftWh / absPower
         let min = Int((hours * 60).rounded())
-        return (min > 0 && min <= 24 * 60) ? min : 0
+        return (min > 0 && min <= 99 * 24 * 60) ? min : 0
     }
 
     // MARK: - ② 单体极值条
