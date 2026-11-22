@@ -1376,7 +1376,42 @@ struct SettingsView: View {
                                         .foregroundStyle(themeMgr.secondary)
                                 }
                             }
-                        } else if obdConnected, ObdManager.shared.dtcReadAt != nil {
+                        }
+
+                        // 待定故障码（Mode 07）
+                        if !ObdManager.shared.pendingCodes.isEmpty {
+                            Text("待定（灯未亮）")
+                                .font(.caption2)
+                                .foregroundStyle(themeMgr.color(.power))
+                            ForEach(ObdManager.shared.pendingCodes, id: \.self) { code in
+                                HStack {
+                                    Text(code)
+                                        .font(.system(.footnote, design: .monospaced))
+                                        .foregroundStyle(themeMgr.color(.power))
+                                    Spacer()
+                                }
+                            }
+                        }
+
+                        // 永久故障码（Mode 0A）
+                        if !ObdManager.shared.permanentCodes.isEmpty {
+                            Text("永久码（清不掉）")
+                                .font(.caption2)
+                                .foregroundStyle(themeMgr.secondary)
+                            ForEach(ObdManager.shared.permanentCodes, id: \.self) { code in
+                                HStack {
+                                    Text(code)
+                                        .font(.system(.footnote, design: .monospaced))
+                                        .foregroundStyle(themeMgr.secondary)
+                                    Spacer()
+                                }
+                            }
+                        }
+
+                        if ObdManager.shared.dtcCodes.isEmpty,
+                           ObdManager.shared.pendingCodes.isEmpty,
+                           ObdManager.shared.permanentCodes.isEmpty,
+                           obdConnected, ObdManager.shared.dtcReadAt != nil {
                             Label("没有故障码", systemImage: "checkmark.circle.fill")
                                 .foregroundStyle(themeMgr.color(.ok))
                                 .font(.subheadline)

@@ -233,6 +233,55 @@ enum ObdParser {
         }
     }
 
+
+    /// 通用故障码解析：自动识别 Mode 03 / 07 / 0A 的响应
+    ///
+    /// 响应首字节：
+    ///   0x43 = Mode 03 已存储故障码
+    ///   0x47 = Mode 07 待定故障码
+    ///   0x4A = Mode 0A 永久故障码
+    /// 之后是若干对字节，每对表示一个 DTC，00 00 表示结束。
+    static func dtcListPlain(_ bytes: [UInt8]) -> [String] {
+        // 先从原始文本里剥出「41/43/47/4A」之后的内容
+        // 这里直接按字节找这几个响应码
+        let markers: [UInt8] = [0x43, 0x47, 0x4A]
+        guard let start = bytes.firstIndex(where: { markers.contains($0) }) else {
+            return []
+        }
+
+        var idx = start + 1
+        // 有的适配器在响应码后带一个「帧长度」字节，判断一下要不要跳过
+        if idx + 2 < bytes.count {
+            let maybeLen = Int(bytes[idx])
+            let remaining = bytes.count - idx - 1
+            if maybeLen > 0 && maybeLen <= remaining && (remaining - maybeLen) % 2 == 0 {
+                idx += 1
+            }
+        }
+
+        var out: [String] = []
+        while idx + 1 < bytes.count {
+            let a = bytes[idx], b = bytes[idx + 1]
+            idx += 2
+            // 00 00 = 无更多故障码
+            if a == 0 && b == 0 { continue }
+            // 跳过明显的填充/垃圾（0xFF）
+            if a == 0xFF && b == 0xFF { continue }
+
+            let letter: Character
+            switch (a & 0xC0) >> 6 {
+            case 0:  letter = "P"
+            case 1:  letter = "C"
+            case 2:  letter = "B"
+            default: letter = "U"
+            }
+            let d1 = (a & 0x30) >> 4
+            let d2 = a & 0x0F
+            out.append(String(format: "%@%X%X%02X", String(letter), d1, d2, b))
+        }
+        return out
+    }
+
     /// 解析故障码（Mode 03）
     ///
     /// 响应形如：43 01 33 02 01 00 00 00 00

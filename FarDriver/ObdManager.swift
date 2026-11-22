@@ -1076,50 +1076,113 @@ final class ObdManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 故障码
+    // MARK: - 故障码（照搬 ymobd 的序列）
+
+    /// 待定故障码（Mode 07，灯还没亮但已检出）
+    @Published private(set) var pendingCodes: [String] = []
+    /// 永久故障码（Mode 0A，清不掉）
+    @Published private(set) var permanentCodes: [String] = []
+    /// 上次清除是否成功
+    @Published private(set) var lastClearOK: Bool? = nil
 
     /// 读故障码
+    ///
+    /// ymobd 序列：["03","07","0A"] 连跑 3 遍
+    ///   03 = 已存储的排放相关故障码
+    ///   07 = 当前/待定故障码
+    ///   0A = 永久故障码
+    /// 跑 3 遍是因为有些车第一遍返回不完整。
     func readDtc() {
         guard ready else {
             errorMsg = "还没连接好"
             return
         }
-        // 读码前先停轮询，避免响应串了
         stopPolling()
-        send("03", timeout: 4.0) { [weak self] bytes in
-            guard let self else { return }
-            if let bytes {
-                self.dtcCodes = ObdParser.dtcList(bytes)
-                self.dtcReadAt = Date()
-                if self.dtcCodes.isEmpty {
-                    self.errorMsg = "没有故障码"
-                }
-            } else {
-                self.errorMsg = "读取失败，车辆可能不支持"
+
+        var stored = Set<String>()
+        var pending = Set<String>()
+        var permanent = Set<String>()
+        let queue = ["03", "07", "0A", "03", "07", "0A", "03", "07", "0A"]
+
+        func step(_ i: Int) {
+            guard i < queue.count else {
+                dtcCodes = stored.sorted()
+                pendingCodes = pending.sorted()
+                permanentCodes = permanent.sorted()
+                dtcReadAt = Date()
+                errorMsg = (stored.isEmpty && permanent.isEmpty) ? "没有故障码" : nil
+                if ready { startPolling() }
+                return
             }
-            // 读完后恢复轮询
-            if self.ready { self.startPolling() }
+            let cmd = queue[i]
+            send(cmd, timeout: 5.0) { [weak self] bytes in
+                guard let self else { return }
+                if let bytes, !bytes.isEmpty {
+                    let codes = ObdParser.dtcListPlain(bytes)
+                    switch cmd {
+                    case "03": codes.forEach { stored.insert($0) }
+                    case "07": codes.forEach { pending.insert($0) }
+                    case "0A": codes.forEach { permanent.insert($0) }
+                    default: break
+                    }
+                }
+                step(i + 1)
+            }
         }
+        step(0)
     }
 
     /// 清故障码
+    ///
+    /// ymobd 序列：["04","14FF0000","14FFFF00","14FFFFFF"]
+    ///   04 = 标准 OBD 清除
+    ///   14xxxxxx = UDS 清除指定组
+    /// 两种都发，不同车只认其中一种。
     func clearDtc() {
         guard ready else {
             errorMsg = "还没连接好"
             return
         }
         stopPolling()
-        send("04", timeout: 4.0) { [weak self] bytes in
-            guard let self else { return }
-            if bytes != nil {
-                self.dtcCodes.removeAll()
-                self.errorMsg = "故障码已清除"
-            } else {
-                self.errorMsg = "清除失败"
+        lastClearOK = nil
+
+        let queue: [(String, TimeInterval)] = [
+            ("04", 6.0),
+            ("14FF0000", 6.0),
+            ("14FFFF00", 6.0),
+            ("14FFFFFF", 6.0),
+        ]
+        var anyOK = false
+
+        func step(_ i: Int) {
+            guard i < queue.count else {
+                lastClearOK = anyOK
+                if anyOK {
+                    dtcCodes.removeAll()
+                    pendingCodes.removeAll()
+                    permanentCodes.removeAll()
+                    errorMsg = "故障码已清除"
+                } else {
+                    errorMsg = "清除失败"
+                }
+                if ready { startPolling() }
+                return
             }
-            if self.ready { self.startPolling() }
+            let (cmd, t) = queue[i]
+            send(cmd, timeout: t) { [weak self] bytes in
+                guard let self else { return }
+                if let bytes, !bytes.isEmpty {
+                    let text = ObdParser.rawString(bytes).uppercased()
+                    if text.contains("44") || text.contains("54") {
+                        anyOK = true
+                    }
+                }
+                step(i + 1)
+            }
         }
+        step(0)
     }
+
 
     // MARK: - 派生数据（给仪表用）
 
