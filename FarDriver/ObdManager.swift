@@ -397,8 +397,72 @@ final class ObdManager: NSObject, ObservableObject {
         }
     }
 
-    /// 切回指定协议，确认能通信后再开始轮询
-    private func switchbackAndStart(protocolNum: Int) {
+    /// 单 PID 诊断：把每条指令的原始字节都打出来
+    ///
+    /// 用来回答「为什么 0100 能通但 010C 不通」。
+    /// 会依次发：
+    ///   ATDPN（当前协议号）
+    ///   ATDP（协议名）
+    ///   ATH1 + 0100（带 CAN 头的 PID 列表，能看到来自哪个 ECU）
+    ///   ATH1 + 010C（带 CAN 头的转速）
+    ///   010C 用不同地址重试
+    @Published private(set) var diagRunning = false
+    @Published private(set) var diagResults: [String] = []
+
+    func runSinglePidDiag() {
+        guard status == .connected || ready else {
+            errorMsg = "先连上适配器"
+            return
+        }
+        diagRunning = true
+        diagResults.removeAll()
+        stopPolling()
+
+        let cmds: [(String, TimeInterval)] = [
+            ("ATDPN", 2.0),      // 当前协议号
+            ("ATDP", 2.0),       // 协议名
+            ("ATH1", 1.2),       // 打开 CAN 头
+            ("ATS1", 1.2),       // 打开空格
+            ("0100", 8.0),       // 带头的 PID 列表
+            ("010C", 8.0),       // 带头的转速
+            ("010D", 8.0),       // 带头的车速
+            ("ATSH7E0", 1.2),
+            ("010C", 8.0),
+            ("ATSH7E1", 1.2),
+            ("010C", 8.0),
+            ("ATSH7DF", 1.2),
+            ("010C", 8.0),
+            ("ATSH", 1.2),       // 恢复默认寻址
+            ("ATCRA", 1.2),      // 清过滤
+        ]
+
+        runDiag(cmds, at: 0)
+    }
+
+    private func runDiag(_ cmds: [(String, TimeInterval)], at i: Int) {
+        guard i < cmds.count else {
+            diagRunning = false
+            diagResults.append("————— 诊断结束 —————")
+            if ready { startPolling() }
+            return
+        }
+        let (cmd, t) = cmds[i]
+        send(cmd, timeout: t) { [weak self] bytes in
+            guard let self else { return }
+            if let bytes, !bytes.isEmpty {
+                let hex = bytes.prefix(30).map { String(format: "%02X", $0) }.joined(separator: " ")
+                let ascii = ObdParser.rawString(bytes)
+                self.diagResults.append("\(cmd) → [\(hex)]  \(ascii)")
+            } else if bytes != nil {
+                self.diagResults.append("\(cmd) → (空)")
+            } else {
+                self.diagResults.append("\(cmd) → 超时")
+            }
+            self.runDiag(cmds, at: i + 1)
+        }
+    }
+
+    /// 切回指定协议，确认能通信后再开始轮询    private func switchbackAndStart(protocolNum: Int) {
         send("ATSP\(protocolNum)", timeout: 2.5) { [weak self] _ in
             guard let self else { return }
             // 再确认一次协议真的生效了

@@ -59,6 +59,38 @@ struct ObdDebugView: View {
                         .font(.caption2)
                 }
 
+                // ── 单 PID 诊断 ──
+                Section {
+                    Button {
+                        obd.runSinglePidDiag()
+                    } label: {
+                        HStack {
+                            Image(systemName: "stethoscope")
+                                .foregroundStyle(themeMgr.color(.rpm))
+                            Text(obd.diagRunning ? "诊断中…" : "单 PID 诊断（带 CAN 头）")
+                                .foregroundStyle(themeMgr.foreground)
+                                .font(.subheadline.bold())
+                            Spacer()
+                            if obd.diagRunning {
+                                ProgressView().scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(obd.diagRunning || !obd.status.isConnected)
+
+                    ForEach(Array(obd.diagResults.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(line.contains("→ 超时") ? themeMgr.color(.warn)
+                                             : themeMgr.foreground)
+                    }
+                } header: {
+                    Text("单 PID 诊断")
+                } footer: {
+                    Text("打开 CAN 头后重新问 0100 / 010C，并换不同 ECU 地址重试。\n能看到响应来自哪个地址（比如 7E8），从而判断该往哪个地址发。")
+                        .font(.caption2)
+                }
+
                 // ── 兼容性对照实验 ──
                 Section {
                     Button {
@@ -211,6 +243,11 @@ struct ObdDebugView: View {
         if !obd.probeResults.isEmpty {
             lines.append("=== 协议探测 ===")
             lines.append(contentsOf: obd.probeResults)
+            lines.append("")
+        }
+        if !obd.diagResults.isEmpty {
+            lines.append("=== 单 PID 诊断 ===")
+            lines.append(contentsOf: obd.diagResults)
             lines.append("")
         }
         if !obd.compatResults.isEmpty {
