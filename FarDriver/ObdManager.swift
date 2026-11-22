@@ -191,7 +191,9 @@ final class ObdManager: NSObject, ObservableObject {
         // 大多数 ELM327 支持不带响应；如果不支持也无害
         p.writeValue(payload, for: ch, type: .withoutResponse)
 
-        pendingTimer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
+        // 用 Timer(timeInterval:...) + RunLoop 而不是 scheduledTimer，
+        // 避免 Swift 6 严格并发对 @Sendable 闭包的限制
+        let t = Timer(timeInterval: timeout, repeats: false) { [weak self] _ in
             guard let self else { return }
             if self.pendingCommand != nil {
                 self.pendingCommand = nil
@@ -200,6 +202,8 @@ final class ObdManager: NSObject, ObservableObject {
                 h?(nil)
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        pendingTimer = t
     }
 
     // MARK: - 初始化
