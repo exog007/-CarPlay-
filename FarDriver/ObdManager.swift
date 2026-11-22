@@ -695,8 +695,78 @@ final class ObdManager: NSObject, ObservableObject {
         send(cmd, timeout: t, completion: done)
     }
 
-    // MARK: - 初始化
+    // MARK: - AT+CRYPT 授权握手
+    //
+    // 从 ymobd 反编译还原：
+    //   getRndHexStr() = int2hexStr(floor(1842063751 * random) + 305419896)
+    //   发 "AT+CRYPT<8位十六进制>"，适配器回 "+CRYPT:XXXXXXXX"
+    //   用 edesEnCrypt(原始值) 算期望值，相等说明是正版适配器
 
+    /// 生成 ymobd 用的随机十六进制串
+    static func randomCryptHex() -> String {
+        let v = Int(floor(1_842_063_751.0 * Double.random(in: 0..<1))) + 305_419_896
+        return int2hexStr(v)
+    }
+
+    /// 整数转十六进制字符串（等价于 ymobd 的 int2hexStr）
+    static func int2hexStr(_ v: Int) -> String {
+        let u = UInt32(truncatingIfNeeded: v)
+        return String(format: "%08X", u)
+    }
+
+    /// 还原 ymobd 的 EDesEn_Crypt，用于验证适配器是否正版
+    static func edesEnCrypt(_ t: Int, key a: Int = 641_571_454) -> Int {
+        let tt = UInt32(truncatingIfNeeded: t)
+        let aa = UInt32(truncatingIfNeeded: a)
+        let n = tt & 255
+        let i = (tt >> 8) & 255
+        let o = (tt >> 16) & 255
+        let r = (tt >> 24) & 255
+
+        let s = (o >> (n / 50)) | ((i << 2) ^ (aa << (r / 12)))
+        let d = (n >> (i / 63)) | ((aa << (r / 11)) ^ (o >> 1))
+        let l = (n >> (i / 46)) | ((aa << (n / 34)) ^ r)
+        let m = (i << (r / 35)) | (((aa << (n / 49)) & (aa >> 18)))
+
+        let cc = ((m << 24) & 0xFF00_0000)
+               | ((l << 16) & 0x00FF_0000)
+               | ((d << 8) & 0x0000_FF00)
+               | (s & 0x0000_00FF)
+        return Int(cc)
+    }
+
+    /// 最近一次 AT+CRYPT 的验证结果（调试面板显示用）
+    @Published private(set) var cryptVerified: Bool? = nil
+
+    /// 处理 AT+CRYPT 的响应，判断适配器是不是正版
+    private func checkCryptResponse(command: String, bytes: [UInt8]) {
+        let text = ObdParser.rawString(bytes).uppercased()
+        // 响应里应当有 "CRYPT:XXXXXXXX"
+        guard let range = text.range(of: "CRYPT:") else {
+            cryptVerified = false
+            handshakeLog.append("AT+CRYPT → 没看到 CRYPT 响应")
+            return
+        }
+        let after = text[range.upperBound...]
+        let code = String(after.prefix(8))
+        guard code.count == 8 else {
+            cryptVerified = false
+            handshakeLog.append("AT+CRYPT → 响应长度不对 [\(code)]")
+            return
+        }
+        // 取出我们发出去的随机值
+        let sent = String(command.dropFirst("AT+CRYPT".count))
+        guard let sentVal = UInt32(sent, radix: 16) else {
+            cryptVerified = false
+            return
+        }
+        let expect = Self.int2hexStr(Self.edesEnCrypt(Int(sentVal)))
+        let ok = (code == expect)
+        cryptVerified = ok
+        handshakeLog.append("AT+CRYPT → 发送 \(sent) 期望 \(expect) 返回 \(code) → \(ok ? "正版✓" : "非正版✗")")
+    }
+
+    // MARK: - 初始化
     private func beginInit() {
         status = .initializing
         ready = false
@@ -705,26 +775,26 @@ final class ObdManager: NSObject, ObservableObject {
 
         // 依次握手，全部完成后再开轮询
         //
-        // 按 ymobd / 通用 ELM327 客户端的最佳实践调优：
-        //   · ATZ 之后多等一会儿，等它真正重启完
-        //   · ATE0 一定要生效（否则回显混进响应里会解析错）
-        //   · ATSP0 之后给 ECU 搜索留足时间，第一次连上 ECU 可能要几秒
+        // ⭐ 序列完全照搬 ymobd（com.ymobd 反编译得到的）：
+        //   ATZ → ATE0 → ATL0 → ATH1 → ATSP0 → AT+VERSION → ATI → ATRV
+        //   → AT+CRYPT<随机hex> → 0100 → 020000 → 0600 → 0900 → ATDP → ...
+        //
+        // 关键差异（之前一直失败的原因）：
+        //   · ATH1 保持 CAN 头开启（不是 ATH0）
+        //   · ATSP0 自动选协议（不是固定 ATSP6）
+        //   · AT+CRYPT 是厂商自定义的授权握手，不发它适配器可能拒绝回数据
         let steps: [(String, TimeInterval)] = [
-            ("ATZ", 3.5),      // 复位（最耗时，给足）
-            ("ATE0", 1.5),     // 关回声
-            ("ATL0", 1.2),     // 关换行
-            ("ATS0", 1.2),     // 关空格
-            // ⚠️ 不用 ATH0：实测这个适配器在关掉 CAN 头后，
-            //   0100 能通但所有单个 PID 都返回 NO DATA。
-            //   保持 CAN 头，解析器会自动跳过（41 前面的 7E8 之类）。
-            // 协议：用户指定就用指定的，否则自动
-            ("ATSP\(Self.protocolNumber)", 2.5),
-            ("ATAT1", 1.5),    // 自适应计时（慢车必需）
-            // ⚠️ 不要加 ATSH7E0 / ATCRA7E8：
-            //   实测这台车加了之后连 0100 都变 NO DATA，
-            //   说明它的 ECU 地址不是 7E0 标准地址，或被过滤规则拦掉了。
-            //   保持适配器默认的自动寻址。
-            ("0100", 12.0),    // 探测 ECU 是否可达
+            ("ATZ", 3.5),
+            ("ATE0", 1.5),
+            ("ATL0", 1.2),
+            ("ATH1", 1.2),          // 保持 CAN 头（和 ymobd 一致）
+            ("ATSP0", 3.0),         // 自动选协议，给足搜索时间
+            ("AT+VERSION", 1.5),
+            ("ATI", 1.2),
+            ("ATRV", 1.2),
+            ("AT+CRYPT" + Self.randomCryptHex(), 2.5),   // ⭐ 授权握手
+            ("0100", 12.0),
+        ]
         ]
 
         var okCount = 0
@@ -773,6 +843,10 @@ final class ObdManager: NSObject, ObservableObject {
                     // 只有非空且不是 UNABLE TO CONNECT 才算真的通
                     if !text.contains("UNABLETOCONNECT") && !text.contains("NODATA") {
                         okCount += 1
+                    }
+                    // AT+CRYPT 的返回要单独校验
+                    if cmd.hasPrefix("AT+CRYPT") {
+                        self.checkCryptResponse(command: cmd, bytes: bytes)
                     }
                 } else if bytes != nil {
                     self.handshakeLog.append("\(cmd) → 空 (\(ms)ms)")
@@ -826,8 +900,11 @@ final class ObdManager: NSObject, ObservableObject {
         guard ready, connected, pendingCommand == nil else { return }
 
         if pollQueue.isEmpty {
-            // 开新一轮：跳过已被判定读不到的 PID
-            pollQueue = ObdPid.allCases.filter {
+            // ⭐ 照搬 ymobd 的穿插式轮询：
+            //   ["010C","010D","010C","0105","010C","ATRV", ... 循环 4 遍]
+            // 转速出现频率最高（3 次/轮），其它 PID 夹在中间。
+            // 这种「重复穿插」很可能是让适配器保持活跃的关键。
+            pollQueue = Self.ymobdPollCycle.filter {
                 !unsupported.contains($0) && !badPids.contains($0)
             }
         }
@@ -835,8 +912,21 @@ final class ObdManager: NSObject, ObservableObject {
         let pid = pollQueue.removeFirst()
         currentPollPid = pid
 
+        // 超时和重试次数：克隆版偶尔丢包，重发可以碰运气
         requestWithRetry(pid: pid, attempt: 0)
     }
+
+    /// ymobd 的轮询顺序（一轮 24 条，转速占 8 次）
+    private static let ymobdPollCycle: [ObdPid] = [
+        .rpm, .speed, .rpm, .coolant, .rpm,
+        .voltage,
+        .rpm, .speed, .rpm, .coolant, .rpm,
+        .voltage,
+        .rpm, .speed, .rpm, .coolant, .rpm,
+        .voltage,
+        .rpm, .speed, .rpm, .coolant, .rpm,
+        .voltage,
+    ]
 
     /// 请求一个 PID，失败就重发（最多 3 次）
     ///
