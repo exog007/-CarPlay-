@@ -99,6 +99,20 @@ struct ObdReading {
 
 enum ObdParser {
 
+    /// 把字节还原成可读文本（调试日志用）
+    ///
+    /// 十六进制便于核对 PID 数据，同时附上可打印字符。
+    static func debugText(_ bytes: [UInt8]) -> String {
+        guard !bytes.isEmpty else { return "" }
+        let hex = bytes.prefix(24).map { String(format: "%02X", $0) }.joined()
+        let ascii = String(bytes: bytes, encoding: .ascii)?
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        if ascii.isEmpty { return hex }
+        return "\(hex) | \(ascii)"
+    }
+
     /// 把 ELM327 的字符串响应解析成字节数组
     ///
     /// 输入可能是：

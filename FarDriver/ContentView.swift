@@ -790,6 +790,8 @@ struct SettingsView: View {
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
     /// OBD2 调试面板
     @State private var showObdDebug = false
+    /// OBD 协议编号（0 = 自动）
+    @AppStorage("obdProtocol") private var obdProtocol: Int = 0
     /// 布局编辑器
     @State private var showDashLayout = false
     /// 布局存储（显示摘要用）
@@ -1157,6 +1159,18 @@ struct SettingsView: View {
                         }
                     } footer: {
                         Text("连上了但不显示数据时用这个。能看到每一步握手有没有回应、发出和收到的原始内容。")
+                    }
+
+                    Section {
+                        Picker("OBD 协议", selection: $obdProtocol) {
+                            ForEach(ObdManager.protocolOptions, id: \.num) { opt in
+                                Text(opt.name).tag(opt.num)
+                            }
+                        }
+                    } header: {
+                        Text("通信协议")
+                    } footer: {
+                        Text("如果调试日志里一直是「UNABLE TO CONNECT」，说明适配器找不到车的 ECU。\n\n先保持「自动」；如果不行，依次试「CAN 11位 500k」→「ISO 9141-2」→「KWP」。\n汽油车绝大多数是 CAN 11位 500k。\n\n改完之后要断开重连才生效。")
                     }
 
                     Section {

@@ -157,6 +157,29 @@ final class ObdManager: NSObject, ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "obdIsDiesel") }
     }
 
+    /// OBD 协议编号：0 = 自动，其它对应 ELM327 的 ATSPn
+    ///
+    /// 有些车自动选协议会返回 UNABLE TO CONNECT，
+    /// 手动指定正确协议通常就能连上。
+    static var protocolNumber: Int {
+        get { UserDefaults.standard.integer(forKey: "obdProtocol") }
+        set { UserDefaults.standard.set(newValue, forKey: "obdProtocol") }
+    }
+
+    /// 可选协议列表
+    static let protocolOptions: [(num: Int, name: String)] = [
+        (0, "自动（先试这个）"),
+        (6, "CAN 11位 500k（汽油车最常见）"),
+        (8, "CAN 11位 250k"),
+        (7, "CAN 29位 500k"),
+        (9, "CAN 29位 250k"),
+        (3, "ISO 9141-2"),
+        (4, "KWP 5baud"),
+        (5, "KWP 快初始化"),
+        (1, "SAE J1850 PWM"),
+        (2, "SAE J1850 VPW"),
+    ]
+
     /// 油箱容量（L），用于估算剩余油量
     static var tankLitres: Double {
         get {
@@ -341,16 +364,20 @@ final class ObdManager: NSObject, ObservableObject {
 
         // 依次握手，全部完成后再开轮询
         //
-        // 注意：ATZ 之后 ELM327 会清空输入缓冲，
-        // 所以给 ATZ 留足时间，后面的指令间隔短一点。
+        // 按 ymobd / 通用 ELM327 客户端的最佳实践调优：
+        //   · ATZ 之后多等一会儿，等它真正重启完
+        //   · ATE0 一定要生效（否则回显混进响应里会解析错）
+        //   · ATSP0 之后给 ECU 搜索留足时间，第一次连上 ECU 可能要几秒
         let steps: [(String, TimeInterval)] = [
-            ("ATZ", 3.0),      // 复位（这条最耗时，给足 3 秒）
-            ("ATE0", 1.2),     // 关回声
-            ("ATL0", 1.0),     // 关换行
-            ("ATS0", 1.0),     // 关空格
-            ("ATH0", 1.0),     // 关 CAN 头
-            ("ATSP0", 2.0),    // 自动选协议
-            ("0100", 3.0),     // 探测协议：问支持的 PID
+            ("ATZ", 3.5),      // 复位（最耗时，给足）
+            ("ATE0", 1.5),     // 关回声
+            ("ATL0", 1.2),     // 关换行
+            ("ATS0", 1.2),     // 关空格
+            ("ATH0", 1.2),     // 关 CAN 头
+            // 协议：用户指定就用指定的，否则自动
+            ("ATSP\(Self.protocolNumber)", 2.5),
+            ("ATAT1", 1.5),    // 自适应计时（慢车必需）
+            ("0100", 12.0),    // 探测 ECU 是否可达
         ]
 
         var okCount = 0
@@ -390,15 +417,19 @@ final class ObdManager: NSObject, ObservableObject {
             send(cmd, timeout: t) { [weak self] bytes in
                 guard let self else { return }
                 let ms = Int(Date().timeIntervalSince(sentAt) * 1000)
+                let text = (bytes.map { ObdParser.debugText($0) } ?? "")
+
                 if let bytes, !bytes.isEmpty {
-                    okCount += 1
-                    self.handshakeLog.append("\(cmd) → 收到 \(bytes.count) 字节 (跳过 \(ms)ms)")
+                    self.handshakeLog.append("\(cmd) → \(bytes.count)B [\(text)] (\(ms)ms)")
+                    // 只有非空且不是 UNABLE TO CONNECT 才算真的通
+                    if !text.contains("UNABLETOCONNECT") && !text.contains("NODATA") {
+                        okCount += 1
+                    }
                 } else if bytes != nil {
-                    self.handshakeLog.append("\(cmd) → 空回应 (跳过 \(ms)ms)")
+                    self.handshakeLog.append("\(cmd) → 空 (\(ms)ms)")
                 } else {
-                    self.handshakeLog.append("\(cmd) → 超时无回应 (跳过 \(ms)ms)")
+                    self.handshakeLog.append("\(cmd) → 超时 (\(ms)ms)")
                 }
-                // 收不到也继续（有些适配器不认某条指令）
                 run(index + 1)
             }
         }
@@ -409,6 +440,50 @@ final class ObdManager: NSObject, ObservableObject {
 
     private func startPolling() {
         stopPolling()
+        // 先确认能连上 ECU，再开始轮询，避免刷一堆 UNABLE TO CONNECT
+        probeProtocol { [weak self] ok in
+            guard let self else { return }
+            if ok {
+                self.handshakeLog.append("ECU 通信正常，开始轮询")
+            } else {
+                self.handshakeLog.append("⚠️ 连不上车辆 ECU")
+                self.errorMsg = "连不上车辆 ECU，请确认点火开关在 ON 位置"
+            }
+            self.startPollLoop()
+        }
+    }
+
+    /// 协议探测：反复问 0100，直到能连上 ECU
+    ///
+    /// ELM327 首次连 ECU 要搜索协议，可能要好几秒甚至十几次重试。
+    /// ymobd 能在同一台车上读到，说明车是支持的，
+    /// 这里多给几次机会，避免一次 UNABLE TO CONNECT 就放弃。
+    private func probeProtocol(attempt: Int = 1, completion: @escaping (Bool) -> Void) {
+        guard attempt <= 5 else {
+            completion(false)
+            return
+        }
+
+        handshakeLog.append("协议探测 第 \(attempt) 轮…")
+
+        send("0100", timeout: 15.0) { [weak self] bytes in
+            guard let self else { return }
+
+            if let bytes, !bytes.isEmpty {
+                let text = ObdParser.debugText(bytes)
+                self.handshakeLog.append("0100 → \(text)")
+                // 41 00 开头说明协议通了
+                if bytes.contains(0x41) {
+                    completion(true)
+                    return
+                }
+            }
+            // 失败就再来一轮
+            self.probeProtocol(attempt: attempt + 1, completion: completion)
+        }
+    }
+
+    private func startPollLoop() {
         let t = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.pollNext()
         }
