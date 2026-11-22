@@ -20,10 +20,14 @@ struct ContentView: View {
     /// OBD2 竖屏数据页
     @State private var showObdGrid = false
 
-    /// 竖屏 + OBD2 时显示顶部发动机菜单图标
-    private var showEngineMenu: Bool {
-        !landscape && dataSource == .obd2
+    /// 竖屏 + OBD2 时是否显示发动机菜单入口
+    ///
+    /// 注意：body 内的 toolbar / overlay 里用的是局部 `landscape`
+    /// （来自 GeometryReader，最准确），这个属性只用于非 body 场合。
+    private var obdDataSourceSelected: Bool {
+        dataSource == .obd2
     }
+
     @State private var landscapeRequested = false
 
     /// 「刚启动、正在等横屏生效」这个短暂窗口
@@ -115,7 +119,7 @@ struct ContentView: View {
                         // 竖屏 + OBD2：右下角浮动按钮，作为数据页的第二入口
                         // （顶部 toolbar 图标有时不显示，这里保证一定能打开）
                         .overlay(alignment: .bottomTrailing) {
-                            if showEngineMenu {
+                            if !landscape && dataSource == .obd2 {
                                 Button {
                                     showObdGrid = true
                                 } label: {
@@ -172,9 +176,9 @@ struct ContentView: View {
                                                  ? themeMgr.color(.ok)
                                                  : themeMgr.foreground)
                         }
-                        .opacity(showEngineMenu ? 1 : 0)
-                        .disabled(!showEngineMenu)
-                        .allowsHitTesting(showEngineMenu)
+                        .opacity((!landscape && dataSource == .obd2) ? 1 : 0)
+                        .disabled(!(!landscape && dataSource == .obd2))
+                        .allowsHitTesting(!landscape && dataSource == .obd2)
                     }
                     // 标准 ↔ 竞技 切换：横屏时一键换皮肤
                     if landscape {
