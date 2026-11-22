@@ -790,6 +790,8 @@ struct SettingsView: View {
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
     /// OBD2 调试面板
     @State private var showObdDebug = false
+    /// 打开调试页时是否立刻开始协议探测
+    @State private var autoProbeOnOpen = false
     /// OBD 协议编号（0 = 自动）
     @AppStorage("obdProtocol") private var obdProtocol: Int = 0
     /// 布局编辑器
@@ -1144,6 +1146,24 @@ struct SettingsView: View {
 
                     Section {
                         Button {
+                            // 打开调试页并立刻开始探测
+                            autoProbeOnOpen = true
+                            showObdDebug = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "wand.and.stars")
+                                    .foregroundStyle(themeMgr.color(.ok))
+                                Text("一键自动探测协议")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Button {
+                            autoProbeOnOpen = false
                             showObdDebug = true
                         } label: {
                             HStack {
@@ -1158,7 +1178,7 @@ struct SettingsView: View {
                             }
                         }
                     } footer: {
-                        Text("连上了但不显示数据时用这个。能看到每一步握手有没有回应、发出和收到的原始内容。")
+                        Text("连上了但读不到数据时用「一键自动探测协议」：会自动把 9 种 OBD 协议全试一遍，找到能通的就自动设好。")
                     }
 
                     Section {
@@ -1655,7 +1675,7 @@ struct SettingsView: View {
                 DashLayoutEditorView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showObdDebug) {
-                ObdDebugView(themeMgr: themeMgr)
+                ObdDebugView(themeMgr: themeMgr, autoStartProbe: autoProbeOnOpen)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)

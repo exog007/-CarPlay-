@@ -105,12 +105,22 @@ enum ObdParser {
     static func debugText(_ bytes: [UInt8]) -> String {
         guard !bytes.isEmpty else { return "" }
         let hex = bytes.prefix(24).map { String(format: "%02X", $0) }.joined()
-        let ascii = String(bytes: bytes, encoding: .ascii)?
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespaces) ?? ""
+        let ascii = rawString(bytes)
         if ascii.isEmpty { return hex }
         return "\(hex) | \(ascii)"
+    }
+
+    /// 只取可打印字符（去掉控制符）
+    static func rawString(_ bytes: [UInt8]) -> String {
+        let s = String(bytes: bytes, encoding: .ascii)?
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: ">", with: " ")
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        // 去掉残留控制字符
+        return s.filter { $0.isLetter || $0.isNumber || $0.isWhitespace
+                          || ".,:;()-/?".contains($0) }
+                .trimmingCharacters(in: .whitespaces)
     }
 
     /// 把 ELM327 的字符串响应解析成字节数组

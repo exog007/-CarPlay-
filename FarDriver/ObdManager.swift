@@ -157,7 +157,7 @@ final class ObdManager: NSObject, ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "obdIsDiesel") }
     }
 
-    /// OBD 协议编号：0 = 自动，其它对应 ELM327 的 ATSPn
+    /// 协议编号：0 = 自动，其它对应 ELM327 的 ATSPn
     ///
     /// 有些车自动选协议会返回 UNABLE TO CONNECT，
     /// 手动指定正确协议通常就能连上。
@@ -179,6 +179,124 @@ final class ObdManager: NSObject, ObservableObject {
         (1, "SAE J1850 PWM"),
         (2, "SAE J1850 VPW"),
     ]
+
+    // MARK: - 一键自动探测
+
+    /// 探测是否正在进行
+    @Published private(set) var scanningProtocols = false
+    /// 探测结果（每行一条）
+    @Published private(set) var probeResults: [String] = []
+    /// 探测找到的可用协议编号（-1 表示没找到）
+    @Published private(set) var foundProtocol: Int = -1
+
+    /// 一键自动探测：把所有协议挨个试一遍
+    ///
+    /// 流程：
+    ///   ① 读适配器信息（ATI / ATRV，确认硬件和电压）
+    ///   ② 对每个协议 ATSPn + 0100，看能不能拿到 41 00 响应
+    ///   ③ 找到第一个能通的就记下来，并写入设置
+    func autoProbeProtocols() {
+        guard ready || status == .connected || status == .initializing else {
+            errorMsg = "先连上适配器再探测"
+            return
+        }
+
+        scanningProtocols = true
+        probeResults.removeAll()
+        foundProtocol = -1
+
+        // 探测期间停掉轮询，避免命令打架
+        stopPolling()
+
+        let testOrder: [(num: Int, name: String)] = [
+            (6, "CAN 11/500"),
+            (8, "CAN 11/250"),
+            (7, "CAN 29/500"),
+            (9, "CAN 29/250"),
+            (5, "KWP 快初始化"),
+            (4, "KWP 5baud"),
+            (3, "ISO 9141-2"),
+            (1, "J1850 PWM"),
+            (2, "J1850 VPW"),
+        ]
+
+        // ① 先读硬件信息
+        send("ATI", timeout: 3.0) { [weak self] b1 in
+            guard let self else { return }
+            let info = b1.map { ObdParser.rawString($0) } ?? "（无回应）"
+            self.probeResults.append("适配器: \(info)")
+
+            self.send("ATRV", timeout: 3.0) { [weak self] b2 in
+                guard let self else { return }
+                let volt = b2.map { ObdParser.rawString($0) } ?? "（无回应）"
+                self.probeResults.append("电压: \(volt)")
+                self.probeResults.append("─────────────")
+
+                // ② 逐个协议测试
+                self.probeNext(index: 0, list: testOrder)
+            }
+        }
+    }
+
+    /// 递归测下一个协议
+    private func probeNext(index: Int, list: [(num: Int, name: String)]) {
+        guard index < list.count else {
+            // 全部试完
+            scanningProtocols = false
+            if foundProtocol < 0 {
+                probeResults.append("")
+                probeResults.append("❌ 所有协议都连不上车辆 ECU")
+                probeResults.append("可能：点火未开 / OBD 线序问题 / 适配器不兼容此车")
+            } else {
+                probeResults.append("")
+                probeResults.append("✅ 找到可用协议：\(foundProtocol)")
+                Self.protocolNumber = foundProtocol
+                probeResults.append("已自动写入设置，重连后即可读到数据")
+            }
+            // 恢复轮询
+            if ready { startPolling() }
+            return
+        }
+
+        let (num, name) = list[index]
+
+        // 先切协议
+        send("ATSP\(num)", timeout: 2.5) { [weak self] spResp in
+            guard let self else { return }
+            let spText = spResp.map { ObdParser.rawString($0) } ?? ""
+            // 如果适配器拒绝这个协议（返回 ?），跳过
+            if spText.contains("?") {
+                self.probeResults.append("协议\(num) \(name): 不支持（适配器拒绝）")
+                self.probeNext(index: index + 1, list: list)
+                return
+            }
+
+            // 再问 0100
+            self.send("0100", timeout: 10.0) { [weak self] data in
+                guard let self else { return }
+
+                if let data, data.contains(0x41) {
+                    // 通了！
+                    let hex = ObdParser.debugText(data)
+                    self.probeResults.append("协议\(num) \(name): ✅ 成功 [\(hex)]")
+                    if self.foundProtocol < 0 {
+                        self.foundProtocol = num
+                    }
+                } else if let data {
+                    let text = ObdParser.rawString(data)
+                    if text.contains("UNABLE") || text.contains("NODATA") {
+                        self.probeResults.append("协议\(num) \(name): 无响应")
+                    } else {
+                        self.probeResults.append("协议\(num) \(name): 异常响应 [\(text)]")
+                    }
+                } else {
+                    self.probeResults.append("协议\(num) \(name): 超时")
+                }
+
+                self.probeNext(index: index + 1, list: list)
+            }
+        }
+    }
 
     /// 油箱容量（L），用于估算剩余油量
     static var tankLitres: Double {

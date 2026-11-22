@@ -20,9 +20,45 @@ struct ObdDebugView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
 
+    /// 打开时是否自动开始协议探测
+    var autoStartProbe: Bool = false
+
     var body: some View {
         NavigationStack {
             List {
+                // ── 一键探测 ──
+                Section {
+                    Button {
+                        obd.autoProbeProtocols()
+                    } label: {
+                        HStack {
+                            Image(systemName: "wand.and.stars")
+                                .foregroundStyle(themeMgr.color(.ok))
+                            Text(obd.scanningProtocols ? "正在探测…" : "一键自动探测协议")
+                                .foregroundStyle(themeMgr.foreground)
+                                .font(.subheadline.bold())
+                            Spacer()
+                            if obd.scanningProtocols {
+                                ProgressView().scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(obd.scanningProtocols || !obd.status.isConnected)
+
+                    ForEach(Array(obd.probeResults.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(line.contains("✅") ? themeMgr.color(.ok)
+                                             : (line.contains("❌") ? themeMgr.color(.warn)
+                                                : themeMgr.foreground))
+                    }
+                } header: {
+                    Text("协议探测")
+                } footer: {
+                    Text("自动把 9 种 OBD 协议全试一遍。\n找到能通的会自动写入设置，之后重连就能读数据。\n\n整个过程约 1~2 分钟，请耐心等待（车要点火到 ON）。")
+                        .font(.caption2)
+                }
+
                 // ── 连接信息 ──
                 Section {
                     row("状态", obd.status.text)
@@ -113,6 +149,12 @@ struct ObdDebugView: View {
             .scrollContentBackground(.hidden)
             .background(themeMgr.backgroundView)
         }
+        .onAppear {
+            // 从「一键自动探测协议」进来时，立刻开始探测
+            if autoStartProbe, obd.status.isConnected {
+                obd.autoProbeProtocols()
+            }
+        }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }
 
@@ -133,6 +175,11 @@ struct ObdDebugView: View {
 
     private func copyAll() {
         var lines: [String] = []
+        if !obd.probeResults.isEmpty {
+            lines.append("=== 协议探测 ===")
+            lines.append(contentsOf: obd.probeResults)
+            lines.append("")
+        }
         lines.append("=== 连接信息 ===")
         lines.append("状态: \(obd.status.text)")
         lines.append("设备: \(obd.deviceName)")
