@@ -523,7 +523,11 @@ final class ObdManager: NSObject, ObservableObject {
     }
 
     /// 轮询间隔（秒）
-    private let pollInterval: TimeInterval = 0.35
+    ///
+    /// 之前 0.35，加上每条 PID 1 秒超时 + 重试，24 条一轮要 20 多秒，
+    /// 刷新率太低（转速 20 秒才动一次）。
+    /// 现在 0.05：上一条响应一回来就立刻发下一条。
+    private let pollInterval: TimeInterval = 0.05
 
     // MARK: - 内部
 
@@ -772,6 +776,9 @@ final class ObdManager: NSObject, ObservableObject {
         ready = false
         handshakeLog.removeAll()
         handshakeLog.append("开始握手")
+        supportedPids.removeAll()
+        badPids.removeAll()
+        failStreak.removeAll()
 
         // 依次握手，全部完成后再开轮询
         //
@@ -820,8 +827,6 @@ final class ObdManager: NSObject, ObservableObject {
                 ready = true
                 status = .connected
                 unsupported.removeAll()
-                badPids.removeAll()
-                failStreak.removeAll()
                 handshakeLog.append("握手完成（\(okCount)/\(steps.count) 条有回应）")
                 if okCount == 0 {
                     handshakeLog.append("⚠️ 所有服务都没回应，适配器可能不兼容")
@@ -846,6 +851,10 @@ final class ObdManager: NSObject, ObservableObject {
                     // AT+CRYPT 的返回要单独校验
                     if cmd.hasPrefix("AT+CRYPT") {
                         self.checkCryptResponse(command: cmd, bytes: bytes)
+                    }
+                    // 0100 返回的是支持 PID 位图，解析出来只问支持的
+                    if cmd == "0100" {
+                        self.parseSupportedMap(bytes)
                     }
                 } else if bytes != nil {
                     self.handshakeLog.append("\(cmd) → 空 (\(ms)ms)")
@@ -899,11 +908,7 @@ final class ObdManager: NSObject, ObservableObject {
         guard ready, connected, pendingCommand == nil else { return }
 
         if pollQueue.isEmpty {
-            // ⭐ 照搬 ymobd 的穿插式轮询：
-            //   ["010C","010D","010C","0105","010C","ATRV", ... 循环 4 遍]
-            // 转速出现频率最高（3 次/轮），其它 PID 夹在中间。
-            // 这种「重复穿插」很可能是让适配器保持活跃的关键。
-            pollQueue = Self.ymobdPollCycle.filter {
+            pollQueue = buildPollCycle().filter {
                 !unsupported.contains($0) && !badPids.contains($0)
             }
         }
@@ -911,21 +916,83 @@ final class ObdManager: NSObject, ObservableObject {
         let pid = pollQueue.removeFirst()
         currentPollPid = pid
 
-        // 超时和重试次数：克隆版偶尔丢包，重发可以碰运气
+        // 顺便补一次电瓶电压（不占用 PID 队列）
+        pollVoltageIfNeeded()
+
         requestWithRetry(pid: pid, attempt: 0)
     }
 
-    /// ymobd 的轮询顺序（一轮 24 条，转速占 8 次）
-    private static let ymobdPollCycle: [ObdPid] = [
-        .rpm, .speed, .rpm, .coolant, .rpm,
-        .voltage,
-        .rpm, .speed, .rpm, .coolant, .rpm,
-        .voltage,
-        .rpm, .speed, .rpm, .coolant, .rpm,
-        .voltage,
-        .rpm, .speed, .rpm, .coolant, .rpm,
-        .voltage,
-    ]
+    /// 组装一轮轮询
+    ///
+    /// 策略：**关键 PID 每轮都问，次要 PID 分 3 组轮转**
+    ///
+    ///   关键（仪表上要实时看的）：转速、车速、水温、电瓶电压
+    ///   次要（分 3 组，每组一轮）：
+    ///     组0：进气温度、负荷
+    ///     组1：节气门、燃油液位
+    ///     组2：空气流量、燃油消耗率
+    ///
+    /// 这样每轮只有 4 + 2 = 6 条，
+    /// 响应快时一轮不到 1 秒，转速能接近 1Hz 更新。
+    private var pollGroupIndex = 0
+
+    private func buildPollCycle() -> [ObdPid] {
+        // 关键 PID：每轮都问
+        var cycle: [ObdPid] = [.rpm, .speed, .rpm, .coolant]
+
+        // 次要 PID：分 3 组轮转
+        let groups: [[ObdPid]] = [
+            [.intakeAir, .engineLoad],
+            [.throttle, .fuelLevel],
+            [.maf, .rpm],        // 5E 燃油消耗率多数车不支持，换成再问一次转速
+        ]
+        cycle.append(contentsOf: groups[pollGroupIndex % groups.count])
+        pollGroupIndex += 1
+
+        // 只保留「车支持 + 没被标记坏」的 PID
+        // supportedPids 为空说明还没读到 0100，此时不过滤
+        return cycle.filter { pid in
+            guard !badPids.contains(pid) else { return false }
+            if supportedPids.isEmpty { return true }
+            return supportedPids.contains(pid)
+        }
+    }
+
+    /// 车支持的 PID 集合（从 0100 / 0120 / 0140 的位图解析出来）
+    ///
+    /// 空集表示还没读到，此时不做过滤。
+    @Published private(set) var supportedPids: Set<ObdPid> = []
+
+    /// 解析 PID 0x00 系列返回的位图，得到这台车支持哪些 PID
+    private func parseSupportedMap(_ bytes: [UInt8]) {
+        // 响应形如：41 00 BE 3F A8 13（或再来一个 41 00 98 1E 80 11）
+        // 每个 41 XX 后面 4 字节是位图
+        var found = false
+        var i = 0
+        while i + 5 < bytes.count {
+            guard bytes[i] == 0x41 else { i += 1; continue }
+
+            let pidBase = Int(bytes[i + 1])
+            let map = Array(bytes[(i + 2)..<(i + 6)])
+
+            for (byteIdx, b) in map.enumerated() {
+                for bit in 0..<8 where (b & (0x80 >> bit)) != 0 {
+                    let pidNum = pidBase + 1 + byteIdx * 8 + bit
+                    // ObdPid 的 rawValue 是 "01XX" 格式
+                    let key = String(format: "01%02X", pidNum)
+                    if let p = ObdPid(rawValue: key) {
+                        supportedPids.insert(p)
+                        found = true
+                    }
+                }
+            }
+            i += 6
+        }
+        if found {
+            let names = supportedPids.map { $0.command }.sorted().joined(separator: ",")
+            handshakeLog.append("车支持 \(supportedPids.count) 个 PID: \(names)")
+        }
+    }
 
     /// 请求一个 PID，失败就重发（最多 3 次）
     ///
@@ -933,10 +1000,11 @@ final class ObdManager: NSObject, ObservableObject {
     /// 9 种 AT 配置测下来，0100 能读、010C 全是 NO DATA。
     /// 重发就是碰运气，克隆版偶发能成功。
     private func requestWithRetry(pid: ObdPid, attempt: Int) {
-        let maxAttempts = 3
+        // 现在通信稳定了，重试上限降到 2 次（原来 3 次太拖慢刷新）
+        let maxAttempts = 2
         let isLast = attempt + 1 >= maxAttempts
 
-        send(pid.command, timeout: isLast ? 2.0 : 1.0) { [weak self] bytes in
+        send(pid.command, timeout: isLast ? 1.2 : 0.6) { [weak self] bytes in
             guard let self else { return }
 
             // 拿到有效数据
@@ -980,6 +1048,32 @@ final class ObdManager: NSObject, ObservableObject {
         case .gear:       reading.gear = Int(value)
         }
         reading.updatedAt = Date()
+    }
+
+    /// 定期用 ATRV 读电瓶电压
+    ///
+    /// 很多车不支持 PID 42，但 ELM327 的 ATRV 指令永远能用，
+    /// 读的是 OBD 口电压，等同于电瓶电压。
+    private var voltageTick = 0
+
+    private func pollVoltageIfNeeded() {
+        voltageTick += 1
+        // 每 6 轮补一次（约每 3~5 秒）
+        guard voltageTick % 6 == 0 else { return }
+        guard pendingCommand == nil else { return }
+
+        send("ATRV", timeout: 1.0) { [weak self] bytes in
+            guard let self else { return }
+            guard let bytes, !bytes.isEmpty else { return }
+            let text = ObdParser.rawString(bytes)
+            // 形如 "13.2V"，取出数字
+            let digits = text.replacingOccurrences(of: "V", with: "")
+                              .replacingOccurrences(of: "v", with: "")
+                              .trimmingCharacters(in: .whitespaces)
+            if let v = Double(digits), v > 5, v < 30 {
+                self.reading.batteryVoltage = v
+            }
+        }
     }
 
     // MARK: - 故障码

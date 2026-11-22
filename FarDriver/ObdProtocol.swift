@@ -370,6 +370,7 @@ enum ObdGear: Hashable {
     ///   · 1=P, 2=R, 3=N, 4=D, 5~9 = 手动 1~5 档
     ///   · 0x10=P, 0x20=R, 0x30=N, 0x40=D，0x51~0x55 = 手动 1~5
     ///   · 0x01~0x08 = 前进 1~8 档（手动挡车）
+    ///   · 0x0E = P（某些车型）, 0x0D = R, 0x0C = N, 0x0B = D
     static func decode(_ raw: Int) -> ObdGear {
         guard raw > 0 else { return .unknown }
 
@@ -379,11 +380,20 @@ enum ObdGear: Hashable {
         case 2:  return .reverse
         case 3:  return .neutral
         case 4:  return .drive
-        case 5...9: return .manual(raw - 4)      // 5 → 1挡, 6 → 2挡 ...
+        case 5...9: return .manual(raw - 4)
         default: break
         }
 
-        // ── 带进位编码：0x10=P 0x20=R 0x30=N 0x40=D 0x51~0x55=手动 ──
+        // ── 另一种常见：P=0x0E, R=0x0D, N=0x0C, D=0x0B ──
+        switch raw {
+        case 0x0E: return .park
+        case 0x0D: return .reverse
+        case 0x0C: return .neutral
+        case 0x0B: return .drive
+        default: break
+        }
+
+        // ── 带进位编码：0x10=P 0x20=R 0x30=N 0x40=D 0x51~0x58=手动 ──
         let high = (raw >> 4) & 0x0F
         let low  = raw & 0x0F
         switch high {
@@ -405,7 +415,7 @@ enum ObdGear: Hashable {
         default: break
         }
 
-        // ── 0x11~0x18 视为前进 1~8 档（有些手动挡车这么编码）──
+        // ── 0x11~0x18 视为前进 1~8 档 ──
         if raw >= 0x11 && raw <= 0x18 {
             return .manual(raw - 0x10)
         }

@@ -759,12 +759,23 @@ struct SportDashView: View {
     private func autoGearBox(_ active: ObdGear) -> some View {
         HStack(spacing: 4) {
             ForEach([ObdGear.park, .reverse, .neutral, .drive], id: \.self) { g in
-                gearCell(g.label, active: active == g)
+                // 点一下把档位锁到这个值（车读不到 A4 时靠这个手动切）
+                Button {
+                    setGearManually(g)
+                } label: {
+                    gearCell(g.label, active: active == g)
+                }
+                .buttonStyle(.plain)
             }
             if active.isManual {
                 gearCell("M", active: true)
                 if let n = active.manualNumber {
-                    gearCell("\(n)", active: true, isNumber: true)
+                    Button {
+                        setGearManually(.manual(n))
+                    } label: {
+                        gearCell("\(n)", active: true, isNumber: true)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -774,6 +785,27 @@ struct SportDashView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(amber.opacity(0.25), lineWidth: 1)
+        }
+    }
+
+    /// 手动点档位：写入设置，之后一直显示这个档
+    private func setGearManually(_ g: ObdGear) {
+        switch g {
+        case .park:    gearDisplayMode = .park
+        case .reverse: gearDisplayMode = .reverse
+        case .neutral: gearDisplayMode = .neutral
+        case .drive:   gearDisplayMode = .drive
+        case .manual(let n):
+            switch n {
+            case 1: gearDisplayMode = .m1
+            case 2: gearDisplayMode = .m2
+            case 3: gearDisplayMode = .m3
+            case 4: gearDisplayMode = .m4
+            case 5: gearDisplayMode = .m5
+            default: gearDisplayMode = .m6
+            }
+        case .unknown:
+            break
         }
     }
 
