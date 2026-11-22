@@ -1163,7 +1163,7 @@ struct SportDashView: View {
                 divider
                 bottomCell("负荷", obdLoadText, "%", amber)
                 divider
-                bottomCell("油耗", obdFuelText, "L", themeMgr.color(.ok))
+                bottomCell("怠速油耗", obdIdleFuelText, "L/h", themeMgr.color(.ok))
             } else {
                 // ── 远驱模式：电动车数据 ──
                 bottomCell("电压", String(format: "%.1f", mgr.data.voltage), "V",
@@ -1214,10 +1214,30 @@ struct SportDashView: View {
         guard let l = obd.reading.engineLoad else { return "—" }
         return String(format: "%.0f", l)
     }
-    /// 剩余油量（升），按「液位% × 油箱容量」估算
-    private var obdFuelText: String {
-        guard let l = obd.fuelLitres else { return "—" }
-        return String(format: "%.1f", l)
+    /// 怠速油耗（L/h）
+    ///
+    /// 停车怠速时的燃烧速率：
+    ///   · 有 PID 5E（燃油消耗率）直接读
+    ///   · 没有就用 MAF 推算（÷ 空燃比 ÷ 汽油密度）
+    ///   · 车速太高时（在跑）不算怠速，显示 —
+    private var obdIdleFuelText: String {
+        // 在跑就不算怠速（3 km/h 以下视为停驶）
+        let speed = obd.reading.speedKmh ?? 0
+        guard speed <= 3 else { return "—" }
+
+        // ① 燃油消耗率 L/h
+        if let rate = obd.reading.fuelRate, rate > 0 {
+            return String(format: "%.1f", rate)
+        }
+        // ② MAF 推算
+        if let maf = obd.reading.maf, maf > 0 {
+            // MAF g/s → 燃油 L/h：÷空燃比 14.7 ÷ 汽油密度 745 g/L × 3600
+            let fuelGs = maf / 14.7
+            let lph = fuelGs * 3600 / 745
+            guard lph >= 0, lph < 20 else { return "—" }
+            return String(format: "%.1f", lph)
+        }
+        return "—"
     }
 
     private var obdLowVoltage: Bool {
@@ -1247,6 +1267,8 @@ struct SportDashView: View {
                 .font(.system(size: 7, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(amber.opacity(0.6))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
                     .font(.system(size: 17, weight: .bold, design: .monospaced))
