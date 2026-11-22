@@ -786,6 +786,8 @@ struct SettingsView: View {
     @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
     /// 档位显示方式
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
+    /// 竞技仪表尺寸微调（1.0 = 自动适配）
+    @AppStorage("dashScaleAdjust") private var dashScale: Double = 1.0
     /// OBD 管理器（设置页要显示连接状态和发现的设备）
     @ObservedObject private var obd = ObdManager.shared
 
@@ -959,8 +961,60 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    // 竞技仪表尺寸微调
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .foregroundStyle(themeMgr.color(.rpm))
+                            Text("仪表尺寸")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(String(format: "×%.2f", dashScale))
+                                .font(.system(.footnote, design: .monospaced))
+                                .foregroundStyle(themeMgr.color(.rpm))
+                        }
+                        Slider(value: $dashScale, in: 0.70...1.30, step: 0.01)
+                            .tint(themeMgr.color(.rpm))
+
+                        HStack(spacing: 8) {
+                            Button("−5%") {
+                                dashScale = max(0.70, dashScale - 0.05)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button("−1%") {
+                                dashScale = max(0.70, dashScale - 0.01)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Spacer()
+
+                            Button("+1%") {
+                                dashScale = min(1.30, dashScale + 0.01)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button("+5%") {
+                                dashScale = min(1.30, dashScale + 0.05)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button("重置") {
+                                dashScale = 1.0
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
                 } header: {
                     Text("个性化")
+                } footer: {
+                    Text("仪表尺寸：默认按屏幕自动适配。如果觉得内容偏大顶到边、或者偏小留白多，在这里微调。\n范围 ×0.70 ~ ×1.30，改完立刻生效。")
                 }
 
                 Section {

@@ -38,6 +38,8 @@ struct SportDashView: View {
     @ObservedObject private var themeStore = DashThemeStore.shared
     /// 档位显示方式：设置里改完立刻生效
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
+    /// 手动尺寸微调系数（1.0 = 自动适配）
+    @AppStorage("dashScaleAdjust") private var dashScale: Double = 1.0
 
     // MARK: - 数据源
 
@@ -208,7 +210,9 @@ struct SportDashView: View {
             // 缩放比：取宽高两个方向的较小值，保证画面不超出也不留黑边
             let sW = availW / ScreenFit.refWidth
             let sH = availH / ScreenFit.refHeight
-            let s = min(sW, sH)
+            // 再乘上用户手动调的系数（设置里 0.70 ~ 1.30），并夹到安全范围
+            let manual = min(max(dashScale, 0.70), 1.30)
+            let s = min(sW, sH) * manual
 
             // 缩放后画布实际占用的尺寸
             let drawnW = ScreenFit.refWidth  * s
@@ -234,6 +238,7 @@ struct SportDashView: View {
             .frame(width: geo.size.width, height: geo.size.height)
             .padding(.top, padTop)
             .padding(.bottom, padBottom)
+            .clipped()
             .background(sportBackground)
             .onAppear {
                 weather.refreshIfNeeded()
