@@ -13,7 +13,7 @@ import Combine
 /// 把高频的数值降频成 2Hz 再发布
 final class ThrottledValue: ObservableObject {
 
-    /// 当前值（2Hz 更新）
+    /// 当前值（最多 2Hz 更新）
     @Published private(set) var value: Double = 0
 
     private var lastEmit: Date = .distantPast
@@ -41,29 +41,5 @@ final class ThrottledValue: ObservableObject {
         lastEmit = Date()
         lastValue = v
         value = v
-    }
-}
-
-/// 把任意符合 ObservableObject 的对象的某个 Double 字段，降频成 2Hz
-///
-/// 用法：在设置页里
-///   @StateObject private var speedThrottle = ThrottledValue()
-///   ...
-///   .onReceive(mgr.$data) { d in speedThrottle.push(d.rawSpeed) }
-struct ThrottleGate: ViewModifier {
-
-    let source: AnyPublisher<Double, Never>
-    @ObservedObject var throttle: ThrottledValue
-
-    func body(content: Content) -> some View {
-        content.onReceive(source) { throttle.push($0) }
-    }
-}
-
-extension View {
-    /// 把一个高频数值源接到节流器上（只做副作用，不改变视图）
-    func throttleInto(_ throttle: ThrottledValue,
-                      from source: AnyPublisher<Double, Never>) -> some View {
-        onReceive(source) { throttle.push($0) }
     }
 }
