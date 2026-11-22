@@ -23,6 +23,8 @@ struct DashThemeEditorSection: View {
     @State private var theme: DashTheme = .fardriverDefault
 
     @State private var pickItem: PhotosPickerItem?
+    /// 相册里的视频
+    @State private var videoPickItem: PhotosPickerItem?
     @State private var showFilePicker = false
     @State private var busy = false
     @State private var errText: String?
@@ -151,6 +153,10 @@ struct DashThemeEditorSection: View {
             guard let item else { return }
             importPhoto(item)
         }
+        .onChange(of: videoPickItem) { _, item in
+            guard let item else { return }
+            importPhotoVideo(item)
+        }
         .fileImporter(isPresented: $showFilePicker,
                       allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie, .video],
                       allowsMultipleSelection: false) { result in
@@ -222,19 +228,32 @@ struct DashThemeEditorSection: View {
                         .foregroundStyle(themeMgr.secondary)
                         .lineLimit(1)
                     Spacer()
+                    if busy { ProgressView().scaleEffect(0.8) }
                 }
             }
 
+            // 从相册选（照片 App 里的视频）
+            PhotosPicker(selection: $videoPickItem, matching: .videos) {
+                HStack {
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .foregroundStyle(theme.accentColor)
+                    Text(nonEmpty(theme.videoName) == nil ? "从相册选视频" : "从相册换一个")
+                        .foregroundStyle(themeMgr.foreground)
+                    Spacer()
+                    if busy { ProgressView().scaleEffect(0.8) }
+                }
+            }
+
+            // 从「文件」App 选
             Button {
                 showFilePicker = true
             } label: {
                 HStack {
                     Image(systemName: "folder.badge.plus")
                         .foregroundStyle(theme.accentColor)
-                    Text(nonEmpty(theme.videoName) == nil ? "从文件选视频" : "换一个视频")
+                    Text("从文件选视频")
                         .foregroundStyle(themeMgr.foreground)
                     Spacer()
-                    if busy { ProgressView().scaleEffect(0.8) }
                 }
             }
 
@@ -384,6 +403,54 @@ struct DashThemeEditorSection: View {
                     save()
                 } else {
                     errText = "保存失败"
+                    showErr = true
+                }
+            }
+        }
+    }
+
+    // MARK: - 从相册导入视频
+
+    /// PhotosPicker 给的是 Data，需要先写临时文件再复制到 themes 目录
+    private func importPhotoVideo(_ item: PhotosPickerItem) {
+        busy = true
+        Task {
+            defer {
+                Task { @MainActor in busy = false; videoPickItem = nil }
+            }
+
+            // 视频可能较大，用 transferable 的 Data
+            guard let data = try? await item.loadTransferable(type: Data.self) else {
+                await MainActor.run {
+                    errText = "读不到视频数据，试试用「从文件选视频」"
+                    showErr = true
+                }
+                return
+            }
+
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("themevid-\(UUID().uuidString).mov")
+            do {
+                try data.write(to: tmp, options: .atomic)
+            } catch {
+                await MainActor.run {
+                    errText = "临时文件写入失败"
+                    showErr = true
+                }
+                return
+            }
+
+            let name = DashThemeStore.saveVideo(from: tmp,
+                                                prefix: dataSource == .obd2 ? "obd" : "fd")
+            try? FileManager.default.removeItem(at: tmp)
+
+            await MainActor.run {
+                if let name {
+                    DashThemeStore.deleteMedia(theme.videoName)
+                    theme.videoName = name
+                    save()
+                } else {
+                    errText = "视频保存失败，换个视频试试"
                     showErr = true
                 }
             }

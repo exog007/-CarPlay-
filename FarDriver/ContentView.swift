@@ -784,6 +784,8 @@ struct SettingsView: View {
     @AppStorage(AlarmThreshold.coolantHighKey) private var coolantHigh: Double = 105
     /// 电瓶电压报警阈值（V）
     @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
+    /// 档位显示方式
+    @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
     /// OBD 管理器（设置页要显示连接状态和发现的设备）
     @ObservedObject private var obd = ObdManager.shared
 
@@ -1165,7 +1167,19 @@ struct SettingsView: View {
                         Text("OBD2 标准不直接给油量和功率。\n· 剩余油量 = 燃油液位% × 油箱容量\n· 功率按「燃油消耗率 × 热值 × 效率」估算，仅供参考")
                     }
 
-                    // 报警阈值（只影响 OBD2 模式的故障灯）
+                    // 档位显示方式（车读不到 A4 时手动指定）
+                    Section {
+                        Picker("档位显示", selection: $gearDisplayMode) {
+                            ForEach(GearDisplayMode.allCases) { m in
+                                Text(m.title).tag(m)
+                            }
+                        }
+                    } header: {
+                        Text("档位")
+                    } footer: {
+                        Text("大多数车读不到真实档位（PID A4 不支持）。\n如果仪表档位不跟着换挡变化，在这里手动选一个固定档位，就会一直显示它。\n自动识别 = 有 A4 就用真实值，没有就按转速/车速推 D 或 N。")
+                    }
+
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {

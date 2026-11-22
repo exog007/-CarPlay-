@@ -314,13 +314,15 @@ enum ObdGear: Hashable {
 
     /// 按 PID 01A4 的原始字节解码
     ///
-    /// 注意：PID A4 的取值各家车厂不统一（SAE 只规定 0 = 不支持）。
-    /// 常见约定：
-    ///   1=P, 2=R, 3=N, 4=D, 5~9=手动 1~5 档
-    ///   也有的车用 0x10= P、0x11= R 这种带进位编码
-    /// 这里两种都认。
+    /// PID A4 的取值各家车厂不统一（SAE 只规定 0 = 不支持）。
+    /// 常见约定（都试一遍）：
+    ///   · 1=P, 2=R, 3=N, 4=D, 5~9 = 手动 1~5 档
+    ///   · 0x10=P, 0x20=R, 0x30=N, 0x40=D，0x51~0x55 = 手动 1~5
+    ///   · 0x01~0x08 = 前进 1~8 档（手动挡车）
     static func decode(_ raw: Int) -> ObdGear {
-        // 常见直接编码
+        guard raw > 0 else { return .unknown }
+
+        // ── 常见直接编码 ──
         switch raw {
         case 1:  return .park
         case 2:  return .reverse
@@ -330,15 +332,33 @@ enum ObdGear: Hashable {
         default: break
         }
 
-        // 带进位编码：低 4 位是档位
-        let low = raw & 0x0F
+        // ── 带进位编码：0x10=P 0x20=R 0x30=N 0x40=D 0x51~0x55=手动 ──
+        let high = (raw >> 4) & 0x0F
+        let low  = raw & 0x0F
+        switch high {
+        case 1: return .park
+        case 2: return .reverse
+        case 3: return .neutral
+        case 4: return .drive
+        case 5: return low >= 1 && low <= 8 ? .manual(low) : .unknown
+        default: break
+        }
+
+        // ── 只给低 4 位的情况 ──
         switch low {
         case 1:  return .park
         case 2:  return .reverse
         case 3:  return .neutral
         case 4:  return .drive
         case 5...9: return .manual(low - 4)
-        default: return .unknown
+        default: break
         }
+
+        // ── 0x11~0x18 视为前进 1~8 档（有些手动挡车这么编码）──
+        if raw >= 0x11 && raw <= 0x18 {
+            return .manual(raw - 0x10)
+        }
+
+        return .unknown
     }
 }

@@ -57,7 +57,74 @@ enum DataSource: String, CaseIterable, Identifiable {
     static var isObd: Bool { current == .obd2 }
 }
 
-// MARK: - 报警阈值设置
+// MARK: - 手动档位（车不支持 PID A4 时用）
+
+/// OBD2 档位的显示方式
+///
+/// 大多数车读不到真实档位（PID A4 不支持），
+/// 这时可以让用户自己指定当前档位，仪表就显示对应格子。
+enum GearDisplayMode: String, CaseIterable, Identifiable {
+    /// 自动：读 PID A4，读不到就按转速/车速粗判
+    case auto
+    /// 固定自动挡 D
+    case drive
+    /// 固定空挡 N
+    case neutral
+    /// 固定倒挡 R
+    case reverse
+    /// 固定驻车 P
+    case park
+    /// 手动 1 档
+    case m1
+    case m2
+    case m3
+    case m4
+    case m5
+    case m6
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto:    return "自动识别"
+        case .drive:   return "D 前进"
+        case .neutral: return "N 空挡"
+        case .reverse: return "R 倒挡"
+        case .park:    return "P 驻车"
+        case .m1:      return "M1"
+        case .m2:      return "M2"
+        case .m3:      return "M3"
+        case .m4:      return "M4"
+        case .m5:      return "M5"
+        case .m6:      return "M6"
+        }
+    }
+
+    /// 对应的档位
+    var gear: ObdGear? {
+        switch self {
+        case .auto:    return nil            // 交给自动判断
+        case .drive:   return .drive
+        case .neutral: return .neutral
+        case .reverse: return .reverse
+        case .park:    return .park
+        case .m1:      return .manual(1)
+        case .m2:      return .manual(2)
+        case .m3:      return .manual(3)
+        case .m4:      return .manual(4)
+        case .m5:      return .manual(5)
+        case .m6:      return .manual(6)
+        }
+    }
+
+    static var current: GearDisplayMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "gearDisplayMode") ?? ""
+            return GearDisplayMode(rawValue: raw) ?? .auto
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "gearDisplayMode") }
+    }
+}
 
 /// 故障灯触发阈值（持久化，设置页可调）
 ///

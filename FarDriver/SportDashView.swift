@@ -36,6 +36,8 @@ struct SportDashView: View {
     @AppStorage("dataSource") private var dataSource: DataSource = .fardriver
     /// 主题存储：改颜色/背景后触发重绘
     @ObservedObject private var themeStore = DashThemeStore.shared
+    /// 档位显示方式：设置里改完立刻生效
+    @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
 
     // MARK: - 数据源
 
@@ -646,6 +648,7 @@ struct SportDashView: View {
                     .frame(width: 1, height: 26)
             }
 
+            // 速度区：固定宽度，避免 0 → 299 位数变化把整行挤动
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("\(Int(displaySpeedValue.rounded()))")
                     .font(.system(size: 68, weight: .heavy, design: .monospaced))
@@ -654,10 +657,13 @@ struct SportDashView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
                     .shadow(color: amber.opacity(dashTheme.glow * 0.9), radius: 10)
+                    .frame(minWidth: 132, alignment: .trailing)
                 Text("km/h")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(amber.opacity(0.75))
+                    .frame(width: 34, alignment: .leading)
             }
+            .frame(width: 172, alignment: .leading)
 
             Spacer(minLength: 0)
 
@@ -676,8 +682,7 @@ struct SportDashView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(width: 120)
-            .frame(maxHeight: .infinity)
+            .frame(width: 120, height: 150)
             .overlay(alignment: .bottom) {
                 tripReadout
             }
@@ -705,28 +710,39 @@ struct SportDashView: View {
                     .frame(width: 72, height: 116)
             }
         }
-        .frame(maxHeight: .infinity)
+        // 固定高度：
+        //   之前用 maxHeight: .infinity，高度会随内容（速度位数、里程文字）浮动，
+        //   自检时数字不停变化 → 整行高度微调 → 档位框上下跳。
+        //   锁死 150 后，档位框位置完全恒定。
+        .frame(height: 150)
     }
 
     // MARK: - OBD2 档位
 
     /// OBD2 模式当前档位
     ///
-    /// 档位来源：PID 01A4（变速箱档位）不是所有车都支持。
-    /// 优先读它；读不到就用「车速 + 转速」推断 D/N/P，手动档推断不准就不显示。
+    /// 优先级：
+    ///   ① 设置里手动指定的档位（车读不到 A4 时的兜底）
+    ///   ② PID 01A4 的真实档位
+    ///   ③ 按转速/车速粗判 D/N
     private var obdGear: ObdGear {
-        // ① 优先用 PID A4 的真实档位
-        if let raw = obd.reading.gear, raw > 0 {
-            return ObdGear.decode(raw)
+        // ① 手动指定优先
+        if let fixed = gearDisplayMode.gear {
+            return fixed
         }
-        // ② 读不到就按转速/车速粗判
+        // ② PID A4 真实档位
+        if let raw = obd.reading.gear, raw > 0 {
+            let g = ObdGear.decode(raw)
+            if g != .unknown { return g }
+        }
+        // ③ 粗判
         let rpm = obd.reading.rpm ?? 0
         let spd = obd.reading.speedKmh ?? 0
         if spd < 1 && rpm > 300 {
-            return .neutral          // 有转速但不动，大概率 N
+            return .neutral
         }
         if rpm > 300 {
-            return .drive            // 在跑
+            return .drive
         }
         return .unknown
     }
