@@ -648,22 +648,26 @@ struct SportDashView: View {
 
             Spacer(minLength: 0)
 
-            // 中间列：档位框垂直居中，小计里程贴在底部
-            // OBD2 模式没有「档位」概念，用变速箱档位（PID 0xA4）替代，没有就隐藏
-            ZStack(alignment: .center) {
+            // 中间列：档位框严格垂直居中，小计里程单独贴在底部
+            //
+            // ⚠️ 档位框和小计里程不能放在同一个 ZStack 里：
+            //   自检时速度/数据在变，ZStack 的内容尺寸会跟着抖，
+            //   档位框就会被带着上下跳。这里用 overlay 把两件事分开，
+            //   档位框只受外层 frame 控制，位置恒定不动。
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
                 if !isObd {
                     gearBoxes
                 } else {
                     obdGearBoxes
                 }
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    tripReadout
-                }
-                .frame(maxHeight: .infinity)
+                Spacer(minLength: 0)
             }
             .frame(width: 120)
             .frame(maxHeight: .infinity)
+            .overlay(alignment: .bottom) {
+                tripReadout
+            }
 
             Spacer(minLength: 0)
 
@@ -705,56 +709,55 @@ struct SportDashView: View {
         return .unknown
     }
 
-    /// OBD2 档位框：P R N D 横排 + M 与手动档数字
+    /// OBD2 档位框：单行横排
+    ///
+    ///   P R N D            自动挡
+    ///   P R N D M 3        手动模式（M 亮，右边只显示当前一个数字）
     private var obdGearBoxes: some View {
         let cur = obdGear
-        return VStack(spacing: 4) {
-            // 第一行：P R N D
-            HStack(spacing: 4) {
-                ForEach([ObdGear.park, .reverse, .neutral, .drive], id: \.self) { g in
-                    Text(g.label)
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(cur == g ? Color.black : amber.opacity(0.35))
-                        .frame(width: 20, height: 20)
-                        .background(cur == g ? amber : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 3)
-                                .stroke(amber.opacity(cur == g ? 0 : 0.3), lineWidth: 1)
-                        }
-                }
+
+        // 优先显示真实档位；硬件读不到就按转速/车速粗判
+        // 自检阶段（没连上）显示 P 居中，不抖动
+        let active: ObdGear = obd.status.isConnected ? cur : .park
+
+        return HStack(spacing: 4) {
+            // P R N D 固定四格
+            ForEach([ObdGear.park, .reverse, .neutral, .drive], id: \.self) { g in
+                gearCell(g.label, active: active == g)
             }
 
-            // 第二行：M + 手动档位
-            HStack(spacing: 4) {
-                Text("M")
-                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(cur.isManual ? Color.black : amber.opacity(0.35))
-                    .frame(width: 20, height: 20)
-                    .background(cur.isManual ? amber : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(amber.opacity(cur.isManual ? 0 : 0.3), lineWidth: 1)
-                    }
-
-                // 手动档 1~5（一档显示 1，二档显示 2，只显示一位数字）
-                ForEach(1...5, id: \.self) { n in
-                    Text("\(n)")
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(cur.manualNumber == n ? Color.black : amber.opacity(0.25))
-                        .frame(width: 16, height: 20)
-                        .background(cur.manualNumber == n ? amber : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+            // 手动模式：M + 当前档位数字（只显示一个数字，没有就不显示）
+            if active.isManual {
+                gearCell("M", active: true)
+                if let n = active.manualNumber {
+                    gearCell("\(n)", active: true, isNumber: true)
                 }
             }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 5)
+        // 固定高度 + 固定宽度：
+        //   · 高度锁定，避免出现/消失手动数字时整行跳动
+        //   · 宽度锁定，避免手动模式多出 M+数字时把速度文字挤动
+        .frame(width: 120, height: 32)
         .overlay {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(amber.opacity(0.25), lineWidth: 1)
         }
+    }
+
+    /// 单个档位格子
+    private func gearCell(_ text: String, active: Bool, isNumber: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: isNumber ? 14 : 13, weight: .heavy, design: .monospaced))
+            .foregroundStyle(active ? Color.black : amber.opacity(0.35))
+            .frame(width: isNumber ? 18 : 20, height: 20)
+            .background(active ? amber : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .overlay {
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(amber.opacity(active ? 0 : 0.3), lineWidth: 1)
+            }
     }
 
     /// BMS 温度块什么时候显示
@@ -816,6 +819,9 @@ struct SportDashView: View {
     }
 
     /// 档位框（P / 1 / 2 / 3），在中间行里垂直居中
+    ///
+    /// 四个格子都是固定 24×24，整行高度恒定，
+    /// 换挡时只改变颜色，不会让框上下移动。
     private var gearBoxes: some View {
         HStack(spacing: 6) {
             Text("P")
@@ -839,6 +845,7 @@ struct SportDashView: View {
                     }
             }
         }
+        .frame(height: 24)
     }
 
     /// 小计里程 + 百公里电耗，贴在中间行底部
