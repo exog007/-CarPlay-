@@ -14,9 +14,6 @@ struct FarDriverApp: App {
         // 允许代码里主动触发屏幕旋转
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
 
-        // 高德地图 SDK：apiKey 必须在创建 MAMapView 之前设好
-        AMapView.configureIfNeeded()
-
         // ── 按数据源预连接 ──
         //
         // 只启动设置里选中的那一个，避免两个蓝牙设备抢连接。

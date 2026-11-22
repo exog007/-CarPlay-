@@ -51,8 +51,7 @@ struct ContentView: View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
             let sportMode = (themeMgr.theme.dashStyle == .sport)
-            let dynamicMode = (themeMgr.theme.dashStyle == .dynamic)
-            let fullscreenDash = landscape && (sportMode || dynamicMode)
+            let fullscreenDash = landscape && sportMode
             NavigationStack {
                 Group {
                     if bootVideoPhase {
@@ -66,9 +65,6 @@ struct ContentView: View {
                         } else {
                             ZStack { Color.black.ignoresSafeArea() }
                         }
-                    } else if landscape && dynamicMode {
-                        // 动态仪表：全屏地图 + 左右圆环，完全铺满，不要导航栏
-                        DynamicDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
                     } else if landscape && sportMode {
                         // 竞技风格：整屏铺满，不要导航栏、不要 ScrollView
                         //
@@ -77,7 +73,7 @@ struct ContentView: View {
                         SportDashView(mgr: mgr, themeMgr: themeMgr, gps: gps)
                             .toolbar(.hidden, for: .navigationBar)
                             .background(Color(hex: themeMgr.theme.sportBgHex).ignoresSafeArea())
-                    } else if launchingSport && (sportMode || dynamicMode) && !landscape {
+                    } else if launchingSport && sportMode && !landscape {
                         // 只在「刚启动、正在等横屏生效」的这一瞬间显示遮罩，
                         // 避免闪一下标准界面。用户手动切回竖屏时 launchingSport 已经是 false，
                         // 正常走下面的标准界面，不会卡在转圈。
@@ -122,20 +118,17 @@ struct ContentView: View {
                                   : "rectangle.landscape.rotate")
                         }
                     }
-                    // 竞技 ↔ 动态 切换：横屏时一键换皮肤
+                    // 标准 ↔ 竞技 切换：横屏时一键换皮肤
                     if landscape {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button {
                                 withAnimation(.easeInOut(duration: 0.2)) {
-                                    switch themeMgr.theme.dashStyle {
-                                    case .sport:   themeMgr.theme.dashStyle = .dynamic
-                                    case .dynamic: themeMgr.theme.dashStyle = .sport
-                                    case .standard: themeMgr.theme.dashStyle = .sport
-                                    }
+                                    themeMgr.theme.dashStyle =
+                                        (themeMgr.theme.dashStyle == .sport) ? .standard : .sport
                                 }
                             } label: {
-                                Image(systemName: dynamicMode ? "speedometer" : "map")
-                                    .foregroundStyle(dynamicMode
+                                Image(systemName: sportMode ? "rectangle.split.3x1" : "speedometer")
+                                    .foregroundStyle(sportMode
                                                      ? themeMgr.color(.ok)
                                                      : themeMgr.color(.power))
                             }
@@ -779,12 +772,6 @@ struct SettingsView: View {
     @State private var showAppearance = false
     @State private var showBootSound = false
     @State private var showBootVideo = false
-    /// 高德 Web 服务 Key
-    @AppStorage("amapKey") private var amapKey: String = ""
-    /// 高德 iOS 平台 Key（原生地图 SDK 用，需绑定 Bundle ID）
-    @AppStorage("amapIOSKey") private var amapIOSKey: String = ""
-    /// 地图引擎：auto / amap / apple
-    @AppStorage("mapEngine") private var mapEngine: String = "auto"
     /// 当前数据源（远驱 / OBD2）
     @AppStorage("dataSource") private var dataSource: DataSource = .fardriver
     /// OBD2 自动连接开关
@@ -979,84 +966,6 @@ struct SettingsView: View {
                     Text("本地 deepseek 地址")
                 } footer: {
                     Text("例如 http://192.168.100.101:38281\n手机和电脑要在同一个 WiFi 下")
-                }
-
-                Section {
-                    HStack {
-                        Text("内置 Key")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text(AmapKey.builtIn)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                    }
-                    TextField("自定义 Key（留空则用内置）", text: $amapKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.footnote, design: .monospaced))
-                    HStack {
-                        Text("当前使用")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text(AmapKey.custom.isEmpty ? "内置 Key" : "自定义 Key")
-                            .font(.caption)
-                            .foregroundStyle(themeMgr.color(.ok))
-                    }
-                } header: {
-                    Text("高德地图")
-                } footer: {
-                    Text("默认已内置一个 Web 服务 Key，开箱即用。\n如果内置 Key 额度用完了，去「高德开放平台 → 应用管理 → 我的应用」申请自己的（服务平台选「Web 服务」，不用填 Bundle ID），填到上面覆盖。\n填了之后：搜索和路线走高德。")
-                }
-
-                Section {
-                    Picker("地图引擎", selection: $mapEngine) {
-                        Text("自动（高德优先）").tag("auto")
-                        Text("只用高德").tag("amap")
-                        Text("只用 Apple 地图").tag("apple")
-                    }
-                    TextField("iOS 平台 Key（留空则用 Apple 地图）", text: $amapIOSKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.system(.footnote, design: .monospaced))
-                    HStack {
-                        Text("当前地图")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text(AmapKey.iosConfigured ? "高德原生地图" : "Apple 地图")
-                            .font(.caption)
-                            .foregroundStyle(AmapKey.iosConfigured ? themeMgr.color(.ok) : .secondary)
-                    }
-                    if AmapKey.iosConfigured {
-                        HStack {
-                            Text("生效的 Key")
-                                .foregroundStyle(themeMgr.foreground)
-                            Spacer()
-                            Text(AmapKey.iosValue)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.6)
-                        }
-                        HStack {
-                            Text("Bundle ID")
-                                .foregroundStyle(themeMgr.foreground)
-                            Spacer()
-                            Text("com.exog007.fardriver")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if !AmapErrorLog.shared.lastError.isEmpty {
-                        Text(AmapErrorLog.shared.lastError)
-                            .font(.caption2)
-                            .foregroundStyle(themeMgr.color(.warn))
-                    }
-                } header: {
-                    Text("高德原生地图（动态仪表）")
-                } footer: {
-                    Text("填了才会用高德原生地图（深色 3D + 3D 建筑 + 中文 POI），动态仪表会明显更像参考图。\n\n申请方法：高德开放平台 → 应用管理 → 我的应用 → 新建应用\n· 服务平台选「iOS平台」\n· Bundle ID 必须填 **com.exog007.fardriver**（不填收不到图）\n· 拿到 Key 填到上面\n\n注意：这个 Key 和上面的 Web 服务 Key 不是同一个，要单独申请。")
                 }
 
                 Section {
