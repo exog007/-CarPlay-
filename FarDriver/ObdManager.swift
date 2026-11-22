@@ -241,20 +241,28 @@ final class ObdManager: NSObject, ObservableObject {
     /// 递归测下一个协议
     private func probeNext(index: Int, list: [(num: Int, name: String)]) {
         guard index < list.count else {
-            // 全部试完
             scanningProtocols = false
-            if foundProtocol < 0 {
-                probeResults.append("")
-                probeResults.append("❌ 所有协议都连不上车辆 ECU")
-                probeResults.append("可能：点火未开 / OBD 线序问题 / 适配器不兼容此车")
-            } else {
+
+            if foundProtocol >= 0 {
                 probeResults.append("")
                 probeResults.append("✅ 找到可用协议：\(foundProtocol)")
                 Self.protocolNumber = foundProtocol
-                probeResults.append("已自动写入设置，重连后即可读到数据")
+                probeResults.append("正在切回协议 \(foundProtocol)…")
+
+                // ⚠️ 关键：探测结束时适配器还停在**最后一个试过的协议**上（比如协议 2），
+                //    必须显式切回找到的那个协议，否则后续全是 NO DATA。
+                switchbackAndStart(protocolNum: foundProtocol)
+            } else {
+                probeResults.append("")
+                probeResults.append("❌ 所有协议都连不上车辆 ECU")
+                probeResults.append("可能：点火未开 / OBD 线序问题 / 适配器不兼容此车")
+                Self.protocolNumber = 0
+                // 异步切回自动，不阻塞主线程（同步等待会死锁）
+                self.send("ATSP0", timeout: 2.5) { [weak self] _ in
+                    guard let self else { return }
+                    if self.ready { self.startPolling() }
+                }
             }
-            // 恢复轮询
-            if ready { startPolling() }
             return
         }
 
@@ -264,19 +272,16 @@ final class ObdManager: NSObject, ObservableObject {
         send("ATSP\(num)", timeout: 2.5) { [weak self] spResp in
             guard let self else { return }
             let spText = spResp.map { ObdParser.rawString($0) } ?? ""
-            // 如果适配器拒绝这个协议（返回 ?），跳过
             if spText.contains("?") {
-                self.probeResults.append("协议\(num) \(name): 不支持（适配器拒绝）")
+                self.probeResults.append("协议\(num) \(name): 适配器不支持")
                 self.probeNext(index: index + 1, list: list)
                 return
             }
 
-            // 再问 0100
             self.send("0100", timeout: 10.0) { [weak self] data in
                 guard let self else { return }
 
                 if let data, data.contains(0x41) {
-                    // 通了！
                     let hex = ObdParser.debugText(data)
                     self.probeResults.append("协议\(num) \(name): ✅ 成功 [\(hex)]")
                     if self.foundProtocol < 0 {
@@ -287,7 +292,7 @@ final class ObdManager: NSObject, ObservableObject {
                     if text.contains("UNABLE") || text.contains("NODATA") {
                         self.probeResults.append("协议\(num) \(name): 无响应")
                     } else {
-                        self.probeResults.append("协议\(num) \(name): 异常响应 [\(text)]")
+                        self.probeResults.append("协议\(num) \(name): \(text)")
                     }
                 } else {
                     self.probeResults.append("协议\(num) \(name): 超时")
@@ -297,6 +302,25 @@ final class ObdManager: NSObject, ObservableObject {
             }
         }
     }
+
+    /// 切回指定协议，确认能通信后再开始轮询
+    private func switchbackAndStart(protocolNum: Int) {
+        send("ATSP\(protocolNum)", timeout: 2.5) { [weak self] _ in
+            guard let self else { return }
+            // 再确认一次协议真的生效了
+            self.send("0100", timeout: 8.0) { [weak self] data in
+                guard let self else { return }
+                if let data, data.contains(0x41) {
+                    self.probeResults.append("✅ 已切回协议 \(protocolNum)，通信正常")
+                    self.errorMsg = nil
+                } else {
+                    self.probeResults.append("⚠️ 切回协议 \(protocolNum) 后仍无响应")
+                }
+                if self.ready { self.startPolling() }
+            }
+        }
+    }
+
 
     /// 油箱容量（L），用于估算剩余油量
     static var tankLitres: Double {
@@ -556,19 +580,15 @@ final class ObdManager: NSObject, ObservableObject {
 
     // MARK: - 轮询
 
+    /// 开始轮询
+    ///
+    /// 握手阶段（含 0100）已经确认过能连上 ECU，
+    /// 这里**不再重复探测**——之前重复探测会把已通的协议改乱，
+    /// 导致轮询全变 NO DATA。
     private func startPolling() {
         stopPolling()
-        // 先确认能连上 ECU，再开始轮询，避免刷一堆 UNABLE TO CONNECT
-        probeProtocol { [weak self] ok in
-            guard let self else { return }
-            if ok {
-                self.handshakeLog.append("ECU 通信正常，开始轮询")
-            } else {
-                self.handshakeLog.append("⚠️ 连不上车辆 ECU")
-                self.errorMsg = "连不上车辆 ECU，请确认点火开关在 ON 位置"
-            }
-            self.startPollLoop()
-        }
+        handshakeLog.append("开始轮询（协议 \(Self.protocolNumber)）")
+        startPollLoop()
     }
 
     /// 协议探测：反复问 0100，直到能连上 ECU
@@ -576,31 +596,6 @@ final class ObdManager: NSObject, ObservableObject {
     /// ELM327 首次连 ECU 要搜索协议，可能要好几秒甚至十几次重试。
     /// ymobd 能在同一台车上读到，说明车是支持的，
     /// 这里多给几次机会，避免一次 UNABLE TO CONNECT 就放弃。
-    private func probeProtocol(attempt: Int = 1, completion: @escaping (Bool) -> Void) {
-        guard attempt <= 5 else {
-            completion(false)
-            return
-        }
-
-        handshakeLog.append("协议探测 第 \(attempt) 轮…")
-
-        send("0100", timeout: 15.0) { [weak self] bytes in
-            guard let self else { return }
-
-            if let bytes, !bytes.isEmpty {
-                let text = ObdParser.debugText(bytes)
-                self.handshakeLog.append("0100 → \(text)")
-                // 41 00 开头说明协议通了
-                if bytes.contains(0x41) {
-                    completion(true)
-                    return
-                }
-            }
-            // 失败就再来一轮
-            self.probeProtocol(attempt: attempt + 1, completion: completion)
-        }
-    }
-
     private func startPollLoop() {
         let t = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.pollNext()
