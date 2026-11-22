@@ -32,6 +32,10 @@ struct SportDashView: View {
     /// 报警阈值：改完设置立刻反映到故障灯
     @AppStorage(AlarmThreshold.coolantHighKey) private var coolantHigh: Double = 105
     @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
+    /// 当前数据源（跟 @AppStorage 同步，切换后主题立刻换）
+    @AppStorage("dataSource") private var dataSource: DataSource = .fardriver
+    /// 主题存储：改颜色/背景后触发重绘
+    @ObservedObject private var themeStore = DashThemeStore.shared
 
     // MARK: - 数据源
 
@@ -42,7 +46,7 @@ struct SportDashView: View {
     ///   · 车速优先用 OBD2 的，没有则用 GPS
     ///   · 隐藏电机温度、BMS、档位等电动车专属区块
     ///   · 用「燃油表」代替「电量表」
-    private var isObd: Bool { DataSource.isObd }
+    private var isObd: Bool { dataSource == .obd2 }
 
     /// 是否已经拿到数据（决定故障灯自检还是正常）
     private var sourceConnected: Bool {
@@ -91,9 +95,14 @@ struct SportDashView: View {
                                       empty: theme.battEmptyVoltage)
     }
 
-    private var amber: Color { themeMgr.color(.power) }
-    private var cyan: Color { themeMgr.color(.rpm) }
-    private var red: Color { themeMgr.color(.warn) }
+    /// 强调色：跟随当前数据源的独立主题
+    ///
+    /// 电动车默认琥珀，OBD2 默认青蓝，各自可以在设置里单独改。
+    private var amber: Color { dashTheme.accentColor }
+    /// 转速/次要色
+    private var cyan: Color { dashTheme.rpmColor }
+    /// 警告红
+    private var red: Color { dashTheme.warnColor }
 
     /// 故障灯的黄色（固定色，不受主题色影响，和真车指示灯一致）
     private var lampYellow: Color { Color(hex: "#FFC107") }
@@ -340,22 +349,18 @@ struct SportDashView: View {
 
     // MARK: - 背景
 
+    /// 当前数据源对应的独立仪表主题
+    ///
+    /// 电动车和 OBD2 各存一套，切换数据源时背景/颜色自动跟着换。
+    /// 依赖 themeStore.revision，改设置后立刻重绘。
+    private var dashTheme: DashTheme {
+        _ = themeStore.revision          // 建立依赖，改主题时重算
+        return DashThemeStore.shared.theme(for: dataSource)
+    }
+
     @ViewBuilder
     private var sportBackground: some View {
-        if let img = themeMgr.sportPhotoImage {
-            ZStack {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .blur(radius: CGFloat(theme.sportPhotoBlur))
-                    .clipped()
-                Color.black.opacity(theme.sportPhotoDim)
-            }
-            .ignoresSafeArea()
-        } else {
-            Color(hex: theme.sportBgHex)
-                .ignoresSafeArea()
-        }
+        DashBackground(theme: dashTheme)
     }
 
     // MARK: - 顶部
@@ -648,7 +653,7 @@ struct SportDashView: View {
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
-                    .shadow(color: amber.opacity(theme.sportGlow * 0.9), radius: 10)
+                    .shadow(color: amber.opacity(dashTheme.glow * 0.9), radius: 10)
                 Text("km/h")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(amber.opacity(0.75))

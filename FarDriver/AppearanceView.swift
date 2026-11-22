@@ -15,16 +15,12 @@ struct AppearanceView: View {
     @State private var photoBusy = false
     @State private var showPhotoError = false
 
-    /// 竞技风格背景图
-    @State private var sportPickItem: PhotosPickerItem?
-    @State private var sportPhotoBusy = false
-
     var body: some View {
         NavigationStack {
             List {
                 dashStyleSection
-                sportSection
-                sportPhotoSection
+                // 新的独立主题编辑：按数据源分两套
+                DashThemeEditorSection()
                 rpmSection
                 batterySection
                 previewSection
@@ -46,10 +42,6 @@ struct AppearanceView: View {
             .onChange(of: pickedItem) { _, item in
                 guard let item else { return }
                 loadPickedPhoto(item)
-            }
-            .onChange(of: sportPickItem) { _, item in
-                guard let item else { return }
-                loadSportPhoto(item)
             }
             .alert("图片读取失败", isPresented: $showPhotoError) {
                 Button("好", role: .cancel) { }
@@ -81,25 +73,6 @@ struct AppearanceView: View {
     }
 
     /// 从相册取图并设为竞技风格背景
-    private func loadSportPhoto(_ item: PhotosPickerItem) {
-        sportPhotoBusy = true
-        Task {
-            defer {
-                Task { @MainActor in sportPhotoBusy = false }
-            }
-            guard let data = try? await item.loadTransferable(type: Data.self),
-                  let img = UIImage(data: data) else {
-                await MainActor.run { showPhotoError = true }
-                return
-            }
-            let ok = await MainActor.run { themeMgr.setSportPhoto(img) }
-            if !ok {
-                await MainActor.run { showPhotoError = true }
-            }
-            await MainActor.run { sportPickItem = nil }
-        }
-    }
-
     // MARK: - 仪表风格
 
     private var dashStyleSection: some View {
@@ -142,123 +115,6 @@ struct AppearanceView: View {
     }
 
     // MARK: - 竞技风格设置
-
-    private var sportSection: some View {
-        Section {
-            HStack {
-                Text("竞技底色")
-                    .foregroundStyle(themeMgr.foreground)
-                Spacer()
-                ColorPicker("", selection: Binding(
-                    get: { Color(hex: themeMgr.theme.sportBgHex) },
-                    set: { themeMgr.theme.sportBgHex = $0.toHex() ?? "#000000" }
-                ), supportsOpacity: false)
-                .labelsHidden()
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("发光强度")
-                        .foregroundStyle(themeMgr.foreground)
-                    Spacer()
-                    Text(String(format: "%.0f%%", themeMgr.theme.sportGlow * 100))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(themeMgr.secondary)
-                }
-                Slider(value: Binding(
-                    get: { themeMgr.theme.sportGlow },
-                    set: { themeMgr.theme.sportGlow = $0 }
-                ), in: 0...1)
-                .tint(themeMgr.color(.power))
-            }
-        } header: {
-            Text("竞技风格")
-        } footer: {
-            Text("底色建议深色（纯黑/深灰），文字和线框的颜色跟下面「仪表颜色」里的「功率」和「转速」走。")
-                .font(.caption2)
-        }
-    }
-
-    // MARK: - 竞技：背景图
-
-    private var sportPhotoSection: some View {
-        Section {
-            // 预览缩略图
-            if let img = themeMgr.sportPhotoImage {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(height: 110)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                    }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            }
-
-            PhotosPicker(selection: $sportPickItem, matching: .images) {
-                HStack {
-                    Image(systemName: "photo.badge.plus")
-                        .foregroundStyle(themeMgr.color(.power))
-                    Text(themeMgr.sportPhotoImage == nil ? "给竞技仪表换背景图" : "换一张图片")
-                        .foregroundStyle(themeMgr.foreground)
-                    Spacer()
-                    if sportPhotoBusy {
-                        ProgressView().scaleEffect(0.8)
-                    }
-                }
-            }
-
-            if themeMgr.sportPhotoImage != nil {
-                Button(role: .destructive) {
-                    themeMgr.clearSportPhoto()
-                } label: {
-                    Label("删掉图片，用纯色底", systemImage: "trash")
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("图片暗度")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text(String(format: "%.0f%%", themeMgr.theme.sportPhotoDim * 100))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(themeMgr.secondary)
-                    }
-                    Slider(value: Binding(
-                        get: { themeMgr.theme.sportPhotoDim },
-                        set: { themeMgr.theme.sportPhotoDim = $0 }
-                    ), in: 0...0.85)
-                    .tint(themeMgr.color(.power))
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("图片模糊")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text(String(format: "%.0f", themeMgr.theme.sportPhotoBlur))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(themeMgr.secondary)
-                    }
-                    Slider(value: Binding(
-                        get: { themeMgr.theme.sportPhotoBlur },
-                        set: { themeMgr.theme.sportPhotoBlur = $0 }
-                    ), in: 0...20)
-                    .tint(themeMgr.color(.power))
-                }
-            }
-        } header: {
-            Text("竞技背景图")
-        } footer: {
-            Text("竞技仪表可以用图片当背景，和上面「背景类型」里的图片互不影响。暗度调高一点，琥珀色数字更清楚。")
-                .font(.caption2)
-        }
-    }
-
-    // MARK: - 转速显示
 
     private var rpmSection: some View {
         Section {
