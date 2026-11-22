@@ -73,7 +73,7 @@ final class ObdManager: NSObject, ObservableObject {
     /// 把「不支持的 PID」集合转成可显示的命令字符串列表
     private func refreshUnsupportedList() {
         var list: [String] = []
-        for p in ObdPid.allCases where unsupported.contains(p) {
+        for p in ObdPid.allCases where unsupported.contains(p) || badPids.contains(p) {
             list.append(p.command)
         }
         unsupportedPids = list
@@ -462,7 +462,8 @@ final class ObdManager: NSObject, ObservableObject {
         }
     }
 
-    /// 切回指定协议，确认能通信后再开始轮询    private func switchbackAndStart(protocolNum: Int) {
+    /// 切回指定协议，确认能通信后再开始轮询
+    private func switchbackAndStart(protocolNum: Int) {
         send("ATSP\(protocolNum)", timeout: 2.5) { [weak self] _ in
             guard let self else { return }
             // 再确认一次协议真的生效了
@@ -533,6 +534,14 @@ final class ObdManager: NSObject, ObservableObject {
     private var currentPollPid: ObdPid?
     /// 记录哪些 PID 这台车不支持，后续跳过
     private var unsupported: Set<ObdPid> = []
+
+    /// 连续失败多轮、确定读不到的 PID（轮询时跳过）
+    ///
+    /// 和 unsupported 的区别：那个是「发一次就 NO DATA 就放弃」，
+    /// 这个要连续失败 5 轮才判定，避免克隆版偶发丢包导致永久禁用。
+    private var badPids: Set<ObdPid> = []
+    /// 每个 PID 连续失败了几轮
+    private var failStreak: [ObdPid: Int] = [:]
 
     private override init() {
         super.init()
@@ -710,6 +719,8 @@ final class ObdManager: NSObject, ObservableObject {
                 ready = true
                 status = .connected
                 unsupported.removeAll()
+                badPids.removeAll()
+                failStreak.removeAll()
                 handshakeLog.append("握手完成（\(okCount)/\(steps.count) 条有回应）")
                 if okCount == 0 {
                     handshakeLog.append("⚠️ 所有服务都没回应，适配器可能不兼容")
@@ -783,27 +794,51 @@ final class ObdManager: NSObject, ObservableObject {
         guard ready, connected, pendingCommand == nil else { return }
 
         if pollQueue.isEmpty {
-            // 开新一轮：所有支持的 PID
-            pollQueue = ObdPid.allCases.filter { !unsupported.contains($0) }
+            // 开新一轮：跳过已被判定读不到的 PID
+            pollQueue = ObdPid.allCases.filter {
+                !unsupported.contains($0) && !badPids.contains($0)
+            }
         }
         guard !pollQueue.isEmpty else { return }
         let pid = pollQueue.removeFirst()
         currentPollPid = pid
 
-        send(pid.command, timeout: 1.2) { [weak self] bytes in
+        requestWithRetry(pid: pid, attempt: 0)
+    }
+
+    /// 请求一个 PID，失败就重发（最多 3 次）
+    ///
+    /// 背景：这台 ELM327 v2.1 是克隆芯片，对单 PID 查询会丢应答——
+    /// 9 种 AT 配置测下来，0100 能读、010C 全是 NO DATA。
+    /// 重发就是碰运气，克隆版偶发能成功。
+    private func requestWithRetry(pid: ObdPid, attempt: Int) {
+        let maxAttempts = 3
+        let isLast = attempt + 1 >= maxAttempts
+
+        send(pid.command, timeout: isLast ? 2.0 : 1.0) { [weak self] bytes in
             guard let self else { return }
-            guard let bytes else { return }   // 超时就跳过，下个 tick 继续
-            if bytes.isEmpty {
-                // 这台车不支持这个 PID，记下来别再问了
-                self.unsupported.insert(pid)
-                self.refreshUnsupportedList()
+
+            // 拿到有效数据
+            if let bytes, !bytes.isEmpty, let v = ObdParser.value(bytes, pid: pid) {
+                self.failStreak[pid] = 0
+                self.apply(pid: pid, value: v)
                 return
             }
-            if let v = ObdParser.value(bytes, pid: pid) {
-                self.apply(pid: pid, value: v)
-            } else {
-                // 响应里没有这个 PID，也算不支持
-                self.unsupported.insert(pid)
+
+            // 还有机会，稍等重发
+            if !isLast {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self.requestWithRetry(pid: pid, attempt: attempt + 1)
+                }
+                return
+            }
+
+            // 三次都失败：累计失败轮数
+            let streak = (self.failStreak[pid] ?? 0) + 1
+            self.failStreak[pid] = streak
+            // 连续 5 轮才永久跳过，避免偶发丢包误判
+            if streak >= 5 {
+                self.badPids.insert(pid)
                 self.refreshUnsupportedList()
             }
         }
