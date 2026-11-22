@@ -40,6 +40,19 @@ struct SportDashView: View {
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
     /// 变速箱类型（自动挡 / 手动挡）：决定档位框长什么样
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
+    /// OBD2 模式是否显示右侧油表
+    @AppStorage("obdShowFuelGauge") private var obdShowFuelGaugePref: Bool = true
+
+    /// OBD2 油表实际是否显示
+    ///
+    /// 两个条件都满足才显示：
+    ///   ① 设置里开了开关
+    ///   ② 真的读到了燃油液位数据（避免没数据时指针乱晃或一直空表）
+    private var showObdFuelGauge: Bool {
+        guard obdShowFuelGaugePref else { return false }
+        guard let pct = obd.reading.fuelLevel else { return false }
+        return pct >= 0 && pct <= 105
+    }
     /// 布局微调（XY 独立缩放 + 位移）
     @ObservedObject private var layoutStore = DashLayoutStore.shared
 
@@ -680,7 +693,7 @@ struct SportDashView: View {
             // 右侧：BMS 温度 + 油表
             //
             // 远驱：BMS 温度块 + 电量表
-            // OBD2：只显示油表（燃油液位 PID 2F），没有 BMS
+            // OBD2：油表（燃油液位 PID 2F）；设置里可关，或车不支持时自动隐藏
             if !isObd {
                 HStack(alignment: .center, spacing: 10) {
                     if showBmsBlock {
@@ -690,8 +703,12 @@ struct SportDashView: View {
                     fuelGauge
                         .frame(width: 72, height: 116)
                 }
-            } else {
+            } else if showObdFuelGauge {
                 fuelGauge
+                    .frame(width: 72, height: 116)
+            } else {
+                // 隐藏时留同宽占位，保证速度/档位仍然居中
+                Color.clear
                     .frame(width: 72, height: 116)
             }
         }

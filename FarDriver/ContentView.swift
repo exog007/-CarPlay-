@@ -778,6 +778,8 @@ struct SettingsView: View {
     @AppStorage("obdAutoConnect") private var obdAutoConnect: Bool = true
     /// 油箱容量
     @AppStorage("obdTankLitres") private var obdTankLitres: Double = 50
+    /// OBD2 模式是否显示右侧油表
+    @AppStorage("obdShowFuelGauge") private var obdShowFuelGauge: Bool = true
     /// 柴油车
     @AppStorage("obdIsDiesel") private var obdIsDiesel: Bool = false
     /// 水温报警阈值（°C）
@@ -813,6 +815,13 @@ struct SettingsView: View {
     private var obdFuelText: String {
         guard let l = obd.fuelLitres else { return "—" }
         return String(format: "%.1f L", l)
+    }
+
+    /// 燃油液位百分比（PID 2F 原始值）
+    private var obdFuelLevelText: String {
+        guard let pct = obd.reading.fuelLevel else { return "无数据" }
+        guard pct >= 0, pct <= 105 else { return "无数据" }
+        return String(format: "%.0f %%", pct)
     }
 
     private var obdPowerText: String {
@@ -1233,6 +1242,26 @@ struct SettingsView: View {
                         }
 
                         Toggle("柴油车（影响功率估算）", isOn: bindingDiesel)
+
+                        // 仪表右侧油表开关
+                        Toggle("仪表显示油表", isOn: $obdShowFuelGauge)
+                            .disabled(obd.reading.fuelLevel == nil)
+                        if obd.reading.fuelLevel == nil {
+                            Text("这台车没有返回燃油液位（PID 2F），油表会自动隐藏")
+                                .font(.caption2)
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+
+                        HStack {
+                            Text("燃油液位")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(obdFuelLevelText)
+                                .font(.system(.footnote, design: .monospaced))
+                                .foregroundStyle(obd.reading.fuelLevel == nil
+                                                 ? themeMgr.secondary
+                                                 : themeMgr.color(.ok))
+                        }
 
                         HStack {
                             Text("剩余油量")
