@@ -38,6 +38,8 @@ struct SportDashView: View {
     @ObservedObject private var themeStore = DashThemeStore.shared
     /// 档位显示方式：设置里改完立刻生效
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
+    /// 变速箱类型（自动挡 / 手动挡）：决定档位框长什么样
+    @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
     /// 布局微调（XY 独立缩放 + 位移）
     @ObservedObject private var layoutStore = DashLayoutStore.shared
 
@@ -737,20 +739,28 @@ struct SportDashView: View {
     ///
     ///   P R N D            自动挡
     ///   P R N D M 3        手动模式（M 亮，右边只显示当前一个数字）
+    /// OBD2 档位框：按变速箱类型分两种显示
+    ///
+    ///   自动挡：P R N D 横排，挂手动时追加 M + 数字
+    ///   手动挡：只显示当前一个字符，左侧带 «Gear» 小字
+    @ViewBuilder
     private var obdGearBoxes: some View {
-        let cur = obdGear
+        // 自检阶段（没连上）固定显示 P，不抖动
+        let active: ObdGear = obd.status.isConnected ? obdGear : .park
 
-        // 优先显示真实档位；硬件读不到就按转速/车速粗判
-        // 自检阶段（没连上）显示 P 居中，不抖动
-        let active: ObdGear = obd.status.isConnected ? cur : .park
+        if gearboxMode == .manual {
+            manualGearBox(active)
+        } else {
+            autoGearBox(active)
+        }
+    }
 
-        return HStack(spacing: 4) {
-            // P R N D 固定四格
+    /// 自动挡（手自一体）：P R N D [+ M n]
+    private func autoGearBox(_ active: ObdGear) -> some View {
+        HStack(spacing: 4) {
             ForEach([ObdGear.park, .reverse, .neutral, .drive], id: \.self) { g in
                 gearCell(g.label, active: active == g)
             }
-
-            // 手动模式：M + 当前档位数字（只显示一个数字，没有就不显示）
             if active.isManual {
                 gearCell("M", active: true)
                 if let n = active.manualNumber {
@@ -760,9 +770,45 @@ struct SportDashView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 5)
-        // 固定高度 + 固定宽度：
-        //   · 高度锁定，避免出现/消失手动数字时整行跳动
-        //   · 宽度锁定，避免手动模式多出 M+数字时把速度文字挤动
+        .frame(width: 120, height: 32)
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(amber.opacity(0.25), lineWidth: 1)
+        }
+    }
+
+    /// 手动挡：只显示一个字，左侧 «Gear» 小字
+    ///
+    ///   Gear N     ← 空挡
+    ///   Gear 1     ← 一档
+    ///   Gear 2     ← 二档
+    private func manualGearBox(_ active: ObdGear) -> some View {
+        // 手动挡下把 D 显示成 N（手动挡没有 D 这个概念）
+        let ch: String = {
+            switch active {
+            case .park:    return "P"
+            case .reverse: return "R"
+            case .neutral: return "N"
+            case .drive:   return "N"          // 前进但没指定具体档 → 按空挡显示
+            case .manual(let n): return "\(n)"
+            case .unknown: return "–"
+            }
+        }()
+
+        return HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text("Gear")
+                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                .foregroundStyle(amber.opacity(0.55))
+
+            Text(ch)
+                .font(.system(size: 20, weight: .heavy, design: .monospaced))
+                .foregroundStyle(amber)
+                .monospacedDigit()
+                .frame(minWidth: 16)
+                .shadow(color: amber.opacity(dashTheme.glow * 0.6), radius: 4)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
         .frame(width: 120, height: 32)
         .overlay {
             RoundedRectangle(cornerRadius: 4)

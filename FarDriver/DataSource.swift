@@ -57,6 +57,43 @@ enum DataSource: String, CaseIterable, Identifiable {
     static var isObd: Bool { current == .obd2 }
 }
 
+// MARK: - 变速箱类型（决定档位框长什么样）
+
+/// 变速箱类型
+///
+/// 自动挡（手自一体）：横排显示 P R N D，挂手动时额外显示 M + 档位数字
+/// 纯手动挡：只显示当前一个字符（N / 1 / 2 / 3 ...）
+enum GearboxMode: String, CaseIterable, Identifiable {
+    /// 自动挡（含手自一体）
+    case auto
+    /// 纯手动挡
+    case manual
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto:   return "自动挡（手自一体）"
+        case .manual: return "手动挡"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .auto:   return "横排 P R N D，手动时显示 M 和档位数字"
+        case .manual: return "只显示当前档位一个字（N / 1 / 2 / 3…）"
+        }
+    }
+
+    static var current: GearboxMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: "gearboxMode") ?? ""
+            return GearboxMode(rawValue: raw) ?? .auto
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "gearboxMode") }
+    }
+}
+
 // MARK: - 手动档位（车不支持 PID A4 时用）
 
 /// OBD2 档位的显示方式

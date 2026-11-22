@@ -786,6 +786,8 @@ struct SettingsView: View {
     @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
     /// 档位显示方式
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
+    /// 变速箱类型（自动挡 / 手动挡）
+    @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
     /// 布局编辑器
     @State private var showDashLayout = false
     /// 布局存储（显示摘要用）
@@ -1201,15 +1203,55 @@ struct SettingsView: View {
 
                     // 档位显示方式（车读不到 A4 时手动指定）
                     Section {
-                        Picker("档位显示", selection: $gearDisplayMode) {
+                        ForEach(GearboxMode.allCases) { m in
+                            Button {
+                                gearboxMode = m
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: m == .auto ? "a.circle" : "m.circle")
+                                        .font(.system(size: 16))
+                                        .foregroundStyle(gearboxMode == m
+                                                         ? themeMgr.color(.ok)
+                                                         : themeMgr.secondary)
+                                        .frame(width: 22)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(m.title)
+                                            .font(.subheadline)
+                                            .foregroundStyle(themeMgr.foreground)
+                                        Text(m.subtitle)
+                                            .font(.caption2)
+                                            .foregroundStyle(themeMgr.secondary)
+                                    }
+                                    Spacer(minLength: 4)
+                                    if gearboxMode == m {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(themeMgr.color(.ok))
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } header: {
+                        Text("变速箱类型")
+                    } footer: {
+                        Text("决定仪表上档位框的样式。\n\n自动挡（手自一体）：横排显示 P R N D，挂手动挡时额外显示 M 和档位数字。\n手动挡：只显示当前一个字符，左侧带 Gear 小字。")
+                    }
+
+                    Section {
+                        Picker("指定档位", selection: $gearDisplayMode) {
                             ForEach(GearDisplayMode.allCases) { m in
                                 Text(m.title).tag(m)
                             }
                         }
                     } header: {
-                        Text("档位")
+                        Text(gearboxMode == .manual ? "当前档位（手动挡）" : "指定档位")
                     } footer: {
-                        Text("大多数车读不到真实档位（PID A4 不支持）。\n如果仪表档位不跟着换挡变化，在这里手动选一个固定档位，就会一直显示它。\n自动识别 = 有 A4 就用真实值，没有就按转速/车速推 D 或 N。")
+                        if gearboxMode == .manual {
+                            Text("手动挡没有 D 档概念。\n· 空挡：选「N 空挡」\n· 前进：直接选 M1 ~ M6，仪表显示对应数字\n· 倒车：选「R 倒挡」\n\n选「自动识别」时会按转速/车速推 N 或 D（D 会显示成 N）。")
+                        } else {
+                            Text("大多数车读不到真实档位（PID A4 不支持）。\n如果仪表档位不跟着换挡变化，在这里手动选一个固定档位，就会一直显示它。\n自动识别 = 有 A4 就用真实值，没有就按转速/车速推 D 或 N。")
+                        }
                     }
 
                     Section {
