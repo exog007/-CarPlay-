@@ -196,23 +196,21 @@ struct SportDashView: View {
         GeometryReader { geo in
             let ready = geo.size.width > geo.size.height + 1
 
-            // 只给灵动岛/底部横条留位置，左右留一点点就好
+            // 只给灵动岛/底部横条留位置，左右贴边铺满
             let insets = geo.safeAreaInsets
             let padTop = insets.top + 2
             let padBottom = insets.bottom + 2
-            let padSide: CGFloat = 10
+            let padSide: CGFloat = 0
 
             let availW = max(geo.size.width  - padSide * 2, 200)
             let availH = max(geo.size.height - padTop - padBottom, 120)
 
-            // 缩放到「恰好铺满可用区域」：
-            //   取宽高两个方向需要的缩放比中较小的那个，保证不超出；
-            //   画布按 852×393 设计，手机横屏算出来接近 1.0。
+            // 缩放比：取宽高两个方向的较小值，保证画面不超出也不留黑边
             let sW = availW / ScreenFit.refWidth
             let sH = availH / ScreenFit.refHeight
             let s = min(sW, sH)
 
-            // 缩放后画布实际占用的尺寸（缩放是以中心为锚点，所以要还原）
+            // 缩放后画布实际占用的尺寸
             let drawnW = ScreenFit.refWidth  * s
             let drawnH = ScreenFit.refHeight * s
 
@@ -223,13 +221,12 @@ struct SportDashView: View {
                     topBar
                     rpmBand
                     middleRow
+                    Spacer(minLength: 0)   // ← 把底部两行推到最下面
                     bottomRow
                     debugPinRow
                 }
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
                 .scaleEffect(s, anchor: .center)
-                // 关键：缩放后把布局尺寸收缩成实际画出来的大小，
-                // 否则父容器仍按 852×393 排版，内容会被挤到中间变小。
                 .frame(width: drawnW, height: drawnH)
 
                 Spacer(minLength: 0)
@@ -238,12 +235,6 @@ struct SportDashView: View {
             .padding(.top, padTop)
             .padding(.bottom, padBottom)
             .background(sportBackground)
-            .overlay(alignment: .topTrailing) {
-                // 顶部悬浮按钮（不占布局，浮在仪表上面）
-                topButtons
-                    .padding(.trailing, padSide + 4)
-                    .padding(.top, max(insets.top, 8) + 2)
-            }
             .onAppear {
                 weather.refreshIfNeeded()
                 // 已经在横屏就直接播，否则等尺寸就绪
@@ -261,38 +252,6 @@ struct SportDashView: View {
         // 自检模式下让灯呼吸闪，用时间线驱动
         .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
             tickPulse()
-        }
-    }
-
-    // MARK: - 顶部悬浮按钮
-
-    /// 悬浮在仪表上层的按钮组：切竖屏 / 进设置
-    ///
-    /// 用 overlay 画，不占布局空间，所以不会把仪表挤小。
-    private var topButtons: some View {
-        HStack(spacing: 8) {
-            Button {
-                // 切回竖屏：调回标准界面
-                NotificationCenter.default.post(name: .sportExitToPortrait, object: nil)
-            } label: {
-                Image(systemName: "rectangle.portrait.rotate")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .frame(width: 30, height: 30)
-                    .background(.black.opacity(0.45))
-                    .clipShape(Circle())
-            }
-
-            Button {
-                NotificationCenter.default.post(name: .sportOpenSettings, object: nil)
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .frame(width: 30, height: 30)
-                    .background(.black.opacity(0.45))
-                    .clipShape(Circle())
-            }
         }
     }
 
@@ -433,8 +392,15 @@ struct SportDashView: View {
 
             Spacer(minLength: 4)
 
-            dashPill("DIAGNOSTIC", on: !inSelfTest)
-            dashPill("SETTINGS", on: true)
+            // DIAGNOSTIC：点一下切回竖屏（原右上角旋转按钮的活）
+            dashButton("DIAGNOSTIC", on: !inSelfTest) {
+                NotificationCenter.default.post(name: .sportExitToPortrait, object: nil)
+            }
+
+            // SETTINGS：点一下打开设置（原右上角齿轮按钮的活）
+            dashButton("SETTINGS", on: true) {
+                NotificationCenter.default.post(name: .sportOpenSettings, object: nil)
+            }
         }
         .frame(height: 30)
     }
@@ -541,22 +507,32 @@ struct SportDashView: View {
             .shadow(color: batteryLampOn ? lampAmber.opacity(0.9) : .clear, radius: 4)
     }
 
-    private func dashPill(_ title: String, on: Bool) -> some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(on ? cyan : amber.opacity(0.3))
-                .frame(width: 5, height: 5)
-            Text(title)
-                .font(.system(size: 7, weight: .bold))
-                .tracking(0.6)
-                .foregroundStyle(on ? cyan : amber.opacity(0.45))
+    /// 顶部的可点击胶囊按钮
+    ///
+    /// 原来右上角那两个圆形悬浮按钮已经去掉，
+    /// 功能合并到这两个胶囊上，点击区域更大、也不挡仪表内容。
+    private func dashButton(_ title: String, on: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Circle()
+                    .fill(on ? cyan : amber.opacity(0.3))
+                    .frame(width: 5, height: 5)
+                Text(title)
+                    .font(.system(size: 7, weight: .bold))
+                    .tracking(0.6)
+                    .foregroundStyle(on ? cyan : amber.opacity(0.45))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .overlay {
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(on ? cyan.opacity(0.7) : amber.opacity(0.25), lineWidth: 1)
+            }
+            // 扩大点击热区，手指好点
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .overlay {
-            RoundedRectangle(cornerRadius: 2)
-                .stroke(on ? cyan.opacity(0.7) : amber.opacity(0.25), lineWidth: 1)
-        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - 转速带
