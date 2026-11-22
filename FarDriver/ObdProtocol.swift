@@ -132,33 +132,20 @@ enum ObdParser {
         return bytes.isEmpty ? nil : bytes
     }
 
-    /// 从字节里找「41 <pid> <数据...>」，处理带 CAN 头的响应
+    /// 从字节里找「41 <pid> <数据...>」
+    ///
+    /// 初始化时已经发了 ATH0（关闭 CAN 头）和 ATS0（关闭空格），
+    /// 所以标准响应就是干净的 `41 PID D1 D2`。
+    /// 这里用滑动窗口找，容忍适配器偶尔带的多余字节。
     static func extract(_ bytes: [UInt8], pid: ObdPid) -> [UInt8]? {
         let target = pid.pidByte
         var i = 0
         while i + 1 < bytes.count {
-            // 标准响应：41 PID
             if bytes[i] == 0x41, bytes[i + 1] == target {
                 let start = i + 2
                 let n = pid.byteCount
                 guard start + n <= bytes.count else { return nil }
                 return Array(bytes[start..<(start + n)])
-            }
-            // 带 CAN 11 位头的响应：先跳过 header（通常是 3 字节）和数据长度字节
-            // 形如：7E8 04 41 0C 1A F8
-            if i + 3 < bytes.count,
-               bytes[i] >= 0x7E8 >> 8 || bytes[i] >= 0x18 {
-                // 尝试往后找一字节的 DLC，再判断是不是 41
-                let dlcIdx = i + 3
-                if dlcIdx + 1 < bytes.count,
-                   bytes[dlcIdx] == 0x41 || bytes[dlcIdx] == 0x04,
-                   dlcIdx + 2 < bytes.count,
-                   bytes[dlcIdx + 1] == 0x41, bytes[dlcIdx + 2] == target {
-                    let start = dlcIdx + 3
-                    let n = pid.byteCount
-                    guard start + n <= bytes.count else { return nil }
-                    return Array(bytes[start..<(start + n)])
-                }
             }
             i += 1
         }
