@@ -11,8 +11,14 @@ struct ContentView: View {
     @StateObject private var bms = AntBmsManager.shared
     @StateObject private var themeMgr = ThemeManager.shared
     @StateObject private var gps = GpsSpeed.shared
+    /// 当前数据源（决定竖屏顶部是否显示发动机菜单图标）
+    @AppStorage("dataSource") private var dataSource: DataSource = .fardriver
+    /// OBD2 管理器（图标颜色反映连接状态）
+    @ObservedObject private var obd = ObdManager.shared
     @State private var showSettings = false
     @State private var showBms = false
+    /// OBD2 竖屏数据页
+    @State private var showObdGrid = false
     @State private var landscapeRequested = false
 
     /// 「刚启动、正在等横屏生效」这个短暂窗口
@@ -118,6 +124,19 @@ struct ContentView: View {
                                   : "rectangle.landscape.rotate")
                         }
                     }
+                    // 竖屏 + OBD2 模式：发动机图标作为数据菜单开关
+                    if !landscape && dataSource == .obd2 {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                showObdGrid = true
+                            } label: {
+                                Image(systemName: "engine.combustion")
+                                    .foregroundStyle(obd.status.isConnected
+                                                     ? themeMgr.color(.ok)
+                                                     : themeMgr.foreground)
+                            }
+                        }
+                    }
                     // 标准 ↔ 竞技 切换：横屏时一键换皮肤
                     if landscape {
                         ToolbarItem(placement: .topBarTrailing) {
@@ -156,6 +175,9 @@ struct ContentView: View {
                 }
                 .fullScreenCover(isPresented: $showBms) {
                     AntBmsView(bms: bms, themeMgr: themeMgr)
+                }
+                .sheet(isPresented: $showObdGrid) {
+                    ObdGridView(themeMgr: themeMgr)
                 }
             }
             .preferredColorScheme(themeMgr.isLight ? .light : .dark)
