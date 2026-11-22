@@ -161,9 +161,10 @@ enum ObdParser {
 
     /// 从字节里找「41 <pid> <数据...>」
     ///
-    /// 初始化时已经发了 ATH0（关闭 CAN 头）和 ATS0（关闭空格），
-    /// 所以标准响应就是干净的 `41 PID D1 D2`。
-    /// 这里用滑动窗口找，容忍适配器偶尔带的多余字节。
+    /// 现在保持 CAN 头开启（不发 ATH0），响应可能是：
+    ///   · 带头部：7E8 04 41 0C 1A F8
+    ///   · 不带头部：41 0C 1A F8
+    /// 用滑动窗口找 `41 PID`，两种情况都能处理。
     static func extract(_ bytes: [UInt8], pid: ObdPid) -> [UInt8]? {
         let target = pid.pidByte
         var i = 0

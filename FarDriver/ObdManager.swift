@@ -515,10 +515,16 @@ final class ObdManager: NSObject, ObservableObject {
             ("ATE0", 1.5),     // 关回声
             ("ATL0", 1.2),     // 关换行
             ("ATS0", 1.2),     // 关空格
-            ("ATH0", 1.2),     // 关 CAN 头
+            // ⚠️ 不用 ATH0：实测这个适配器在关掉 CAN 头后，
+            //   0100 能通但所有单个 PID 都返回 NO DATA。
+            //   保持 CAN 头，解析器会自动跳过（41 前面的 7E8 之类）。
             // 协议：用户指定就用指定的，否则自动
             ("ATSP\(Self.protocolNumber)", 2.5),
             ("ATAT1", 1.5),    // 自适应计时（慢车必需）
+            // 显式指定「向引擎 ECU 发」并「只收引擎 ECU 的回复」。
+            // 有些车 / 适配器组合不做这一步时，0100 能通但单 PID 全 NO DATA。
+            ("ATSH7E0", 1.2),
+            ("ATCRA7E8", 1.2),
             ("0100", 12.0),    // 探测 ECU 是否可达
         ]
 
