@@ -678,12 +678,9 @@ struct SportDashView: View {
             Spacer(minLength: 0)
 
             // 右侧：BMS 温度 + 油表
-            // BMS 块靠近档位一侧，油表占最右边，给足空间
             //
-            // OBD2 模式两块都不显示：
-            //   · 汽车没有 BMS 保护板
-            //   · 油表按需求隐藏
-            // 用同宽透明占位，保证速度/档位仍然居中，不会整体偏右。
+            // 远驱：BMS 温度块 + 电量表
+            // OBD2：只显示油表（燃油液位 PID 2F），没有 BMS
             if !isObd {
                 HStack(alignment: .center, spacing: 10) {
                     if showBmsBlock {
@@ -694,7 +691,7 @@ struct SportDashView: View {
                         .frame(width: 72, height: 116)
                 }
             } else {
-                Color.clear
+                fuelGauge
                     .frame(width: 72, height: 116)
             }
         }
@@ -1265,7 +1262,7 @@ struct SportDashView: View {
                 divider
                 bottomCell("负荷", obdLoadText, "%", amber)
                 divider
-                bottomCell("怠速油耗", obdIdleFuelText, "L/h", themeMgr.color(.ok))
+                bottomCell("油位", obdFuelLevelText, "%", themeMgr.color(.ok))
             } else {
                 // ── 远驱模式：电动车数据 ──
                 bottomCell("电压", String(format: "%.1f", mgr.data.voltage), "V",
@@ -1315,6 +1312,14 @@ struct SportDashView: View {
     private var obdLoadText: String {
         guard let l = obd.reading.engineLoad else { return "—" }
         return String(format: "%.0f", l)
+    }
+
+    /// 燃油液位百分比（PID 2F）
+    private var obdFuelLevelText: String {
+        guard let pct = obd.reading.fuelLevel else { return "—" }
+        // 有些车返回 0~100，有些返回更大的范围，做个保护
+        guard pct >= 0, pct <= 105 else { return "—" }
+        return String(format: "%.0f", pct)
     }
     /// 怠速油耗（L/h）
     ///
