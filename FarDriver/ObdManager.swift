@@ -31,6 +31,45 @@ final class ObdManager: NSObject, ObservableObject {
     /// 最近一次收到的原始响应（调试用）
     @Published private(set) var lastRaw = ""
 
+    // MARK: - 调试信息（给 ObdDebugView 用）
+
+    /// 初始化握手日志
+    @Published private(set) var handshakeLog: [String] = []
+    /// 收发日志（最多保留 60 条）
+    @Published private(set) var txLog: [String] = []
+    /// 这台车不支持的 PID
+    @Published private(set) var unsupportedPids: [String] = []
+    /// 发现的服务数量
+    @Published private(set) var discoveredServiceCount = 0
+
+    /// 可写特征描述
+    var txCharDescription: String {
+        txChar.map { "\($0.uuid.uuidString) [\($0.properties.contains(.write) ? "write " : "")\($0.properties.contains(.writeWithoutResponse) ? "writeNR " : "")]" } ?? "未找到"
+    }
+    /// 通知特征描述
+    var notifyCharDescription: String {
+        notifyChar.map { "\($0.uuid.uuidString)" } ?? "未找到"
+    }
+
+    private func logTx(_ s: String) {
+        appendLog("> \(s)")
+    }
+    private func logRx(_ s: String) {
+        let clean = s.replacingOccurrences(of: "\r", with: " ")
+                       .replacingOccurrences(of: "\n", with: " ")
+                       .trimmingCharacters(in: .whitespaces)
+        appendLog("< \(clean)")
+    }
+    private func appendLog(_ s: String) {
+        txLog.append(s)
+        if txLog.count > 60 { txLog.removeFirst(txLog.count - 60) }
+    }
+    func clearLogs() {
+        txLog.removeAll()
+        handshakeLog.removeAll()
+        unsupportedPids.removeAll()
+    }
+
     enum ConnectStatus: Equatable {
         case idle
         case scanning
@@ -126,6 +165,12 @@ final class ObdManager: NSObject, ObservableObject {
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var txChar: CBCharacteristic?
+    /// 接收通知用的特征
+    private var notifyChar: CBCharacteristic?
+    /// 写入方式：true 用 withResponse（更可靠），false 用 withoutResponse
+    private var txNeedsResponse = false
+    /// 接收缓冲：BLE 会把一条响应拆包，必须攒到 '>' 才算完整
+    private var rxBuffer = ""
 
     /// 已发现的设备（UI 列表用）
     @Published var discovered: [(id: UUID, name: String, rssi: Int)] = []
@@ -227,8 +272,10 @@ final class ObdManager: NSObject, ObservableObject {
         pendingHandler = { bytes in completion(bytes) }
 
         let payload = (cmd + "\r").data(using: .ascii) ?? Data()
+        logTx(cmd)
         // 大多数 ELM327 支持不带响应；如果不支持也无害
-        p.writeValue(payload, for: ch, type: .withoutResponse)
+        p.writeValue(payload, for: ch,
+                     type: txNeedsResponse ? .withResponse : .withoutResponse)
 
         // 用 Timer(timeInterval:...) + RunLoop 而不是 scheduledTimer，
         // 避免 Swift 6 严格并发对 @Sendable 闭包的限制
@@ -250,6 +297,8 @@ final class ObdManager: NSObject, ObservableObject {
     private func beginInit() {
         status = .initializing
         ready = false
+        handshakeLog.removeAll()
+        handshakeLog.append("开始握手（\(handshakeLog.isEmpty ? "新连接" : "")）")
 
         // 依次握手，全部完成后再开轮询
         let steps: [(String, TimeInterval)] = [
@@ -259,21 +308,31 @@ final class ObdManager: NSObject, ObservableObject {
             ("ATS0", 1.0),     // 关空格
             ("ATH0", 1.0),     // 关 CAN 头
             ("ATSP0", 1.5),    // 自动选协议
+            ("0100", 2.0),     // 探测协议：问支持的 PID，能回应说明通了
         ]
 
         func run(_ index: Int) {
             guard index < steps.count else {
-                // 握手完成
                 ready = true
                 status = .connected
                 unsupported.removeAll()
+                handshakeLog.append("握手完成，开始轮询")
                 startPolling()
                 return
             }
             let (cmd, t) = steps[index]
-            send(cmd, timeout: t) { [weak self] _ in
+            let sentAt = Date()
+            send(cmd, timeout: t) { [weak self] bytes in
                 guard let self else { return }
-                // AT 指令只要收到任何响应就算过，收不到也继续（有些适配器不回应）
+                let ms = Int(Date().timeIntervalSince(sentAt) * 1000)
+                if let bytes, !bytes.isEmpty {
+                    self.handshakeLog.append("\(cmd) → 收到 \(bytes.count) 字节 (跳过 \(ms)ms)")
+                } else if bytes != nil {
+                    self.handshakeLog.append("\(cmd) → 空回应 (跳过 \(ms)ms)")
+                } else {
+                    self.handshakeLog.append("\(cmd) → 超时无回应 (跳过 \(ms)ms)")
+                }
+                // 收不到也继续（有些适配器不认某条指令）
                 run(index + 1)
             }
         }
@@ -319,6 +378,9 @@ final class ObdManager: NSObject, ObservableObject {
             if bytes.isEmpty {
                 // 这台车不支持这个 PID，记下来别再问了
                 self.unsupported.insert(pid)
+                self.unsupportedPids = ObdPid.allCases
+                    .filter { self.unsupported.contains() }
+                    .map { .command }
                 return
             }
             if let v = ObdParser.value(bytes, pid: pid) {
@@ -326,6 +388,9 @@ final class ObdManager: NSObject, ObservableObject {
             } else {
                 // 响应里没有这个 PID，也算不支持
                 self.unsupported.insert(pid)
+                self.unsupportedPids = ObdPid.allCases
+                    .filter { self.unsupported.contains() }
+                    .map { .command }
             }
         }
     }
@@ -511,6 +576,8 @@ extension ObdManager: CBCentralManagerDelegate {
         connected = false
         ready = false
         txChar = nil
+        notifyChar = nil
+        rxBuffer = ""
         stopPolling()
         status = .disconnected
         if let e = error {
@@ -525,6 +592,9 @@ extension ObdManager: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
+        discoveredServiceCount = services.count
+        appendLog("< 发现 \(services.count) 个服务: " +
+                  services.map { $0.uuid.uuidString }.joined(separator: ", "))
         if services.isEmpty {
             errorMsg = "这个设备没有可用的串口服务"
             return
@@ -538,20 +608,54 @@ extension ObdManager: CBPeripheralDelegate {
                     didDiscoverCharacteristicsFor service: CBService,
                     error: Error?) {
         guard let chars = service.characteristics else { return }
-        // ELM327 BLE 一般是 FFE1（写）或 Nordic UART 的 TX/RX
+
+        // 常见的 BLE 串口特征 UUID：
+        //   FFE0 服务 → FFE1（读写一体，最常见）
+        //   Nordic UART → 6E400003(TX notify) / 6E400002(RX write)
+        //   有些用 FFF0 服务 → FFF1/FFF2
+        let uuid = service.uuid.uuidString.uppercased()
+        let isSerialService = uuid.contains("FFE0")
+            || uuid.contains("FFF0")
+            || uuid.contains("6E400001")
+            || uuid.contains("FF00")
+
+        var writeChar: CBCharacteristic?
+        var notifyChar: CBCharacteristic?
+
         for c in chars {
-            if c.properties.contains(.write) || c.properties.contains(.writeWithoutResponse) {
-                if txChar == nil {
-                    txChar = c
-                }
+            let canWrite = c.properties.contains(.write)
+                || c.properties.contains(.writeWithoutResponse)
+            let canNotify = c.properties.contains(.notify)
+                || c.properties.contains(.indicate)
+
+            if canWrite, writeChar == nil { writeChar = c }
+            if canNotify, notifyChar == nil { notifyChar = c }
+        }
+
+        // FFE1 这种读写一体的特征，既是写也是通知
+        if writeChar == nil {
+            // 退一步：任一可写特征
+            writeChar = chars.first {
+                $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse)
             }
         }
-        if txChar != nil {
-            // 找到可写特征后开始初始化
-            peripheral.setNotifyValue(true, for: service.characteristics?.first(where: {
-                $0.properties.contains(.notify) || $0.properties.contains(.indicate)
-            }) ?? txChar!)
 
+        guard let w = writeChar else {
+            // 这个服务没有可写特征，等其它服务
+            return
+        }
+
+        txChar = w
+        // 记下写入方式：有 write 就用 withResponse 更可靠，否则用 withoutResponse
+        txNeedsResponse = w.properties.contains(.write)
+
+        // 优先用同服务的 notify 特征收数据；FFE1 自己就是
+        let notifyTarget = notifyChar ?? w
+        self.notifyChar = notifyTarget
+        peripheral.setNotifyValue(true, for: notifyTarget)
+
+        // 只在串口服务上启动初始化，避免在无关服务上重复触发
+        if isSerialService || txChar != nil {
             beginInit()
         }
     }
@@ -561,20 +665,37 @@ extension ObdManager: CBPeripheralDelegate {
                     error: Error?) {
         guard let d = characteristic.value, !d.isEmpty else { return }
 
-        // BLE 串口可能分包，这里累积到遇到 '>' 或 '\r' 再处理
-        let text = String(data: d, encoding: .ascii) ?? ""
-        lastRaw = text
+        // ── 关键：BLE 串口会把一条响应拆成多个包 ──
+        //
+        // 例如 "41 0C 1A F8" 可能分两次到：
+        //   包1: "41 0C 1A"
+        //   包2: " F8\r\r>"
+        // 必须累积到 '>' 才算一条完整响应，否则只拿到半截。
+        let chunk = String(data: d, encoding: .ascii) ?? ""
+        rxBuffer += chunk
+
+        // 没收到结束符就继续等
+        guard rxBuffer.contains(">") else {
+            // 有些适配器用 \r 结尾但不发 '>'，超时兜底也算完整
+            return
+        }
+
+        // 取出完整响应，清空缓冲
+        let full = rxBuffer
+        rxBuffer = ""
+
+        lastRaw = full
+        logRx(full)
 
         guard pendingCommand != nil else { return }
 
-        // 有些适配器不发 '>'，收到任何内容就当响应
         pendingTimer?.invalidate()
         pendingTimer = nil
         pendingCommand = nil
         let h = pendingHandler
         pendingHandler = nil
 
-        let bytes = ObdParser.toBytes(text) ?? []
+        let bytes = ObdParser.toBytes(full) ?? []
         h?(bytes)
     }
 }

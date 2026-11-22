@@ -788,6 +788,8 @@ struct SettingsView: View {
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
     /// 变速箱类型（自动挡 / 手动挡）
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
+    /// OBD2 调试面板
+    @State private var showObdDebug = false
     /// 布局编辑器
     @State private var showDashLayout = false
     /// 布局存储（显示摘要用）
@@ -1135,7 +1137,26 @@ struct SettingsView: View {
                     } header: {
                         Text("OBD2 适配器")
                     } footer: {
-                        Text("适配器名字通常含 OBD / ELM / V-LINK / VGATE 等字样。\n连上后会自动初始化，约 3~5 秒开始出数据。")
+                        Text("适配器名字通常含 OBD / ELM / V-LINK / VGATE 等字样。\n连上后会自动初始化，约 3~5 秒开始出数据。\n\n如果连上了但读不到数据，点下面「OBD2 调试」看通信日志。")
+                    }
+
+                    Section {
+                        Button {
+                            showObdDebug = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "ladybug.fill")
+                                    .foregroundStyle(themeMgr.color(.warn))
+                                Text("OBD2 调试（看通信日志）")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } footer: {
+                        Text("连上了但不显示数据时用这个。能看到每一步握手有没有回应、发出和收到的原始内容。")
                     }
 
                     Section {
@@ -1618,6 +1639,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showDashLayout) {
                 DashLayoutEditorView(themeMgr: themeMgr)
+            }
+            .sheet(isPresented: $showObdDebug) {
+                ObdDebugView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)
