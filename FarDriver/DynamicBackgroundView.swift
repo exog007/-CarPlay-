@@ -30,6 +30,8 @@ struct DashBackground: View {
                         .resizable()
                         .scaledToFill()
                         .blur(radius: CGFloat(theme.mediaBlur))
+                        // 模糊会让边缘发虚露出底色，稍微放大盖住
+                        .scaleEffect(theme.mediaBlur > 0.5 ? 1.06 : 1.0)
                         .clipped()
                         .overlay(Color.black.opacity(theme.mediaDim))
                 }
@@ -40,6 +42,13 @@ struct DashBackground: View {
                                            muted: theme.videoMuted,
                                            blur: theme.mediaBlur,
                                            dim: theme.mediaDim)
+                        // 模糊：对整层视频做视觉模糊
+                        .blur(radius: CGFloat(theme.mediaBlur))
+                        // 稍微放大一点，避免模糊后边缘发虚露出底色
+                        .scaleEffect(theme.mediaBlur > 0.5 ? 1.06 : 1.0)
+                        .clipped()
+                        // 暗度：盖一层黑
+                        .overlay(Color.black.opacity(theme.mediaDim))
                 }
 
             case .particles:
@@ -47,7 +56,11 @@ struct DashBackground: View {
                                    intensity: theme.particleIntensity,
                                    speed: theme.particleSpeed,
                                    tint: theme.accentColor)
-                    .overlay(Color.black.opacity(0.25))
+                    // 粒子背景也用 mediaDim 控制压暗程度，最少留 20% 保证文字可读
+                    .overlay(Color.black.opacity(max(0.2, theme.mediaDim)))
+                    // 模糊对粒子同样有效，做一点柔化
+                    .blur(radius: CGFloat(theme.mediaBlur) * 0.5)
+                    .clipped()
             }
         }
         .ignoresSafeArea()
@@ -56,6 +69,10 @@ struct DashBackground: View {
 
 // MARK: - 循环播放的视频背景
 
+/// 视频背景 + 模糊 + 暗度
+///
+/// 模糊和暗度在外层用 SwiftUI 修饰符做（对图层做视觉处理），
+/// 而不是去改 AVPlayerLayer，这样调整参数时能实时生效。
 private struct LoopingVideoBackground: UIViewRepresentable {
 
     let url: URL

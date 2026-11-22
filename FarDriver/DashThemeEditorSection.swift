@@ -91,8 +91,8 @@ struct DashThemeEditorSection: View {
                     particleControls
                 }
 
-                // 图片/视频共用的调节
-                if theme.backgroundKind == .photo || theme.backgroundKind == .video {
+                // 除纯色外都要暗度/模糊
+                if theme.backgroundKind != .solid {
                     dimRow
                     blurRow
                 }
