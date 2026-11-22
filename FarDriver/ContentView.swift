@@ -103,7 +103,7 @@ struct ContentView: View {
                         .background(themeMgr.backgroundView)
                     }
                 }
-                .navigationTitle(fullscreenDash ? "" : "大肥鱼控制器")
+                .navigationTitle(fullscreenDash ? "" : "Darian")
                 .navigationBarTitleDisplayMode(.inline)
                 // 注意：这里**不能**用 .toolbar(.hidden) 隐藏整条导航栏，
                 // 否则顶部的横竖屏 / 切换 / BMS / 设置按钮会全部消失。

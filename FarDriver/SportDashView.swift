@@ -857,16 +857,43 @@ struct SportDashView: View {
                     .font(.system(size: 6))
                     .foregroundStyle(amber.opacity(0.5))
             }
+
+            // 右边一格：远驱模式显示电耗（kWh/100km），OBD2 模式显示油耗（L/100km）
             HStack(spacing: 2) {
-                Text(trip.consumptionText)
+                Text(isObd ? obdFuelConsumptionText : trip.consumptionText)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(amber)
-                Text("kWh/100")
+                Text(isObd ? "L/100" : "kWh/100")
                     .font(.system(size: 6))
                     .foregroundStyle(amber.opacity(0.5))
             }
         }
+    }
+
+    /// OBD2 百公里油耗（L/100km）
+    ///
+    /// 优���用 PID 5E 的燃油消耗率（L/h）÷ 车速算，
+    /// 没有 5E 就用 MAF 推算，都没有就显示 —
+    private var obdFuelConsumptionText: String {
+        let speed = obd.reading.speedKmh ?? 0
+        guard speed > 3 else { return "—" }
+
+        // ① 燃油消耗率 L/h
+        var litresPerHour: Double?
+        if let rate = obd.reading.fuelRate, rate > 0 {
+            litresPerHour = rate
+        } else if let maf = obd.reading.maf, maf > 0 {
+            // MAF g/s → 燃油 L/h：÷空燃比 ÷ 汽油密度(745 g/L) × 3600
+            let fuelGs = maf / 14.7
+            litresPerHour = fuelGs * 3600 / 745
+        }
+        guard let lph = litresPerHour else { return "—" }
+
+        // L/h ÷ km/h × 100 = L/100km
+        let per100 = lph / speed * 100
+        guard per100.isFinite, per100 >= 0, per100 < 200 else { return "—" }
+        return String(format: "%.1f", per100)
     }
 
     // MARK: - 指针式电量表
