@@ -70,6 +70,15 @@ final class ObdManager: NSObject, ObservableObject {
         unsupportedPids.removeAll()
     }
 
+    /// 把「不支持的 PID」集合转成可显示的命令字符串列表
+    private func refreshUnsupportedList() {
+        var list: [String] = []
+        for p in ObdPid.allCases where unsupported.contains(p) {
+            list.append(p.command)
+        }
+        unsupportedPids = list
+    }
+
     enum ConnectStatus: Equatable {
         case idle
         case scanning
@@ -168,7 +177,7 @@ final class ObdManager: NSObject, ObservableObject {
     /// 接收通知用的特征
     private var notifyChar: CBCharacteristic?
     /// 写入方式：true 用 withResponse（更可靠），false 用 withoutResponse
-    private var txNeedsResponse = false
+    private(set) var txNeedsResponse = false
     /// 接收缓冲：BLE 会把一条响应拆包，必须攒到 '>' 才算完整
     private var rxBuffer = ""
 
@@ -378,9 +387,7 @@ final class ObdManager: NSObject, ObservableObject {
             if bytes.isEmpty {
                 // 这台车不支持这个 PID，记下来别再问了
                 self.unsupported.insert(pid)
-                self.unsupportedPids = ObdPid.allCases
-                    .filter { self.unsupported.contains() }
-                    .map { .command }
+                self.refreshUnsupportedList()
                 return
             }
             if let v = ObdParser.value(bytes, pid: pid) {
@@ -388,9 +395,7 @@ final class ObdManager: NSObject, ObservableObject {
             } else {
                 // 响应里没有这个 PID，也算不支持
                 self.unsupported.insert(pid)
-                self.unsupportedPids = ObdPid.allCases
-                    .filter { self.unsupported.contains() }
-                    .map { .command }
+                self.refreshUnsupportedList()
             }
         }
     }
