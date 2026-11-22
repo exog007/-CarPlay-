@@ -411,11 +411,16 @@ struct SportDashView: View {
             Spacer(minLength: 6)
 
             // 故障灯：自检时全亮呼吸闪烁，连上后按真实状态
+            //
+            // OBD2 模式不显示刹车灯：标准 OBD2 PID 没有刹车信号，
+            // 之前用「停车+转速」硬猜会误亮，索性不显示。
             HStack(spacing: 5) {
-                brakeLamp    // 刹车（红）
-                engineLamp   // 发动机（黄，MOS ≥ 60°C）
-                coolantLamp  // 水温（黄，MOS > 50°C）
-                batteryLamp  // 电瓶（黄，电量 < 26%）
+                if !isObd {
+                    brakeLamp    // 刹车（红）
+                }
+                engineLamp   // 发动机（黄，MOS ≥ 60°C / 有故障码）
+                coolantLamp  // 水温（黄，超过阈值）
+                batteryLamp  // 电瓶（黄，电压过低 / 电量 < 26%）
             }
             .opacity(inSelfTest ? pulseOpacity : 1.0)
 
@@ -676,13 +681,22 @@ struct SportDashView: View {
 
             // 右侧：BMS 温度 + 油表
             // BMS 块靠近档位一侧，油表占最右边，给足空间
-            // OBD2 模式不显示 BMS（汽车没有保护板），油表改用燃油液位
-            HStack(alignment: .center, spacing: 10) {
-                if showBmsBlock && !isObd {
-                    bmsMosTempBlock
-                        .offset(x: -6)
+            //
+            // OBD2 模式两块都不显示：
+            //   · 汽车没有 BMS 保护板
+            //   · 油表按需求隐藏
+            // 用同宽透明占位，保证速度/档位仍然居中，不会整体偏右。
+            if !isObd {
+                HStack(alignment: .center, spacing: 10) {
+                    if showBmsBlock {
+                        bmsMosTempBlock
+                            .offset(x: -6)
+                    }
+                    fuelGauge
+                        .frame(width: 72, height: 116)
                 }
-                fuelGauge
+            } else {
+                Color.clear
                     .frame(width: 72, height: 116)
             }
         }
