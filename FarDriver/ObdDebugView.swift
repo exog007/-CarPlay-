@@ -59,6 +59,39 @@ struct ObdDebugView: View {
                         .font(.caption2)
                 }
 
+                // ── 兼容性对照实验 ──
+                Section {
+                    Button {
+                        obd.runCompatTest()
+                    } label: {
+                        HStack {
+                            Image(systemName: "cross.case.fill")
+                                .foregroundStyle(themeMgr.color(.warn))
+                            Text(obd.compatTesting ? "正在测试…" : "兼容性对照实验")
+                                .foregroundStyle(themeMgr.foreground)
+                                .font(.subheadline.bold())
+                            Spacer()
+                            if obd.compatTesting {
+                                ProgressView().scaleEffect(0.8)
+                            }
+                        }
+                    }
+                    .disabled(obd.compatTesting || !obd.status.isConnected)
+
+                    ForEach(Array(obd.compatResults.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(line.contains("✅") ? themeMgr.color(.ok)
+                                             : (line.starts(with: "——") ? themeMgr.color(.rpm)
+                                                : themeMgr.foreground))
+                    }
+                } header: {
+                    Text("兼容性对照")
+                } footer: {
+                    Text("协议对了但单 PID 全是 NO DATA 时用这个。\n会用 9 种不同的 AT 配置组合分别去问转速，找出哪一种能拿到真数据。\n\n约 2~3 分钟。")
+                        .font(.caption2)
+                }
+
                 // ── 连接信息 ──
                 Section {
                     row("状态", obd.status.text)
@@ -178,6 +211,11 @@ struct ObdDebugView: View {
         if !obd.probeResults.isEmpty {
             lines.append("=== 协议探测 ===")
             lines.append(contentsOf: obd.probeResults)
+            lines.append("")
+        }
+        if !obd.compatResults.isEmpty {
+            lines.append("=== 兼容性对照 ===")
+            lines.append(contentsOf: obd.compatResults)
             lines.append("")
         }
         lines.append("=== 连接信息 ===")

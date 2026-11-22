@@ -303,6 +303,100 @@ final class ObdManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - 兼容性对照实验
+
+    /// 同一辆车，用不同的 AT 配置组合去问同一个 PID，
+    /// 哪种组合能拿到真数据就用哪种。
+    ///
+    /// 背景：ymobd 用同一个适配器能读到数据，
+    /// 说明必然存在某种可行的初始化组合，这里穷举出来。
+    @Published private(set) var compatTesting = false
+    @Published private(set) var compatResults: [String] = []
+    @Published private(set) var winningProfile: String? = nil
+
+    private static let compatProfiles: [(name: String, commands: [String])] = [
+        ("纯净（只 E0）", []),
+        ("关 CAN 头", ["ATH0"]),
+        ("关 CAN 头 + 去空格", ["ATH0", "ATS0"]),
+        ("保留空格 ATS1", ["ATS1"]),
+        ("长消息 AL", ["ATAL"]),
+        ("固定 CAN11 TP6", ["ATTP6"]),
+        ("功能寻址 7DF", ["ATSH7DF"]),
+        ("关自适应 AT0", ["ATAT0"]),
+        ("清过滤 + 慢超时", ["ATAR", "ATST96"]),
+    ]
+
+    func runCompatTest() {
+        guard status == .connected || ready else {
+            errorMsg = "先连上适配器"
+            return
+        }
+        compatTesting = true
+        compatResults.removeAll()
+        winningProfile = nil
+        stopPolling()
+        runCompat(index: 0)
+    }
+
+    private func runCompat(index: Int) {
+        guard index < Self.compatProfiles.count else {
+            compatTesting = false
+            compatResults.append("")
+            if let w = winningProfile {
+                compatResults.append("✅ 可用配置：\(w)")
+            } else {
+                compatResults.append("❌ 所有配置都拿不到单 PID 数据")
+            }
+            if ready { startPolling() }
+            return
+        }
+
+        let profile = Self.compatProfiles[index]
+        compatResults.append("—— \(profile.name) ——")
+
+        send("ATZ", timeout: 3.5) { [weak self] _ in
+            guard let self else { return }
+            self.send("ATE0", timeout: 1.2) { [weak self] _ in
+                guard let self else { return }
+                self.applyCompat(profile, index: index, at: 0)
+            }
+        }
+    }
+
+    private func applyCompat(_ profile: (name: String, commands: [String]),
+                             index: Int, at i: Int) {
+        guard i < profile.commands.count else {
+            // 应用完配置，固定协议 6 再问
+            send("ATSP6", timeout: 2.0) { [weak self] _ in
+                guard let self else { return }
+                self.send("0100", timeout: 8.0) { [weak self] d0 in
+                    guard let self else { return }
+                    let ok0 = d0?.contains(0x41) ?? false
+                    self.send("010C", timeout: 8.0) { [weak self] d in
+                        guard let self else { return }
+                        let okC = d?.contains(0x41) ?? false
+                        if okC, let d {
+                            self.compatResults.append("  0100 有响应, 010C ✅ [\(ObdParser.debugText(d))]")
+                            if self.winningProfile == nil { self.winningProfile = profile.name }
+                        } else {
+                            self.compatResults.append("  0100 \(ok0 ? "有" : "无"), 010C 无响应")
+                        }
+                        self.runCompat(index: index + 1)
+                    }
+                }
+            }
+            return
+        }
+
+        let cmd = profile.commands[i]
+        send(cmd, timeout: 1.5) { [weak self] r in
+            guard let self else { return }
+            let txt = r.map { ObdParser.rawString($0) } ?? ""
+            self.compatResults.append("  \(cmd) → \(txt.isEmpty ? "OK" : txt)")
+            self.applyCompat(profile, index: index, at: i + 1)
+        }
+    }
+
     /// 切回指定协议，确认能通信后再开始轮询
     private func switchbackAndStart(protocolNum: Int) {
         send("ATSP\(protocolNum)", timeout: 2.5) { [weak self] _ in
@@ -521,10 +615,10 @@ final class ObdManager: NSObject, ObservableObject {
             // 协议：用户指定就用指定的，否则自动
             ("ATSP\(Self.protocolNumber)", 2.5),
             ("ATAT1", 1.5),    // 自适应计时（慢车必需）
-            // 显式指定「向引擎 ECU 发」并「只收引擎 ECU 的回复」。
-            // 有些车 / 适配器组合不做这一步时，0100 能通但单 PID 全 NO DATA。
-            ("ATSH7E0", 1.2),
-            ("ATCRA7E8", 1.2),
+            // ⚠️ 不要加 ATSH7E0 / ATCRA7E8：
+            //   实测这台车加了之后连 0100 都变 NO DATA，
+            //   说明它的 ECU 地址不是 7E0 标准地址，或被过滤规则拦掉了。
+            //   保持适配器默认的自动寻址。
             ("0100", 12.0),    // 探测 ECU 是否可达
         ]
 
