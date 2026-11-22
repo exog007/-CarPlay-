@@ -936,25 +936,37 @@ final class ObdManager: NSObject, ObservableObject {
     /// 响应快时一轮不到 1 秒，转速能接近 1Hz 更新。
     private var pollGroupIndex = 0
 
+    /// 轮询轮次计数
+    private var pollRound = 0
+
     private func buildPollCycle() -> [ObdPid] {
-        // 关键 PID：每轮都问
+        // 每轮必问的关键 PID（仪表上实时看的）
         var cycle: [ObdPid] = [.rpm, .speed, .rpm, .coolant]
 
-        // 次要 PID：分 3 组轮转
-        let groups: [[ObdPid]] = [
-            [.intakeAir, .engineLoad],
-            [.throttle, .fuelLevel],
-            [.maf, .rpm],        // 5E 燃油消耗率多数车不支持，换成再问一次转速
-        ]
-        cycle.append(contentsOf: groups[pollGroupIndex % groups.count])
-        pollGroupIndex += 1
+        // 剩下的支持 PID 分 4 组轮转，把所有数据都慢慢收上来
+        // 这样界面上暂时不用的（氧传感器、燃油修正等）也能存进仓库备用
+        let extras: [ObdPid] = supportedPids.isEmpty
+            ? ObdPid.allCases
+            : ObdPid.allCases.filter { supportedPids.contains($0) }
 
-        // 只保留「车支持 + 没被标记坏」的 PID
-        // supportedPids 为空说明还没读到 0100，此时不过滤
+        // 去掉关键 PID，避免重复
+        let keySet: Set<ObdPid> = [.rpm, .speed, .coolant]
+        let pool = extras.filter { !keySet.contains($0) && !badPids.contains($0) }
+
+        if !pool.isEmpty {
+            let groupCount = 4
+            let perGroup = max(1, (pool.count + groupCount - 1) / groupCount)
+            let start = (pollRound % groupCount) * perGroup
+            let end = min(start + perGroup, pool.count)
+            if start < end {
+                cycle.append(contentsOf: pool[start..<end])
+            }
+        }
+
+        pollRound += 1
+
         return cycle.filter { pid in
-            guard !badPids.contains(pid) else { return false }
-            if supportedPids.isEmpty { return true }
-            return supportedPids.contains(pid)
+            !badPids.contains(pid)
         }
     }
 
@@ -1007,10 +1019,12 @@ final class ObdManager: NSObject, ObservableObject {
         send(pid.command, timeout: isLast ? 1.2 : 0.6) { [weak self] bytes in
             guard let self else { return }
 
-            // 拿到有效数据
-            if let bytes, !bytes.isEmpty, let v = ObdParser.value(bytes, pid: pid) {
+            // 拿到有效数据：用通用 PID 表解析，所有能读的都存起来
+            if let bytes, !bytes.isEmpty, let v = Self.parseAny(bytes, code: pid.command) {
                 self.failStreak[pid] = 0
                 self.apply(pid: pid, value: v)
+                // 同时写进通用仓库（界面上没用的也留着备用）
+                ObdValueStore.shared.update(code: pid.command, value: v)
                 return
             }
 
@@ -1031,6 +1045,36 @@ final class ObdManager: NSObject, ObservableObject {
                 self.refreshUnsupportedList()
             }
         }
+    }
+
+    /// 通用解析：用 PID 表里的公式算值
+    ///
+    /// 比之前只支持 10 个 PID 的 switch 覆盖面大得多，
+    /// 只要表里有公式就能解。
+    static func parseAny(_ bytes: [UInt8], code: String) -> Double? {
+        guard let def = ObdPidTable.def(code) else {
+            // 表里没有，退回老的 switch 解析
+            if let p = ObdPid(rawValue: code) {
+                return ObdParser.value(bytes, pid: p)
+            }
+            return nil
+        }
+
+        // 找到 "41 XX" 后面的数据
+        let target = def.pidByte
+        var i = 0
+        while i + 1 < bytes.count {
+            if bytes[i] == 0x41, bytes[i + 1] == target {
+                let start = i + 2
+                let n = def.byteCount
+                guard start + n <= bytes.count else { return nil }
+                let a = Double(bytes[start])
+                let b = n >= 2 ? Double(bytes[start + 1]) : 0
+                return def.formula(a, b)
+            }
+            i += 1
+        }
+        return nil
     }
 
     private func apply(pid: ObdPid, value: Double) {
@@ -1359,6 +1403,7 @@ extension ObdManager: CBCentralManagerDelegate {
         notifyChar = nil
         rxBuffer = ""
         sendQueue.removeAll()
+        ObdValueStore.shared.clear()
         initStarted = false
         candidateChars.removeAll()
         candidateIndex = 0
