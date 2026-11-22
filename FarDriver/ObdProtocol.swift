@@ -34,6 +34,7 @@ enum ObdPid: String, CaseIterable {
     case fuelLevel  = "012F"   // 燃油液位
     case maf        = "0110"   // 空气流量
     case fuelRate   = "015E"   // 燃油消耗率（部分车不支持）
+    case gear       = "01A4"   // 变速箱档位（大部分车不支持，支持就能读真实档位）
 
     /// 这个 PID 需要几个数据字节
     var byteCount: Int {
@@ -64,6 +65,8 @@ struct ObdReading {
     var fuelLevel: Double? = nil      // 0~100 %
     var maf: Double? = nil            // g/s
     var fuelRate: Double? = nil       // L/h
+    /// 变速箱档位原始值（PID 01A4，0 = 不支持/未知）
+    var gear: Int? = nil
     var updatedAt: Date = Date()
 
     /// 有没有至少一项数据
@@ -174,6 +177,8 @@ enum ObdParser {
         case .fuelRate:
             guard d.count >= 2 else { return nil }
             return (Double(d[0]) * 256 + Double(d[1])) / 20.0
+        case .gear:
+            return Double(d[0])
         }
     }
 
@@ -264,5 +269,76 @@ enum ObdDtcText {
         if code.hasPrefix("C") { return "底盘系统故障" }
         if code.hasPrefix("U") { return "网络通信故障" }
         return "未知故障"
+    }
+}
+
+// MARK: - 档位
+
+/// 自动挡档位 + 手动模式档位
+///
+/// 显示规则：
+///   自动：P / R / N / D 单选高亮
+///   手动：M 高亮，同时 1~5 中当前档位高亮（只显示一位数字）
+enum ObdGear: Hashable {
+    case park         // P
+    case reverse      // R
+    case neutral      // N
+    case drive        // D
+    /// 手动模式的第 n 档（1~5）
+    case manual(Int)
+    case unknown
+
+    /// 单选高亮用：手动档都归到 .manual(n) 这一格
+    var label: String {
+        switch self {
+        case .park:    return "P"
+        case .reverse: return "R"
+        case .neutral: return "N"
+        case .drive:   return "D"
+        case .manual:  return "M"
+        case .unknown: return "－"
+        }
+    }
+
+    /// 是不是手动模式
+    var isManual: Bool {
+        if case .manual = self { return true }
+        return false
+    }
+
+    /// 手动档位数字（1~5），非手动返回 nil
+    var manualNumber: Int? {
+        if case .manual(let n) = self { return n }
+        return nil
+    }
+
+    /// 按 PID 01A4 的原始字节解码
+    ///
+    /// 注意：PID A4 的取值各家车厂不统一（SAE 只规定 0 = 不支持）。
+    /// 常见约定：
+    ///   1=P, 2=R, 3=N, 4=D, 5~9=手动 1~5 档
+    ///   也有的车用 0x10= P、0x11= R 这种带进位编码
+    /// 这里两种都认。
+    static func decode(_ raw: Int) -> ObdGear {
+        // 常见直接编码
+        switch raw {
+        case 1:  return .park
+        case 2:  return .reverse
+        case 3:  return .neutral
+        case 4:  return .drive
+        case 5...9: return .manual(raw - 4)      // 5 → 1挡, 6 → 2挡 ...
+        default: break
+        }
+
+        // 带进位编码：低 4 位是档位
+        let low = raw & 0x0F
+        switch low {
+        case 1:  return .park
+        case 2:  return .reverse
+        case 3:  return .neutral
+        case 4:  return .drive
+        case 5...9: return .manual(low - 4)
+        default: return .unknown
+        }
     }
 }

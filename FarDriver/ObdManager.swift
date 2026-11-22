@@ -307,6 +307,7 @@ final class ObdManager: NSObject, ObservableObject {
         case .fuelLevel:  reading.fuelLevel = value
         case .maf:        reading.maf = value
         case .fuelRate:   reading.fuelRate = value
+        case .gear:       reading.gear = Int(value)
         }
         reading.updatedAt = Date()
     }

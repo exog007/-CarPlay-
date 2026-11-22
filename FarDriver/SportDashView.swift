@@ -682,33 +682,75 @@ struct SportDashView: View {
         .frame(maxHeight: .infinity)
     }
 
-    /// OBD2 模式的档位块
+    // MARK: - OBD2 档位
+
+    /// OBD2 模式当前档位
     ///
-    /// 标准 OBD2 没有档位 PID，大多数车读不到。
-    /// 这里只在拿到故障码时显示一个提示块，其余情况留空，避免显示假档位。
+    /// 档位来源：PID 01A4（变速箱档位）不是所有车都支持。
+    /// 优先读它；读不到就用「车速 + 转速」推断 D/N/P，手动档推断不准就不显示。
+    private var obdGear: ObdGear {
+        // ① 优先用 PID A4 的真实档位
+        if let raw = obd.reading.gear, raw > 0 {
+            return ObdGear.decode(raw)
+        }
+        // ② 读不到就按转速/车速粗判
+        let rpm = obd.reading.rpm ?? 0
+        let spd = obd.reading.speedKmh ?? 0
+        if spd < 1 && rpm > 300 {
+            return .neutral          // 有转速但不动，大概率 N
+        }
+        if rpm > 300 {
+            return .drive            // 在跑
+        }
+        return .unknown
+    }
+
+    /// OBD2 档位框：P R N D 横排 + M 与手动档数字
     private var obdGearBoxes: some View {
-        VStack(spacing: 3) {
-            if !obd.dtcCodes.isEmpty {
-                Text("DTC")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(red)
-                Text("\(obd.dtcCodes.count)")
-                    .font(.system(size: 22, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(red)
-                Text("故障")
-                    .font(.system(size: 7))
-                    .foregroundStyle(red.opacity(0.8))
-            } else if obd.status.isConnected {
-                Text("OK")
-                    .font(.system(size: 18, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(themeMgr.color(.ok).opacity(0.85))
-                Text("无故障码")
-                    .font(.system(size: 7))
-                    .foregroundStyle(amber.opacity(0.55))
+        let cur = obdGear
+        return VStack(spacing: 4) {
+            // 第一行：P R N D
+            HStack(spacing: 4) {
+                ForEach([ObdGear.park, .reverse, .neutral, .drive], id: \.self) { g in
+                    Text(g.label)
+                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(cur == g ? Color.black : amber.opacity(0.35))
+                        .frame(width: 20, height: 20)
+                        .background(cur == g ? amber : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(amber.opacity(cur == g ? 0 : 0.3), lineWidth: 1)
+                        }
+                }
+            }
+
+            // 第二行：M + 手动档位
+            HStack(spacing: 4) {
+                Text("M")
+                    .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(cur.isManual ? Color.black : amber.opacity(0.35))
+                    .frame(width: 20, height: 20)
+                    .background(cur.isManual ? amber : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(amber.opacity(cur.isManual ? 0 : 0.3), lineWidth: 1)
+                    }
+
+                // 手动档 1~5（一档显示 1，二档显示 2，只显示一位数字）
+                ForEach(1...5, id: \.self) { n in
+                    Text("\(n)")
+                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(cur.manualNumber == n ? Color.black : amber.opacity(0.25))
+                        .frame(width: 16, height: 20)
+                        .background(cur.manualNumber == n ? amber : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
         .overlay {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(amber.opacity(0.25), lineWidth: 1)
