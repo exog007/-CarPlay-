@@ -37,32 +37,58 @@ struct DashLayout: Codable, Equatable {
 /// 存取（全局一份，两个数据源共用布局参数）
 ///
 /// 布局参数和主题分开放：换颜色/背景不该重置尺寸。
+///
+/// ⚠️ 性能：拖滑块时每秒会产生几十次改动，
+/// 每次都 JSON 编码 + 写 UserDefaults 会明显卡顿。
+/// 所以拆成两步：
+///   ① 内存里立刻更新 + 通知界面重绘（实时反馈）
+///   ② 停手 250ms 后才真正写盘（防抖）
 final class DashLayoutStore: ObservableObject {
 
     static let shared = DashLayoutStore()
 
     @Published private(set) var revision: Int = 0
 
+    /// 内存中的当前值（界面读这个，改完立刻生效）
+    @Published private(set) var current: DashLayout
+
     private let key = "dashLayout"
+    private var saveWork: DispatchWorkItem?
+
+    private init() {
+        if let d = UserDefaults.standard.data(forKey: "dashLayout"),
+           let l = try? JSONDecoder().decode(DashLayout.self, from: d) {
+            current = l
+        } else {
+            current = .reset
+        }
+    }
 
     var layout: DashLayout {
-        get {
-            if let d = UserDefaults.standard.data(forKey: key),
-               let l = try? JSONDecoder().decode(DashLayout.self, from: d) {
-                return l
-            }
-            return .reset
-        }
+        get { current }
         set {
-            guard let d = try? JSONEncoder().encode(newValue) else { return }
-            UserDefaults.standard.set(d, forKey: key)
+            current = newValue
             revision += 1
+            scheduleSave()
         }
+    }
+
+    /// 延迟写盘：250ms 内的多次改动合并成一次
+    private func scheduleSave() {
+        saveWork?.cancel()
+        let snapshot = current
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let d = try? JSONEncoder().encode(snapshot) else { return }
+            UserDefaults.standard.set(d, forKey: self.key)
+        }
+        saveWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
     }
 
     /// 只改缩放
     func setScale(x: Double, y: Double) {
-        var l = layout
+        var l = current
         l.scaleX = min(max(x, 0.70), 1.30)
         l.scaleY = min(max(y, 0.70), 1.30)
         layout = l
@@ -70,7 +96,7 @@ final class DashLayoutStore: ObservableObject {
 
     /// 只改位移
     func setShift(x: Double, y: Double) {
-        var l = layout
+        var l = current
         l.shiftX = min(max(x, -60), 60)
         l.shiftY = min(max(y, -60), 60)
         layout = l
@@ -78,5 +104,10 @@ final class DashLayoutStore: ObservableObject {
 
     func reset() {
         layout = .reset
+        // 重置要立刻落盘，避免用户马上退出 App 丢失
+        saveWork?.cancel()
+        if let d = try? JSONEncoder().encode(DashLayout.reset) {
+            UserDefaults.standard.set(d, forKey: key)
+        }
     }
 }

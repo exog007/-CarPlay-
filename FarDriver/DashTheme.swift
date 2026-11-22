@@ -148,14 +148,17 @@ struct DashTheme: Codable, Equatable {
 ///
 /// 存在 UserDefaults 里（JSON），文件名再指向 Documents/themes/ 下的素材。
 ///
-/// 继承 ObservableObject：设置里改完立刻通知仪表重绘，
-/// 不用关掉页面或重启 App。
+/// 继承 ObservableObject：设置里改完立刻通知仪表重绘。
+/// ⚠️ 性能：拖滑块时每秒几十次改动，所以内存立刻更新、
+/// 磁盘写入防抖 250ms，避免卡顿。
 final class DashThemeStore: ObservableObject {
 
     static let shared = DashThemeStore()
 
     /// 主题变更版本号，仪表监听它来重绘
     @Published private(set) var revision: Int = 0
+
+    private var saveWorks: [String: DispatchWorkItem] = [:]
 
     /// 当前编辑/显示哪一套（跟数据源走）
     private func key(_ source: DataSource) -> String {
@@ -171,15 +174,34 @@ final class DashThemeStore: ObservableObject {
         return source == .obd2 ? .obd2Default : .fardriverDefault
     }
 
+    /// 保存（防抖：250ms 内的多次调用只写一次盘）
     func save(_ theme: DashTheme, for source: DataSource) {
+        revision += 1        // 先让界面立刻重绘
+
+        let k = key(source)
+        saveWorks[k]?.cancel()
+        let snapshot = theme
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            UserDefaults.standard.set(data, forKey: self.key(source))
+        }
+        saveWorks[k] = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
+    }
+
+    /// 立即写盘（比如点「恢复默认」）
+    func saveNow(_ theme: DashTheme, for source: DataSource) {
+        let k = key(source)
+        saveWorks[k]?.cancel()
         guard let data = try? JSONEncoder().encode(theme) else { return }
-        UserDefaults.standard.set(data, forKey: key(source))
+        UserDefaults.standard.set(data, forKey: k)
         revision += 1
     }
 
     /// 恢复某一套的默认值
     func reset(_ source: DataSource) {
-        save(source == .obd2 ? .obd2Default : .fardriverDefault, for: source)
+        saveNow(source == .obd2 ? .obd2Default : .fardriverDefault, for: source)
     }
 
     // MARK: - 素材文件

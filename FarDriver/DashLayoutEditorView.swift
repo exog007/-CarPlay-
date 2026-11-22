@@ -19,7 +19,10 @@ struct DashLayoutEditorView: View {
             List {
                 // ── 预览 ──
                 Section {
+                    // 用 EquatableView 隔离：只有布局参数真的变了才重绘预览，
+                    // 避免拖动滑块时把整个 List 的其它行也一起重算
                     DashLayoutPreview(layout: store.layout)
+                        .equatable()
                         .frame(height: 190)
                         .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
                 } header: {
@@ -171,10 +174,26 @@ struct DashLayoutEditorView: View {
 // MARK: - 预览
 
 /// 模拟一块 16:9 横屏，画出仪表关键元素，实时反映缩放/位移
-struct DashLayoutPreview: View {
+///
+/// 实现 Equatable：布局参数没变就不重绘，减少拖滑块时的开销。
+/// 注意这里不能用 @ObservedObject（会和 Equatable 冲突），
+/// 颜色直接从 ThemeManager.shared 现取。
+struct DashLayoutPreview: View, Equatable {
 
     let layout: DashLayout
-    @ObservedObject var themeMgr: ThemeManager = .shared
+    /// 参与相等判断的主题标识
+    private let tintKey: String
+
+    private var themeMgr: ThemeManager { .shared }
+
+    init(layout: DashLayout) {
+        self.layout = layout
+        self.tintKey = "\(ThemeManager.shared.isLight)"
+    }
+
+    static func == (a: DashLayoutPreview, b: DashLayoutPreview) -> Bool {
+        a.layout == b.layout && a.tintKey == b.tintKey
+    }
 
     /// 模拟屏幕的宽高比（横屏 2796:1290 ≈ 2.17）
     private let screenRatio: CGFloat = 2.17
