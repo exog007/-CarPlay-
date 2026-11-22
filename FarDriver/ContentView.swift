@@ -1358,9 +1358,17 @@ struct SettingsView: View {
                         Button {
                             ObdManager.shared.readDtc()
                         } label: {
-                            Label("读取故障码", systemImage: "exclamationmark.triangle")
+                            HStack {
+                                if ObdManager.shared.dtcReading {
+                                    ProgressView().scaleEffect(0.8)
+                                    Text("正在读取（03/07/0A 各 3 遍）…")
+                                } else {
+                                    Image(systemName: "exclamationmark.triangle")
+                                    Text("读取故障码")
+                                }
+                            }
                         }
-                        .disabled(!obdConnected)
+                        .disabled(!obdConnected || ObdManager.shared.dtcReading)
 
                         if !ObdManager.shared.dtcCodes.isEmpty {
                             ForEach(ObdManager.shared.dtcCodes, id: \.self) { code in
@@ -1426,9 +1434,17 @@ struct SettingsView: View {
                         Button(role: .destructive) {
                             ObdManager.shared.clearDtc()
                         } label: {
-                            Label("清除故障码", systemImage: "trash")
+                            HStack {
+                                if ObdManager.shared.dtcClearing {
+                                    ProgressView().scaleEffect(0.8)
+                                    Text("正在清除（04 + 3 条 UDS）…")
+                                } else {
+                                    Image(systemName: "trash")
+                                    Text("清除故障码")
+                                }
+                            }
                         }
-                        .disabled(!obdConnected)
+                        .disabled(!obdConnected || ObdManager.shared.dtcClearing)
 
                         if let err = ObdManager.shared.errorMsg {
                             Text(err)

@@ -1084,6 +1084,10 @@ final class ObdManager: NSObject, ObservableObject {
     @Published private(set) var permanentCodes: [String] = []
     /// 上次清除是否成功
     @Published private(set) var lastClearOK: Bool? = nil
+    /// 正在读取故障码（UI 显示进度用）
+    @Published private(set) var dtcReading = false
+    /// 正在清除故障码
+    @Published private(set) var dtcClearing = false
 
     /// 读故障码
     ///
@@ -1110,7 +1114,14 @@ final class ObdManager: NSObject, ObservableObject {
                 pendingCodes = pending.sorted()
                 permanentCodes = permanent.sorted()
                 dtcReadAt = Date()
-                errorMsg = (stored.isEmpty && permanent.isEmpty) ? "没有故障码" : nil
+                dtcReading = false
+
+                let total = stored.count + pending.count + permanent.count
+                if total == 0 {
+                    errorMsg = "✓ 没有故障码"
+                } else {
+                    errorMsg = "✓ 读到 \(total) 个（已存储 \(stored.count) / 待定 \(pending.count) / 永久 \(permanent.count)）"
+                }
                 if ready { startPolling() }
                 return
             }
@@ -1129,6 +1140,7 @@ final class ObdManager: NSObject, ObservableObject {
                 step(i + 1)
             }
         }
+        dtcReading = true
         step(0)
     }
 
@@ -1145,6 +1157,8 @@ final class ObdManager: NSObject, ObservableObject {
         }
         stopPolling()
         lastClearOK = nil
+        dtcClearing = true
+        errorMsg = "正在清除…"
 
         let queue: [(String, TimeInterval)] = [
             ("04", 6.0),
@@ -1158,29 +1172,68 @@ final class ObdManager: NSObject, ObservableObject {
             guard i < queue.count else {
                 lastClearOK = anyOK
                 if anyOK {
-                    dtcCodes.removeAll()
-                    pendingCodes.removeAll()
-                    permanentCodes.removeAll()
-                    errorMsg = "故障码已清除"
+                    // 清完立刻复查，确认真的没了
+                    errorMsg = "已发送清除，正在复查…"
+                    verifyCleared { [weak self] stillHas in
+                        guard let self else { return }
+                        if stillHas {
+                            self.errorMsg = "部分故障码仍在（可能是永久码）"
+                        } else {
+                            self.dtcCodes.removeAll()
+                            self.pendingCodes.removeAll()
+                            self.permanentCodes.removeAll()
+                            self.errorMsg = "✓ 故障码已清除"
+                        }
+                        if self.ready { self.startPolling() }
+                    }
                 } else {
-                    errorMsg = "清除失败"
+                    errorMsg = "清除失败，这辆车可能不支持清除"
+                    dtcClearing = false
+                    if ready { startPolling() }
                 }
-                if ready { startPolling() }
                 return
             }
             let (cmd, t) = queue[i]
             send(cmd, timeout: t) { [weak self] bytes in
                 guard let self else { return }
                 if let bytes, !bytes.isEmpty {
-                    let text = ObdParser.rawString(bytes).uppercased()
-                    if text.contains("44") || text.contains("54") {
+                    // ⚠️ 响应是**字节**不是字符串：
+                    //   0x44 = Mode 04 肯定响应
+                    //   0x54 = 服务 14 的肯定响应（UDS）
+                    //   0x7F = 否定响应（这辆车不支持这条）
+                    if bytes.contains(0x44) || bytes.contains(0x54) {
                         anyOK = true
+                    }
+                    if bytes.contains(0x7F) {
+                        self.handshakeLog.append("\(cmd) 否定响应 [\(ObdParser.debugText(bytes))]")
                     }
                 }
                 step(i + 1)
             }
         }
         step(0)
+    }
+
+    /// 清除后复查：重新读 Mode 03，看还有没有码
+    private func verifyCleared(completion: @escaping (Bool) -> Void) {
+        send("03", timeout: 5.0) { [weak self] bytes in
+            guard let self else {
+                completion(false)
+                return
+            }
+            defer { self.dtcClearing = false }
+            guard let bytes, !bytes.isEmpty else {
+                completion(false)   // 没响应，当作清掉了
+                return
+            }
+            let codes = ObdParser.dtcListPlain(bytes)
+            if codes.isEmpty {
+                completion(false)
+            } else {
+                self.dtcCodes = codes
+                completion(true)
+            }
+        }
     }
 
 
