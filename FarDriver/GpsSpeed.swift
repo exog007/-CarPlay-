@@ -78,18 +78,55 @@ final class GpsSpeed: NSObject, ObservableObject {
         smoothTimer = nil
     }
 
+    /// 临时挂起平滑定时器（进入设置页时调用）
+    ///
+    /// 设置页不需要 60Hz 的实时速度，但它是 @ObservedObject 的，
+    /// 不停的话整页 Form 每秒被重绘 60 次，看起来就掉帧。
+    /// 停掉只影响平滑动画，仪表本身的数值来源不受影响。
+    func pauseSmoothing() {
+        smoothTimer?.invalidate()
+        smoothTimer = nil
+    }
+
+    /// 恢复平滑（离开设置页时调用）
+    func resumeSmoothing() {
+        guard enabled, manager.authorizationStatus == .authorizedWhenInUse
+                || manager.authorizationStatus == .authorizedAlways else { return }
+        startSmoothTimer()
+    }
+
+    /// 上次真正发布出去的平滑值（用来跳过无意义的重绘）
+    private var lastPublishedSmooth: Double = -1
+
     /// 启动平滑定时器：每 16ms 让 smoothSpeed 朝 speedKmh 追一步
+    ///
+    /// ⚠️ 性能：这个定时器每秒跑 60 次，如果每次都写 @Published，
+    /// 所有观察 gps 的视图（包括设置页）都会每秒重绘 60 次，明显掉帧。
+    /// 这里做了两级过滤：
+    ///   · 已经追平（差值 < 0.05）→ 不再赋值
+    ///   · 变化量 < 0.01 → 不提交
     private func startSmoothTimer() {
         guard smoothTimer == nil else { return }
         let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            let diff = self.speedKmh - self.smoothSpeed
-            if abs(diff) < 0.05 {
-                self.smoothSpeed = self.speedKmh
-            } else {
-                self.smoothSpeed += diff * self.smoothFactor
+
+            let target = self.speedKmh
+            let cur = self.smoothSpeed
+            let diff = target - cur
+            let next = abs(diff) < 0.05 ? target : cur + diff * self.smoothFactor
+
+            // 已经追平且发布过同样的值 → 直接跳过
+            if abs(diff) < 0.05, abs(self.lastPublishedSmooth - next) < 0.001 {
+                return
             }
+            // 变化太小，肉眼看不出来，不折腾 SwiftUI
+            if abs(next - self.lastPublishedSmooth) < 0.01 { return }
+
+            self.lastPublishedSmooth = next
+            self.smoothSpeed = next
         }
+        // 给点容差，系统可以合并唤醒，省电也省 CPU
+        t.tolerance = 0.005
         RunLoop.main.add(t, forMode: .common)
         smoothTimer = t
     }

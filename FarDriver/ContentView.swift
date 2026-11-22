@@ -1562,7 +1562,15 @@ struct SettingsView: View {
                     }
                 }
             }
-            .onAppear { url = mgr.serverBaseURL }
+            .onAppear {
+                url = mgr.serverBaseURL
+                // 设置页不需要 60Hz 的实时速度，挂起平滑定时器省性能
+                gps.pauseSmoothing()
+            }
+            .onDisappear {
+                // 离开设置页恢复平滑
+                gps.resumeSmoothing()
+            }
             .sheet(isPresented: $showAppearance) {
                 AppearanceView(themeMgr: themeMgr)
             }
