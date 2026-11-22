@@ -125,11 +125,14 @@ enum ObdParser {
 
     /// 把 ELM327 的字符串响应解析成字节数组
     ///
-    /// 输入可能是：
-    ///   "41 0C 1A F8 \r\r>"
-    ///   "SEARCHING...\r41 0D 32 \r\r>"
-    ///   "NO DATA\r\r>"
-    ///   "7EA 04 41 0D 32 AA \r"   ← 多帧/带 CAN 头
+    /// ⚠️ 关键：CAN 头（7E8 / 7E9 / 7DF…）是 **3 位**十六进制，
+    /// 不能简单按 2 字符切，否则 "7E8 04 41 0C 1A F8" 会解析成
+    /// 7E 80 44 14 10 C1 AF 8 —— 全部错位。
+    ///
+    /// 这里的做法：按「空白」分词，再判断每个词：
+    ///   · 3 位 → 是 CAN 头，丢弃
+    ///   · 2 位 → 是数据字节
+    ///   · 其它（如 10 14 这种）→ 按 2 位切分
     static func toBytes(_ raw: String) -> [UInt8]? {
         let cleaned = raw
             .replacingOccurrences(of: ">", with: " ")
@@ -137,34 +140,54 @@ enum ObdParser {
             .replacingOccurrences(of: "\n", with: " ")
             .uppercased()
 
-        // 明确无数据
         if cleaned.contains("NO DATA") || cleaned.contains("UNABLE TO CONNECT") {
             return nil
         }
 
-        // 找出所有两位十六进制
         var bytes: [UInt8] = []
-        var token = ""
-        for ch in cleaned {
-            if ch.isHexDigit {
-                token.append(ch)
-                if token.count == 2 {
-                    if let b = UInt8(token, radix: 16) { bytes.append(b) }
-                    token = ""
+
+        // 按空白分词
+        let tokens = cleaned.split { $0 == " " || $0 == "\t" }
+
+        for token in tokens {
+            let word = String(token)
+            // 只处理纯十六进制的词
+            guard !word.isEmpty, word.allSatisfy({ $0.isHexDigit }) else { continue }
+
+            switch word.count {
+            case 3:
+                // CAN 头（7E8 / 7E9 / 7DF…），丢弃
+                continue
+            case 2:
+                if let b = UInt8(word, radix: 16) { bytes.append(b) }
+            case 1:
+                // 单个字符，跳过（可能是残留）
+                continue
+            default:
+                // 更长的词：按 2 位切分
+                var idx = word.startIndex
+                while idx < word.endIndex {
+                    let next = word.index(idx, offsetBy: 2, limitedBy: word.endIndex) ?? word.endIndex
+                    let chunk = String(word[idx..<next])
+                    if chunk.count == 2, let b = UInt8(chunk, radix: 16) {
+                        bytes.append(b)
+                    }
+                    idx = next
                 }
-            } else {
-                token = ""
             }
         }
+
         return bytes.isEmpty ? nil : bytes
     }
 
     /// 从字节里找「41 <pid> <数据...>」
     ///
-    /// 现在保持 CAN 头开启（不发 ATH0），响应可能是：
-    ///   · 带头部：7E8 04 41 0C 1A F8
-    ///   · 不带头部：41 0C 1A F8
-    /// 用滑动窗口找 `41 PID`，两种情况都能处理。
+    /// 现在保持 CAN 头开启（ATH1），响应形如：
+    ///   7E8 04 41 0C 1A F8
+    /// 经过 toBytes 后 CAN 头已丢弃，剩下 [04, 41, 0C, 1A, F8]，
+    /// 其中 04 是 ISO-TP 的长度字节（单帧 SF）。
+    ///
+    /// 这里用滑动窗口找 `41 PID`，能自动跳过长度字节和任何多余内容。
     static func extract(_ bytes: [UInt8], pid: ObdPid) -> [UInt8]? {
         let target = pid.pidByte
         var i = 0
@@ -173,7 +196,10 @@ enum ObdParser {
                 let start = i + 2
                 let n = pid.byteCount
                 guard start + n <= bytes.count else { return nil }
-                return Array(bytes[start..<(start + n)])
+                let result = Array(bytes[start..<(start + n)])
+                // 全 0 通常表示无效响应（车速 0 是合法的，所以排除 speed）
+                if result.allSatisfy({ $0 == 0 }) && pid != .speed { return nil }
+                return result
             }
             i += 1
         }
