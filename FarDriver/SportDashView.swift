@@ -38,8 +38,8 @@ struct SportDashView: View {
     @ObservedObject private var themeStore = DashThemeStore.shared
     /// 档位显示方式：设置里改完立刻生效
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
-    /// 手动尺寸微调系数（1.0 = 自动适配）
-    @AppStorage("dashScaleAdjust") private var dashScale: Double = 1.0
+    /// 布局微调（XY 独立缩放 + 位移）
+    @ObservedObject private var layoutStore = DashLayoutStore.shared
 
     // MARK: - 数据源
 
@@ -207,16 +207,18 @@ struct SportDashView: View {
             let availW = max(geo.size.width  - padSide * 2, 200)
             let availH = max(geo.size.height - padTop - padBottom, 120)
 
-            // 缩放比：取宽高两个方向的较小值，保证画面不超出也不留黑边
-            let sW = availW / ScreenFit.refWidth
-            let sH = availH / ScreenFit.refHeight
-            // 再乘上用户手动调的系数（设置里 0.70 ~ 1.30），并夹到安全范围
-            let manual = min(max(dashScale, 0.70), 1.30)
-            let s = min(sW, sH) * manual
+            // 自动适配缩放：取宽高两个方向的较小值
+            let autoS = min(availW / ScreenFit.refWidth,
+                            availH / ScreenFit.refHeight)
+
+            // 叠加用户的 XY 独立缩放
+            let lay = layoutStore.layout
+            let sx = autoS * lay.safeScaleX
+            let sy = autoS * lay.safeScaleY
 
             // 缩放后画布实际占用的尺寸
-            let drawnW = ScreenFit.refWidth  * s
-            let drawnH = ScreenFit.refHeight * s
+            let drawnW = ScreenFit.refWidth  * sx
+            let drawnH = ScreenFit.refHeight * sy
 
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
@@ -230,7 +232,10 @@ struct SportDashView: View {
                     debugPinRow
                 }
                 .frame(width: ScreenFit.refWidth, height: ScreenFit.refHeight)
-                .scaleEffect(s, anchor: .center)
+                // XY 分别缩放
+                .scaleEffect(x: sx, y: sy, anchor: .center)
+                // 位移（按参考画布单位，跟着缩放一起走）
+                .offset(x: lay.safeShiftX * sx, y: lay.safeShiftY * sy)
                 .frame(width: drawnW, height: drawnH)
 
                 Spacer(minLength: 0)

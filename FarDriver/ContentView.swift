@@ -786,8 +786,17 @@ struct SettingsView: View {
     @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
     /// 档位显示方式
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
-    /// 竞技仪表尺寸微调（1.0 = 自动适配）
-    @AppStorage("dashScaleAdjust") private var dashScale: Double = 1.0
+    /// 布局编辑器
+    @State private var showDashLayout = false
+    /// 布局存储（显示摘要用）
+    @ObservedObject private var layoutStore = DashLayoutStore.shared
+
+    /// 个性化区块右侧的布局摘要
+    private var layoutSummary: String {
+        let l = layoutStore.layout
+        if l == .reset { return "默认" }
+        return String(format: "X%.2f Y%.2f", l.scaleX, l.scaleY)
+    }
     /// OBD 管理器（设置页要显示连接状态和发现的设备）
     @ObservedObject private var obd = ObdManager.shared
 
@@ -962,59 +971,28 @@ struct SettingsView: View {
                         }
                     }
 
-                    // 竞技仪表尺寸微调
-                    VStack(alignment: .leading, spacing: 6) {
+                    // 仪表布局微调（XY 缩放 + 位移，带预览）
+                    Button {
+                        showDashLayout = true
+                    } label: {
                         HStack {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
                                 .foregroundStyle(themeMgr.color(.rpm))
-                            Text("仪表尺寸")
+                            Text("仪表布局（缩放 / 位置）")
                                 .foregroundStyle(themeMgr.foreground)
                             Spacer()
-                            Text(String(format: "×%.2f", dashScale))
-                                .font(.system(.footnote, design: .monospaced))
-                                .foregroundStyle(themeMgr.color(.rpm))
-                        }
-                        Slider(value: $dashScale, in: 0.70...1.30, step: 0.01)
-                            .tint(themeMgr.color(.rpm))
-
-                        HStack(spacing: 8) {
-                            Button("−5%") {
-                                dashScale = max(0.70, dashScale - 0.05)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-
-                            Button("−1%") {
-                                dashScale = max(0.70, dashScale - 0.01)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-
-                            Spacer()
-
-                            Button("+1%") {
-                                dashScale = min(1.30, dashScale + 0.01)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-
-                            Button("+5%") {
-                                dashScale = min(1.30, dashScale + 0.05)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-
-                            Button("重置") {
-                                dashScale = 1.0
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            Text(layoutSummary)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 } header: {
                     Text("个性化")
                 } footer: {
-                    Text("仪表尺寸：默认按屏幕自动适配。如果觉得内容偏大顶到边、或者偏小留白多，在这里微调。\n范围 ×0.70 ~ ×1.30，改完立刻生效。")
+                    Text("仪表布局：横纵单独缩放 + 上下左右挪动，带实时预览。觉得内容顶边或留白多就在这里调。")
                 }
 
                 Section {
@@ -1587,6 +1565,9 @@ struct SettingsView: View {
             .onAppear { url = mgr.serverBaseURL }
             .sheet(isPresented: $showAppearance) {
                 AppearanceView(themeMgr: themeMgr)
+            }
+            .sheet(isPresented: $showDashLayout) {
+                DashLayoutEditorView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)
