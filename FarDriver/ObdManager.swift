@@ -180,6 +180,14 @@ final class ObdManager: NSObject, ObservableObject {
     private(set) var txNeedsResponse = false
     /// 接收缓冲：BLE 会把一条响应拆包，必须攒到 '>' 才算完整
     private var rxBuffer = ""
+    /// 发送队列：上一条命令没回来之前，后续命令排队等
+    private var sendQueue: [(String, TimeInterval, ([UInt8]?) -> Void)] = []
+    /// 已经为某个服务启动过握手（防止一个设备的多个服务重复初始化）
+    private var initStarted = false
+    /// 所有候选串口服务（握手失败时换下一个重试）
+    private var candidateChars: [(write: CBCharacteristic, notify: CBCharacteristic?)] = []
+    /// 当前试到第几个候选
+    private var candidateIndex = 0
 
     /// 已发现的设备（UI 列表用）
     @Published var discovered: [(id: UUID, name: String, rssi: Int)] = []
@@ -270,35 +278,57 @@ final class ObdManager: NSObject, ObservableObject {
     // MARK: - 发命令
 
     /// 发一条 ELM327 命令（自动加 \r），超时回调 nil
+    /// 发送一条 ELM327 命令
+    ///
+    /// ⚠️ 关键：必须「等上一条响应回来或超时」才能发下一条。
+    /// ELM327 是单线程串口设备，连发会丢命令——
+    /// 之前握手只收到 ATZ 一条回应，就是因为后续命令被冲掉了。
     private func send(_ cmd: String, timeout: TimeInterval = 2.0,
                       completion: @escaping ([UInt8]?) -> Void) {
         guard let p = peripheral, let ch = txChar else {
             completion(nil)
             return
         }
+
+        // 上一条还没结束 → 排队，等它完成后自动发
+        if pendingCommand != nil {
+            sendQueue.append((cmd, timeout, completion))
+            return
+        }
+
         pendingTimer?.invalidate()
         pendingCommand = cmd
         pendingHandler = { bytes in completion(bytes) }
 
         let payload = (cmd + "\r").data(using: .ascii) ?? Data()
         logTx(cmd)
-        // 大多数 ELM327 支持不带响应；如果不支持也无害
         p.writeValue(payload, for: ch,
                      type: txNeedsResponse ? .withResponse : .withoutResponse)
 
-        // 用 Timer(timeInterval:...) + RunLoop 而不是 scheduledTimer，
-        // 避免 Swift 6 严格并发对 @Sendable 闭包的限制
+        startPendingTimer(timeout)
+    }
+
+    /// 启动超时计时器
+    private func startPendingTimer(_ timeout: TimeInterval) {
+        pendingTimer?.invalidate()
         let t = Timer(timeInterval: timeout, repeats: false) { [weak self] _ in
             guard let self else { return }
-            if self.pendingCommand != nil {
-                self.pendingCommand = nil
-                let h = self.pendingHandler
-                self.pendingHandler = nil
-                h?(nil)
-            }
+            guard self.pendingCommand != nil else { return }
+            self.pendingCommand = nil
+            let h = self.pendingHandler
+            self.pendingHandler = nil
+            h?(nil)
+            self.drainSendQueue()
         }
         RunLoop.main.add(t, forMode: .common)
         pendingTimer = t
+    }
+
+    /// 从排队里取下一条发
+    private func drainSendQueue() {
+        guard pendingCommand == nil, !sendQueue.isEmpty else { return }
+        let (cmd, t, done) = sendQueue.removeFirst()
+        send(cmd, timeout: t, completion: done)
     }
 
     // MARK: - 初始化
@@ -307,25 +337,51 @@ final class ObdManager: NSObject, ObservableObject {
         status = .initializing
         ready = false
         handshakeLog.removeAll()
-        handshakeLog.append("开始握手（\(handshakeLog.isEmpty ? "新连接" : "")）")
+        handshakeLog.append("开始握手")
 
         // 依次握手，全部完成后再开轮询
+        //
+        // 注意：ATZ 之后 ELM327 会清空输入缓冲，
+        // 所以给 ATZ 留足时间，后面的指令间隔短一点。
         let steps: [(String, TimeInterval)] = [
-            ("ATZ", 2.5),      // 复位
-            ("ATE0", 1.0),     // 关回声
+            ("ATZ", 3.0),      // 复位（这条最耗时，给足 3 秒）
+            ("ATE0", 1.2),     // 关回声
             ("ATL0", 1.0),     // 关换行
             ("ATS0", 1.0),     // 关空格
             ("ATH0", 1.0),     // 关 CAN 头
-            ("ATSP0", 1.5),    // 自动选协议
-            ("0100", 2.0),     // 探测协议：问支持的 PID，能回应说明通了
+            ("ATSP0", 2.0),    // 自动选协议
+            ("0100", 3.0),     // 探测协议：问支持的 PID
         ]
+
+        var okCount = 0
 
         func run(_ index: Int) {
             guard index < steps.count else {
+                // ── 握手结束：判断要不要换服务重试 ──
+                if okCount == 0, candidateIndex + 1 < candidateChars.count {
+                    // 这个服务完全没回应，换下一个候选
+                    candidateIndex += 1
+                    let next = candidateChars[candidateIndex]
+                    handshakeLog.append("当前服务无回应，换下一个服务重试（\(candidateIndex + 1)/\(candidateChars.count)）")
+                    if let p = peripheral {
+                        txChar = next.write
+                        txNeedsResponse = next.write.properties.contains(.write)
+                        notifyChar = next.notify
+                        p.setNotifyValue(true, for: next.notify ?? next.write)
+                    }
+                    // 重跑一遍握手（initStarted 保持 true，不再重复收集候选）
+                    beginInit()
+                    return
+                }
+
                 ready = true
                 status = .connected
                 unsupported.removeAll()
-                handshakeLog.append("握手完成，开始轮询")
+                handshakeLog.append("握手完成（\(okCount)/\(steps.count) 条有回应）")
+                if okCount == 0 {
+                    handshakeLog.append("⚠️ 所有服务都没回应，适配器可能不兼容")
+                    errorMsg = "适配器没回应，试试断开重连"
+                }
                 startPolling()
                 return
             }
@@ -335,6 +391,7 @@ final class ObdManager: NSObject, ObservableObject {
                 guard let self else { return }
                 let ms = Int(Date().timeIntervalSince(sentAt) * 1000)
                 if let bytes, !bytes.isEmpty {
+                    okCount += 1
                     self.handshakeLog.append("\(cmd) → 收到 \(bytes.count) 字节 (跳过 \(ms)ms)")
                 } else if bytes != nil {
                     self.handshakeLog.append("\(cmd) → 空回应 (跳过 \(ms)ms)")
@@ -583,6 +640,10 @@ extension ObdManager: CBCentralManagerDelegate {
         txChar = nil
         notifyChar = nil
         rxBuffer = ""
+        sendQueue.removeAll()
+        initStarted = false
+        candidateChars.removeAll()
+        candidateIndex = 0
         stopPolling()
         status = .disconnected
         if let e = error {
@@ -614,55 +675,65 @@ extension ObdManager: CBPeripheralDelegate {
                     error: Error?) {
         guard let chars = service.characteristics else { return }
 
-        // 常见的 BLE 串口特征 UUID：
-        //   FFE0 服务 → FFE1（读写一体，最常见）
-        //   Nordic UART → 6E400003(TX notify) / 6E400002(RX write)
-        //   有些用 FFF0 服务 → FFF1/FFF2
         let uuid = service.uuid.uuidString.uppercased()
-        let isSerialService = uuid.contains("FFE0")
+        appendLog("< 服务 \(uuid) 有 \(chars.count) 个特征")
+
+        // ── 只认已连接的串口服务，避免重复初始化 ──
+        //
+        // ⚠️ 这台 OBDII 有 FFF0 和 AE00 两个服务，
+        //    之前每个服务的回调都会触发 beginInit()，
+        //    结果握手被并发跑了好几遍，互相把 pendingCommand 覆盖掉，
+        //    表现就是只有第一条 ATZ 有回应，后面全部超时。
+        if ready || initStarted {
+            return
+        }
+        initStarted = true
+
+        // 已知的 BLE 串口特征：
+        //   FFE0 → FFE1
+        //   FFF0 → FFF1/FFF2   ← 这台是这种
+        //   AE00 → AE01(写) / AE02(通知)  ← 这台实际用的是这个
+        //   Nordic → 6E400002 / 6E400003
+        let isSerial = uuid.contains("FFE0")
             || uuid.contains("FFF0")
+            || uuid.contains("AE00")
             || uuid.contains("6E400001")
-            || uuid.contains("FF00")
 
         var writeChar: CBCharacteristic?
-        var notifyChar: CBCharacteristic?
+        var notifChar: CBCharacteristic?
 
         for c in chars {
             let canWrite = c.properties.contains(.write)
                 || c.properties.contains(.writeWithoutResponse)
             let canNotify = c.properties.contains(.notify)
                 || c.properties.contains(.indicate)
-
             if canWrite, writeChar == nil { writeChar = c }
-            if canNotify, notifyChar == nil { notifyChar = c }
+            if canNotify, notifChar == nil { notifChar = c }
         }
 
-        // FFE1 这种读写一体的特征，既是写也是通知
-        if writeChar == nil {
-            // 退一步：任一可写特征
-            writeChar = chars.first {
-                $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse)
-            }
-        }
+        // 串口服务里优先；非串口服务只在还没有 tx 时兜底
+        guard let w = writeChar else { return }
+        if !isSerial && txChar != nil { return }
 
-        guard let w = writeChar else {
-            // 这个服务没有可写特征，等其它服务
+        // 收集所有候选（握手失败时依次尝试）
+        candidateChars.append((write: w, notify: notifChar))
+
+        // 如果还没开始过握手，就用这个服务的特征起手
+        if initStarted, txChar != nil {
+            appendLog("< 已记录候选服务 \(uuid)，当前握手不受影响")
             return
         }
 
         txChar = w
-        // 记下写入方式：有 write 就用 withResponse 更可靠，否则用 withoutResponse
         txNeedsResponse = w.properties.contains(.write)
 
-        // 优先用同服务的 notify 特征收数据；FFE1 自己就是
-        let notifyTarget = notifyChar ?? w
-        self.notifyChar = notifyTarget
-        peripheral.setNotifyValue(true, for: notifyTarget)
+        let target = notifChar ?? w
+        notifyChar = target
+        peripheral.setNotifyValue(true, for: target)
 
-        // 只在串口服务上启动初始化，避免在无关服务上重复触发
-        if isSerialService || txChar != nil {
-            beginInit()
-        }
+        appendLog("< 选用 写=\(w.uuid.uuidString) 通知=\(target.uuid.uuidString)")
+
+        beginInit()
     }
 
     func peripheral(_ peripheral: CBPeripheral,
@@ -702,5 +773,8 @@ extension ObdManager: CBPeripheralDelegate {
 
         let bytes = ObdParser.toBytes(full) ?? []
         h?(bytes)
+
+        // 上一条完成了，放行队列里的下一条
+        drainSendQueue()
     }
 }
