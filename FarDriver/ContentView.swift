@@ -780,6 +780,10 @@ struct SettingsView: View {
     @AppStorage("obdTankLitres") private var obdTankLitres: Double = 50
     /// 柴油车
     @AppStorage("obdIsDiesel") private var obdIsDiesel: Bool = false
+    /// 水温报警阈值（°C）
+    @AppStorage(AlarmThreshold.coolantHighKey) private var coolantHigh: Double = 105
+    /// 电瓶电压报警阈值（V）
+    @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
     /// OBD 管理器（设置页要显示连接状态和发现的设备）
     @ObservedObject private var obd = ObdManager.shared
 
@@ -1109,7 +1113,53 @@ struct SettingsView: View {
                         Text("OBD2 标准不直接给油量和功率。\n· 剩余油量 = 燃油液位% × 油箱容量\n· 功率按「燃油消耗率 × 热值 × 效率」估算，仅供参考")
                     }
 
+                    // 报警阈值（只影响 OBD2 模式的故障灯）
                     Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("水温高于")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text(String(format: "%.0f °C", coolantHigh))
+                                    .font(.system(.footnote, design: .monospaced))
+                                    .foregroundStyle(themeMgr.color(.warn))
+                            }
+                            Slider(value: $coolantHigh, in: 80...130, step: 1)
+                                .tint(themeMgr.color(.warn))
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("电瓶电压低于")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text(String(format: "%.1f V", batteryLow))
+                                    .font(.system(.footnote, design: .monospaced))
+                                    .foregroundStyle(themeMgr.color(.warn))
+                            }
+                            Slider(value: $batteryLow, in: 9.0...13.0, step: 0.1)
+                                .tint(themeMgr.color(.warn))
+                        }
+
+                        Button {
+                            coolantHigh = 105
+                            batteryLow = 11.8
+                        } label: {
+                            Label("恢复默认（105°C / 11.8V）", systemImage: "arrow.counterclockwise")
+                        }
+                    } header: {
+                        Text("故障灯阈值")
+                    } footer: {
+                        Text("超过水温阈值 → 水温灯亮\n低于电压阈值 → 电瓶灯亮\n\n这些阈值只管 OBD2 模式；远驱模式仍按 MOS 温度和电量判断。")
+                    }
+                }
+
+                // ── 故障码：两种模式都能用 ──
+                //
+                // OBD2 模式：走 ELM327 读车辆 ECU 的 DTC
+                // 远驱模式：读控制器的故障码
+                Section {
+                    if dataSource == .obd2 {
                         Button {
                             ObdManager.shared.readDtc()
                         } label: {
@@ -1131,6 +1181,10 @@ struct SettingsView: View {
                                         .foregroundStyle(themeMgr.secondary)
                                 }
                             }
+                        } else if obdConnected, ObdManager.shared.dtcReadAt != nil {
+                            Label("没有故障码", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(themeMgr.color(.ok))
+                                .font(.subheadline)
                         }
 
                         if let at = ObdManager.shared.dtcReadAt {
@@ -1151,11 +1205,42 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(themeMgr.color(.warn))
                         }
-                    } header: {
-                        Text("故障码")
-                    } footer: {
-                        Text("清除故障码会同时清掉「就绪状态」，年检前请勿清除。")
+                    } else {
+                        // 远驱模式：直接显示控制器上报的故障
+                        HStack {
+                            Text("当前状态")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            if mgr.data.hasFault {
+                                Text(mgr.data.faultText)
+                                    .font(.system(.footnote, design: .monospaced))
+                                    .foregroundStyle(themeMgr.color(.warn))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.trailing)
+                            } else {
+                                Text(mgr.status.isConnected ? "无故障" : "未连接")
+                                    .font(.footnote)
+                                    .foregroundStyle(mgr.status.isConnected ? themeMgr.color(.ok) : themeMgr.secondary)
+                            }
+                        }
+                        if mgr.data.faultFrameSeen, !mgr.data.faultRaw.isEmpty {
+                            HStack {
+                                Text("原始字节")
+                                    .font(.caption)
+                                    .foregroundStyle(themeMgr.secondary)
+                                Spacer()
+                                Text(mgr.data.faultRaw)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(themeMgr.secondary)
+                            }
+                        }
                     }
+                } header: {
+                    Text("故障码")
+                } footer: {
+                    Text(dataSource == .obd2
+                         ? "清除故障码会同时清掉「就绪状态」，年检前请勿清除。"
+                         : "远驱控制器不提供「清除故障码」接口，故障码由控制器检测到问题消失后自行消除。")
                 }
 
                 Section {

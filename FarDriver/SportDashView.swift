@@ -29,6 +29,9 @@ struct SportDashView: View {
     @ObservedObject var trip = TripMeter.shared
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
+    /// 报警阈值：改完设置立刻反映到故障灯
+    @AppStorage(AlarmThreshold.coolantHighKey) private var coolantHigh: Double = 105
+    @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
 
     // MARK: - 数据源
 
@@ -107,12 +110,12 @@ struct SportDashView: View {
         !sourceConnected || bootAnimating
     }
 
-    /// 电瓶故障灯：远驱模式看电量；OBD2 模式看电瓶电压低于 11.8V
+    /// 电瓶故障灯：远驱模式看电量；OBD2 模式看电瓶电压低于设定阈值
     private var batteryLampOn: Bool {
         if inSelfTest { return true }
         if isObd {
             guard let v = obd.reading.batteryVoltage else { return false }
-            return v < 11.8
+            return v < batteryLow
         }
         return batteryPercent < 0.26
     }
@@ -120,12 +123,12 @@ struct SportDashView: View {
     /// 水温故障灯
     ///
     /// 远驱模式：MOS 温度高于 50°C
-    /// OBD2 模式：发动机水温高于 105°C
+    /// OBD2 模式：发动机水温高于设定阈值（默认 105°C）
     private var coolantLampOn: Bool {
         if inSelfTest { return true }
         if isObd {
             guard let t = obd.reading.coolantTemp else { return false }
-            return t > 105
+            return t > coolantHigh
         }
         return mgr.data.mosTemp > 50
     }
@@ -1242,11 +1245,11 @@ struct SportDashView: View {
 
     private var obdLowVoltage: Bool {
         guard let v = obd.reading.batteryVoltage else { return false }
-        return v < 11.8
+        return v < batteryLow
     }
     private var obdHot: Bool {
         guard let t = obd.reading.coolantTemp else { return false }
-        return t > 105
+        return t > coolantHigh
     }
 
     private var powerText: String {
