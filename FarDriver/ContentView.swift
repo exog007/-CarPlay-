@@ -19,6 +19,11 @@ struct ContentView: View {
     @State private var showBms = false
     /// OBD2 竖屏数据页
     @State private var showObdGrid = false
+
+    /// 竖屏 + OBD2 时显示顶部发动机菜单图标
+    private var showEngineMenu: Bool {
+        !landscape && dataSource == .obd2
+    }
     @State private var landscapeRequested = false
 
     /// 「刚启动、正在等横屏生效」这个短暂窗口
@@ -107,6 +112,33 @@ struct ContentView: View {
                         }
                         .scrollContentBackground(.hidden)
                         .background(themeMgr.backgroundView)
+                        // 竖屏 + OBD2：右下角浮动按钮，作为数据页的第二入口
+                        // （顶部 toolbar 图标有时不显示，这里保证一定能打开）
+                        .overlay(alignment: .bottomTrailing) {
+                            if showEngineMenu {
+                                Button {
+                                    showObdGrid = true
+                                } label: {
+                                    Image(systemName: "engine.combustion")
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundStyle(obd.status.isConnected
+                                                         ? themeMgr.color(.ok)
+                                                         : themeMgr.foreground)
+                                        .padding(14)
+                                        .background(.ultraThinMaterial, in: Circle())
+                                        .overlay {
+                                            Circle()
+                                                .stroke((obd.status.isConnected
+                                                         ? themeMgr.color(.ok)
+                                                         : themeMgr.secondary).opacity(0.35),
+                                                        lineWidth: 1)
+                                        }
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.trailing, 16)
+                                .padding(.bottom, 16)
+                            }
+                        }
                     }
                 }
                 .navigationTitle(fullscreenDash ? "" : "Darian")
@@ -125,17 +157,24 @@ struct ContentView: View {
                         }
                     }
                     // 竖屏 + OBD2 模式：发动机图标作为数据菜单开关
-                    if !landscape && dataSource == .obd2 {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
+                    //
+                    // ⚠️ 不能把 ToolbarItem 包在 if 里——SwiftUI 对动态
+                    //   ToolbarItem 支持不好，经常不刷新。这里改成始终注册，
+                    //   用透明度和禁用状态控制「看不见」。
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            if dataSource == .obd2 && !landscape {
                                 showObdGrid = true
-                            } label: {
-                                Image(systemName: "engine.combustion")
-                                    .foregroundStyle(obd.status.isConnected
-                                                     ? themeMgr.color(.ok)
-                                                     : themeMgr.foreground)
                             }
+                        } label: {
+                            Image(systemName: "engine.combustion")
+                                .foregroundStyle(obd.status.isConnected
+                                                 ? themeMgr.color(.ok)
+                                                 : themeMgr.foreground)
                         }
+                        .opacity(showEngineMenu ? 1 : 0)
+                        .disabled(!showEngineMenu)
+                        .allowsHitTesting(showEngineMenu)
                     }
                     // 标准 ↔ 竞技 切换：横屏时一键换皮肤
                     if landscape {
