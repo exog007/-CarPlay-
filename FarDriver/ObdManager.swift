@@ -56,7 +56,7 @@ final class ObdManager: NSObject, ObservableObject {
         var isConnected: Bool { self == .connected }
     }
 
-    // MARK: - 持久化设置
+    // MARK: - 持久化设置（OBD2 独立记忆，和远驱完全分开）
 
     /// 自动连接上次的适配器
     static var autoConnect: Bool {
@@ -68,7 +68,7 @@ final class ObdManager: NSObject, ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "obdAutoConnect") }
     }
 
-    /// 上次连接的适配器
+    /// 上次连接的适配器 ID
     static var lastDeviceID: String? {
         get { UserDefaults.standard.string(forKey: "obdLastID") }
         set { UserDefaults.standard.set(newValue, forKey: "obdLastID") }
@@ -76,6 +76,31 @@ final class ObdManager: NSObject, ObservableObject {
     static var lastDeviceName: String? {
         get { UserDefaults.standard.string(forKey: "obdLastName") }
         set { UserDefaults.standard.set(newValue, forKey: "obdLastName") }
+    }
+
+    /// 有没有记住的设备
+    static var hasRememberedDevice: Bool {
+        guard let id = lastDeviceID, !id.isEmpty else { return false }
+        return UUID(uuidString: id) != nil
+    }
+
+    /// 记住的设备在系统里还在不在（配对被系统清掉时返回 false）
+    func rememberedDeviceAvailable() -> Bool {
+        guard let idStr = Self.lastDeviceID,
+              let id = UUID(uuidString: idStr) else { return false }
+        return !central.retrievePeripherals(withIdentifiers: [id]).isEmpty
+    }
+
+    /// 忘掉记住的设备
+    func forgetDevice() {
+        Self.lastDeviceID = nil
+        Self.lastDeviceName = nil
+        Self.autoConnect = false
+    }
+
+    /// 已保存过、最近连接过的设备名（界面上显示用）
+    var rememberedName: String {
+        Self.lastDeviceName ?? "未记住设备"
     }
 
     /// 汽油 / 柴油（影响功率估算）
@@ -137,6 +162,16 @@ final class ObdManager: NSObject, ObservableObject {
             return
         }
         discovered.removeAll()
+
+        // 先把「记住的设备」塞进列表最上面
+        // 这样即使适配器当前没广播，也能直接点它连接
+        if let idStr = Self.lastDeviceID,
+           let id = UUID(uuidString: idStr),
+           let p = central.retrievePeripherals(withIdentifiers: [id]).first {
+            let nm = p.name ?? Self.lastDeviceName ?? "已知适配器"
+            discovered.append((id: p.identifier, name: "\(nm)（已记住）", rssi: 0))
+        }
+
         scanning = true
         status = .scanning
         errorMsg = nil
@@ -388,9 +423,15 @@ extension ObdManager: CBCentralManagerDelegate {
         case .poweredOn:
             if Self.autoConnect, let idStr = Self.lastDeviceID,
                let id = UUID(uuidString: idStr) {
-                // 有记忆设备就直接连
+                // 有记忆设备就直接连；连不上（适配器没开机）就退回扫描模式
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.connect(to: id)
+                    guard let self else { return }
+                    if central.retrievePeripherals(withIdentifiers: [id]).isEmpty {
+                        // 系统里已经没有这台设备，边扫边等
+                        self.startScan()
+                    } else {
+                        self.connect(to: id)
+                    }
                 }
             }
         case .unauthorized:

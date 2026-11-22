@@ -1066,6 +1066,36 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(themeMgr.secondary)
                         }
+
+                        // ── 记住的设备 ──
+                        if ObdManager.hasRememberedDevice && !obdConnected {
+                            Divider()
+                            HStack(spacing: 8) {
+                                Image(systemName: "bookmark.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(themeMgr.color(.ok))
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("已记住")
+                                        .font(.caption2)
+                                        .foregroundStyle(themeMgr.secondary)
+                                    Text(ObdManager.shared.rememberedName)
+                                        .font(.footnote)
+                                        .foregroundStyle(themeMgr.foreground)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Button("连接") {
+                                    ObdManager.shared.reconnect()
+                                }
+                                .font(.footnote.bold())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 4)
+                                .background(themeMgr.color(.ok))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                                .buttonStyle(.plain)
+                            }
+                        }
                     } header: {
                         Text("OBD2 适配器")
                     } footer: {
@@ -1074,6 +1104,28 @@ struct SettingsView: View {
 
                     Section {
                         Toggle("自动连接上次的适配器", isOn: bindingObdAutoConnect)
+
+                        if ObdManager.hasRememberedDevice {
+                            HStack {
+                                Text("记住的设备")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text(ObdManager.shared.rememberedName)
+                                    .font(.footnote)
+                                    .foregroundStyle(themeMgr.secondary)
+                                    .lineLimit(1)
+                            }
+                            Button(role: .destructive) {
+                                ObdManager.shared.forgetDevice()
+                                obdAutoConnect = false
+                            } label: {
+                                Label("忘掉这个适配器", systemImage: "trash")
+                            }
+                        } else {
+                            Text("还没有记住的适配器，连一次之后会自动记住")
+                                .font(.caption)
+                                .foregroundStyle(themeMgr.secondary)
+                        }
 
                         HStack {
                             Text("油箱容量")
