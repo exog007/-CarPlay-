@@ -795,7 +795,6 @@ final class ObdManager: NSObject, ObservableObject {
             ("AT+CRYPT" + Self.randomCryptHex(), 2.5),   // ⭐ 授权握手
             ("0100", 12.0),
         ]
-        ]
 
         var okCount = 0
 
