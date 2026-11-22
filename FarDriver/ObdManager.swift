@@ -110,7 +110,11 @@ final class ObdManager: NSObject, ObservableObject {
     private var pollTimer: Timer?
     /// 正在等某个命令的响应
     private var pendingCommand: String?
-    private var pendingHandler: (([UInt8]) -> Void)?
+    /// 正在等某个命令的响应
+    ///
+    /// 注意：内部存的是「非可选」版本，把 nil 也当成一种值传进去
+    /// （超时 = 传空数组并在调用方判断），这样闭包类型简单，避免可选嵌套。
+    private var pendingHandler: (([UInt8]?) -> Void)?
     private var pendingTimer: Timer?
     /// 初始化完成后才开始轮询
     private var ready = false
