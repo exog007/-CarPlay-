@@ -785,6 +785,68 @@ struct SettingsView: View {
     @AppStorage("amapIOSKey") private var amapIOSKey: String = ""
     /// 地图引擎：auto / amap / apple
     @AppStorage("mapEngine") private var mapEngine: String = "auto"
+    /// 当前数据源（远驱 / OBD2）
+    @AppStorage("dataSource") private var dataSource: DataSource = .fardriver
+    /// OBD2 自动连接开关
+    @AppStorage("obdAutoConnect") private var obdAutoConnect: Bool = true
+    /// 油箱容量
+    @AppStorage("obdTankLitres") private var obdTankLitres: Double = 50
+    /// 柴油车
+    @AppStorage("obdIsDiesel") private var obdIsDiesel: Bool = false
+    /// OBD 管理器（设置页要显示连接状态和发现的设备）
+    @ObservedObject private var obd = ObdManager.shared
+
+    private var obdConnected: Bool { obd.status.isConnected }
+
+    private var obdFuelText: String {
+        guard let l = obd.fuelLitres else { return "—" }
+        return String(format: "%.1f L", l)
+    }
+
+    private var obdPowerText: String {
+        guard let kw = obd.estimatedPowerKW else { return "—" }
+        return String(format: "%.1f kW", kw)
+    }
+
+    private var bindingObdAutoConnect: Binding<Bool> {
+        Binding(get: { obdAutoConnect }, set: { obdAutoConnect = $0 })
+    }
+
+    private var bindingTank: Binding<Double> {
+        Binding(
+            get: { obdTankLitres },
+            set: { obdTankLitres = max(1, min(500, $0)); ObdManager.tankLitres = max(1, min(500, $0)) }
+        )
+    }
+
+    private var bindingDiesel: Binding<Bool> {
+        Binding(get: { obdIsDiesel }, set: { obdIsDiesel = $0; ObdManager.isDiesel = $0 })
+    }
+
+    /// 切换数据源：停掉另一个，启动新的
+    private func switchDataSource(to src: DataSource) {
+        guard src != dataSource else { return }
+        DataSource.current = src
+        dataSource = src
+
+        switch src {
+        case .fardriver:
+            // 断开 OBD2，启动控制器
+            ObdManager.shared.disconnect()
+            if BluetoothMemory.autoConnectBms {
+                AntBmsManager.shared.startScan()
+            }
+        case .obd2:
+            // 断开控制器和 BMS，启动 OBD2
+            ControllerManager.shared.disconnect()
+            AntBmsManager.shared.disconnect()
+            if obdAutoConnect, ObdManager.lastDeviceID != nil {
+                ObdManager.shared.reconnect()
+            } else {
+                ObdManager.shared.startScan()
+            }
+        }
+    }
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
     /// GPS 校准结果提示
@@ -995,6 +1057,196 @@ struct SettingsView: View {
                     Text("高德原生地图（动态仪表）")
                 } footer: {
                     Text("填了才会用高德原生地图（深色 3D + 3D 建筑 + 中文 POI），动态仪表会明显更像参考图。\n\n申请方法：高德开放平台 → 应用管理 → 我的应用 → 新建应用\n· 服务平台选「iOS平台」\n· Bundle ID 必须填 **com.exog007.fardriver**（不填收不到图）\n· 拿到 Key 填到上面\n\n注意：这个 Key 和上面的 Web 服务 Key 不是同一个，要单独申请。")
+                }
+
+                Section {
+                    ForEach(DataSource.allCases) { src in
+                        Button {
+                            switchDataSource(to: src)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: src.icon)
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(dataSource == src ? themeMgr.color(.ok) : themeMgr.secondary)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(src.title)
+                                        .font(.subheadline)
+                                        .foregroundStyle(themeMgr.foreground)
+                                    Text(src.subtitle)
+                                        .font(.caption2)
+                                        .foregroundStyle(themeMgr.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 4)
+                                if dataSource == src {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(themeMgr.color(.ok))
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("数据源")
+                } footer: {
+                    Text("只启用一个数据源，避免两个蓝牙设备抢连接。\n\n· 远驱：电动车/电摩，读控制器数据\n· OBD2：汽车/摩托车，用 ELM327 适配器（必须是 BLE 版，经典蓝牙版 iOS 连不上）\n\n切换后会自动断开另一个数据源。")
+                }
+
+                // OBD2 专属设置（只在 OBD2 模式下显示）
+                if dataSource == .obd2 {
+                    Section {
+                        HStack {
+                            Circle()
+                                .fill(obdConnected ? themeMgr.color(.ok) : Color.gray)
+                                .frame(width: 9, height: 9)
+                            Text(obdConnected ? "已连接 \(ObdManager.shared.deviceName)" : ObdManager.shared.status.text)
+                                .font(.subheadline)
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Button {
+                                if obdConnected {
+                                    ObdManager.shared.disconnect()
+                                } else if ObdManager.shared.scanning {
+                                    ObdManager.shared.stopScan()
+                                } else {
+                                    ObdManager.shared.startScan()
+                                }
+                            } label: {
+                                Text(obdConnected ? "断开"
+                                     : (ObdManager.shared.scanning ? "停止" : "搜索"))
+                                    .font(.subheadline.bold())
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 5)
+                                    .background(obdConnected
+                                                ? themeMgr.color(.warn).opacity(0.2)
+                                                : themeMgr.color(.rpm))
+                                    .foregroundStyle(obdConnected ? themeMgr.color(.warn) : .white)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        ForEach(ObdManager.shared.discovered, id: \.id) { dev in
+                            Button {
+                                ObdManager.shared.connect(to: dev.id)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "antenna.radiowaves.left.and.right")
+                                        .font(.caption)
+                                        .foregroundStyle(themeMgr.color(.rpm))
+                                    Text(dev.name)
+                                        .font(.footnote)
+                                        .foregroundStyle(themeMgr.foreground)
+                                    Spacer()
+                                    Text("\(dev.rssi) dBm")
+                                        .font(.caption2)
+                                        .foregroundStyle(themeMgr.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if !ObdManager.shared.scanning && ObdManager.shared.discovered.isEmpty && !obdConnected {
+                            Text("点「搜索」寻找 ELM327 适配器")
+                                .font(.caption)
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+                    } header: {
+                        Text("OBD2 适配器")
+                    } footer: {
+                        Text("适配器名字通常含 OBD / ELM / V-LINK / VGATE 等字样。\n连上后会自动初始化，约 3~5 秒开始出数据。")
+                    }
+
+                    Section {
+                        Toggle("自动连接上次的适配器", isOn: bindingObdAutoConnect)
+
+                        HStack {
+                            Text("油箱容量")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            TextField("50", value: bindingTank, format: .number.precision(.fractionLength(0...1)))
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .font(.system(.footnote, design: .monospaced))
+                                .frame(width: 70)
+                            Text("L")
+                                .font(.caption)
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+
+                        Toggle("柴油车（影响功率估算）", isOn: bindingDiesel)
+
+                        HStack {
+                            Text("剩余油量")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(obdFuelText)
+                                .font(.system(.footnote, design: .monospaced))
+                                .foregroundStyle(themeMgr.color(.ok))
+                        }
+                        HStack {
+                            Text("估算功率")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(obdPowerText)
+                                .font(.system(.footnote, design: .monospaced))
+                                .foregroundStyle(themeMgr.color(.power))
+                        }
+                    } header: {
+                        Text("OBD2 参数")
+                    } footer: {
+                        Text("OBD2 标准不直接给油量和功率。\n· 剩余油量 = 燃油液位% × 油箱容量\n· 功率按「燃油消耗率 × 热值 × 效率」估算，仅供参考")
+                    }
+
+                    Section {
+                        Button {
+                            ObdManager.shared.readDtc()
+                        } label: {
+                            Label("读取故障码", systemImage: "exclamationmark.triangle")
+                        }
+                        .disabled(!obdConnected)
+
+                        if !ObdManager.shared.dtcCodes.isEmpty {
+                            ForEach(ObdManager.shared.dtcCodes, id: \.self) { code in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(code)
+                                            .font(.system(.footnote, design: .monospaced).bold())
+                                            .foregroundStyle(themeMgr.color(.warn))
+                                        Spacer()
+                                    }
+                                    Text(ObdDtcText.describe(code))
+                                        .font(.caption2)
+                                        .foregroundStyle(themeMgr.secondary)
+                                }
+                            }
+                        }
+
+                        if let at = ObdManager.shared.dtcReadAt {
+                            Text("最后读取：\(at.formatted(date: .omitted, time: .standard))")
+                                .font(.caption2)
+                                .foregroundStyle(themeMgr.secondary)
+                        }
+
+                        Button(role: .destructive) {
+                            ObdManager.shared.clearDtc()
+                        } label: {
+                            Label("清除故障码", systemImage: "trash")
+                        }
+                        .disabled(!obdConnected)
+
+                        if let err = ObdManager.shared.errorMsg {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundStyle(themeMgr.color(.warn))
+                        }
+                    } header: {
+                        Text("故障码")
+                    } footer: {
+                        Text("清除故障码会同时清掉「就绪状态」，年检前请勿清除。")
+                    }
                 }
 
                 Section {

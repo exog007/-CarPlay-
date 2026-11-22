@@ -17,11 +17,16 @@ struct FarDriverApp: App {
         // 高德地图 SDK：apiKey 必须在创建 MAMapView 之前设好
         AMapView.configureIfNeeded()
 
-        // ── ANT BMS 预加载 ──
+        // ── 按数据源预连接 ──
         //
-        // 开机就开始扫描并自动连接，不等用户打开 BMS 页面。
-        // 这样打开页面时数据已经在刷新了，不会先看半天骨架屏。
-        if BluetoothMemory.autoConnectBms {
+        // 只启动设置里选中的那一个，避免两个蓝牙设备抢连接。
+        if DataSource.isObd {
+            // OBD2：ObdManager 在 init 里检测到蓝牙可用后会自动连上次的适配器
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                _ = ObdManager.shared
+            }
+        } else if BluetoothMemory.autoConnectBms {
+            // 远驱模式：预加载 BMS，打开页面直接有数据
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 AntBmsManager.shared.startScan()
             }
@@ -49,11 +54,19 @@ struct FarDriverApp: App {
             ContentView()
         }
         .onChange(of: scenePhase) { _, phase in
-            // 回到前台时确保在扫描/上传
+            // 回到前台时确保在扫描
             if phase == .active {
-                let m = ControllerManager.shared
-                if m.autoConnect && !m.status.isConnected {
-                    m.startScan()
+                if DataSource.isObd {
+                    let o = ObdManager.shared
+                    if o.status == .disconnected, ObdManager.autoConnect,
+                       ObdManager.lastDeviceID != nil {
+                        o.reconnect()
+                    }
+                } else {
+                    let m = ControllerManager.shared
+                    if m.autoConnect && !m.status.isConnected {
+                        m.startScan()
+                    }
                 }
             }
         }

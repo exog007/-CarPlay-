@@ -27,17 +27,44 @@ struct SportDashView: View {
     @ObservedObject var weather = WeatherService.shared
     @ObservedObject var bms = AntBmsManager.shared
     @ObservedObject var trip = TripMeter.shared
+    /// OBD2 数据（汽车/摩托模式）
+    @ObservedObject var obd = ObdManager.shared
+
+    // MARK: - 数据源
+
+    /// 当前是不是 OBD2 模式
+    ///
+    /// OBD2 模式下：
+    ///   · 转速来自发动机 ECU（不是电机）
+    ///   · 车速优先用 OBD2 的，没有则用 GPS
+    ///   · 隐藏电机温度、BMS、档位等电动车专属区块
+    ///   · 用「燃油表」代替「电量表」
+    private var isObd: Bool { DataSource.isObd }
+
+    /// 是否已经拿到数据（决定故障灯自检还是正常）
+    private var sourceConnected: Bool {
+        isObd ? obd.status.isConnected : mgr.status.isConnected
+    }
 
     /// 融合车速
     private var speed: Double {
-        gps.fused(with: mgr.data.speed)
+        if isObd {
+            // OBD2 车速是 ECU 给的，比 GPS 更贴仪表读数；没有就用 GPS
+            if let s = obd.reading.speedKmh { return s }
+            return gps.smoothSpeed
+        }
+        return gps.fused(with: mgr.data.speed)
     }
 
     private var theme: AppTheme { themeMgr.theme }
 
     /// 放大后的转速
     private var displayRpm: Double {
-        mgr.data.rpm * theme.rpmMultiplier
+        if isObd {
+            // OBD2 的转速就是真实 r/min，不需要 ×10 那套放大
+            return obd.reading.rpm ?? 0
+        }
+        return mgr.data.rpm * theme.rpmMultiplier
     }
 
     /// 转速百分比（自检动画期间跟着动画走）
@@ -48,8 +75,13 @@ struct SportDashView: View {
 
     /// 电量百分比（按电压阈值线性插值）
     ///
-    /// 没连控制器时电压是 0，表针强制归零（指向 E）。
+    /// OBD2 模式改用「燃油液位」；远驱模式仍是电池电压换算。
+    /// 没连上时表针强制归零（指向 E）。
     private var batteryPercent: Double {
+        if isObd {
+            guard obd.status.isConnected, let pct = obd.reading.fuelLevel else { return 0 }
+            return min(max(pct / 100.0, 0), 1)
+        }
         guard mgr.status.isConnected else { return 0 }
         return BatteryPercent.compute(voltage: mgr.data.voltage,
                                       full: theme.battFullVoltage,
@@ -67,38 +99,58 @@ struct SportDashView: View {
 
     // MARK: - 故障灯状态
 
-    /// 自检模式：还没连上控制器，或者开机自检动画还在播放时，所有灯全亮
+    /// 自检模式：还没连上数据源，或者开机自检动画还在播放时，所有灯全亮
     ///
     /// 这是老车/新车的自检行为——点火瞬间所有灯亮一遍，确认灯本身没坏。
-    /// 连上控制器后立刻切到正常模式，按真实数据决定谁亮。
+    /// 连上后立刻切到正常模式，按真实数据决定谁亮。
     private var inSelfTest: Bool {
-        !mgr.status.isConnected || bootAnimating
+        !sourceConnected || bootAnimating
     }
 
-    /// 电瓶故障灯：电量低于 26%
+    /// 电瓶故障灯：远驱模式看电量；OBD2 模式看电瓶电压低于 11.8V
     private var batteryLampOn: Bool {
         if inSelfTest { return true }
+        if isObd {
+            guard let v = obd.reading.batteryVoltage else { return false }
+            return v < 11.8
+        }
         return batteryPercent < 0.26
     }
 
-    /// 水温故障灯：MOS 温度高于 50°C
+    /// 水温故障灯
+    ///
+    /// 远驱模式：MOS 温度高于 50°C
+    /// OBD2 模式：发动机水温高于 105°C
     private var coolantLampOn: Bool {
         if inSelfTest { return true }
+        if isObd {
+            guard let t = obd.reading.coolantTemp else { return false }
+            return t > 105
+        }
         return mgr.data.mosTemp > 50
     }
 
-    /// 发动机故障灯：控制器 MOS 温度到达 60°C
+    /// 发动机故障灯
+    ///
+    /// 远驱模式：控制器 MOS 温度到达 60°C
+    /// OBD2 模式：读到故障码就亮（这才是真正的「检查发动机」灯）
     private var engineLampOn: Bool {
         if inSelfTest { return true }
+        if isObd {
+            return !obd.dtcCodes.isEmpty
+        }
         return mgr.data.mosTemp >= 60
     }
 
-    /// 刹车灯：直接读控制器上报的刹车信号（0xE2 的 p[3] bit7）
+    /// 刹车灯
     ///
-    /// 实测：捏刹车 p[3] = 0x80，松开 p[3] = 0x00。
-    /// 不再靠「掉速」推断，按住刹车不走也能亮。
+    /// 远驱模式：直接读控制器上报的刹车信号（0xE2 的 p[3] bit7）
+    /// OBD2 模式：标准 PID 没有刹车信号，用「速度明显下降」粗略推断
     private var brakeLampOn: Bool {
         if inSelfTest { return true }
+        if isObd {
+            return obd.reading.speedKmh == 0 && obd.reading.rpm != nil && (obd.reading.rpm ?? 0) > 600
+        }
         guard mgr.status.isConnected, mgr.data.e2Seen else { return false }
         return mgr.data.braking
     }
@@ -568,10 +620,10 @@ struct SportDashView: View {
 
     private var middleRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            // 左侧：控制器连接指示灯
+            // 左侧：数据源连接指示灯
             VStack(spacing: 4) {
                 Circle()
-                    .fill(mgr.status.isConnected ? themeMgr.color(.ok) : amber.opacity(0.25))
+                    .fill(sourceConnected ? themeMgr.color(.ok) : amber.opacity(0.25))
                     .frame(width: 9, height: 9)
                     .overlay {
                         Circle().stroke(.white.opacity(0.5), lineWidth: 0.5)
@@ -597,8 +649,13 @@ struct SportDashView: View {
             Spacer(minLength: 0)
 
             // 中间列：档位框垂直居中，小计里程贴在底部
+            // OBD2 模式没有「档位」概念，用变速箱档位（PID 0xA4）替代，没有就隐藏
             ZStack(alignment: .center) {
-                gearBoxes
+                if !isObd {
+                    gearBoxes
+                } else {
+                    obdGearBoxes
+                }
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
                     tripReadout
@@ -612,8 +669,9 @@ struct SportDashView: View {
 
             // 右侧：BMS 温度 + 油表
             // BMS 块靠近档位一侧，油表占最右边，给足空间
+            // OBD2 模式不显示 BMS（汽车没有保护板），油表改用燃油液位
             HStack(alignment: .center, spacing: 10) {
-                if showBmsBlock {
+                if showBmsBlock && !isObd {
                     bmsMosTempBlock
                         .offset(x: -6)
                 }
@@ -622,6 +680,39 @@ struct SportDashView: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// OBD2 模式的档位块
+    ///
+    /// 标准 OBD2 没有档位 PID，大多数车读不到。
+    /// 这里只在拿到故障码时显示一个提示块，其余情况留空，避免显示假档位。
+    private var obdGearBoxes: some View {
+        VStack(spacing: 3) {
+            if !obd.dtcCodes.isEmpty {
+                Text("DTC")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(red)
+                Text("\(obd.dtcCodes.count)")
+                    .font(.system(size: 22, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(red)
+                Text("故障")
+                    .font(.system(size: 7))
+                    .foregroundStyle(red.opacity(0.8))
+            } else if obd.status.isConnected {
+                Text("OK")
+                    .font(.system(size: 18, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(themeMgr.color(.ok).opacity(0.85))
+                Text("无故障码")
+                    .font(.system(size: 7))
+                    .foregroundStyle(amber.opacity(0.55))
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(amber.opacity(0.25), lineWidth: 1)
+        }
     }
 
     /// BMS 温度块什么时候显示
@@ -904,42 +995,74 @@ struct SportDashView: View {
 
     private var debugPinRow: some View {
         VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6) {
-                Text("E2")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(amber.opacity(0.5))
-                Text(mgr.data.e2Raw.isEmpty ? "—" : mgr.data.e2Raw)
-                    .font(.system(size: 7, design: .monospaced))
-                    .foregroundStyle(amber.opacity(0.75))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-            }
-            HStack(spacing: 6) {
-                Text("EE")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(amber.opacity(0.5))
-                Text(mgr.data.eeRaw.isEmpty ? "—" : mgr.data.eeRaw)
-                    .font(.system(size: 7, design: .monospaced))
-                    .foregroundStyle(amber.opacity(0.75))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Text("pin=\(mgr.data.eePinType) bit=\(mgr.data.eePinBit)")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(cyan)
-            }
-            // 速度来源诊断：raw=原始转速值 rpm=换算后  spd=算出的时速
-            HStack(spacing: 6) {
-                Text("SPD")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(amber.opacity(0.5))
-                Text(String(format: "raw%d rpm%.0f spd%.1f",
-                            Int(mgr.data.rawRpm),
-                            mgr.data.rpm,
-                            mgr.data.speed))
-                    .font(.system(size: 7, design: .monospaced))
-                    .foregroundStyle(amber.opacity(0.75))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
+            if isObd {
+                // OBD2 模式：显示适配器状态和最近一次原始响应
+                HStack(spacing: 6) {
+                    Text("OBD")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.5))
+                    Text(obd.status.text)
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.75))
+                    if !obd.dtcCodes.isEmpty {
+                        Text("DTC:\(obd.dtcCodes.joined(separator: ","))")
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundStyle(red)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text("RAW")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.5))
+                    Text(obd.lastRaw.isEmpty
+                         ? "—"
+                         : obd.lastRaw.replacingOccurrences(of: "\r", with: " ")
+                                   .replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Text("E2")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.5))
+                    Text(mgr.data.e2Raw.isEmpty ? "—" : mgr.data.e2Raw)
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
+                HStack(spacing: 6) {
+                    Text("EE")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.5))
+                    Text(mgr.data.eeRaw.isEmpty ? "—" : mgr.data.eeRaw)
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                    Text("pin=\(mgr.data.eePinType) bit=\(mgr.data.eePinBit)")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(cyan)
+                }
+                // 速度来源诊断：raw=原始转速值 rpm=换算后  spd=算出的时速
+                HStack(spacing: 6) {
+                    Text("SPD")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.5))
+                    Text(String(format: "raw%d rpm%.0f spd%.1f",
+                                Int(mgr.data.rawRpm),
+                                mgr.data.rpm,
+                                mgr.data.speed))
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundStyle(amber.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -950,22 +1073,40 @@ struct SportDashView: View {
 
     private var bottomRow: some View {
         HStack(spacing: 0) {
-            bottomCell("电压", String(format: "%.1f", mgr.data.voltage), "V",
-                       themeMgr.color(.voltage))
-            divider
-            bottomCell("电流", String(format: "%.1f", mgr.data.current), "A",
-                       mgr.data.isRegen ? themeMgr.color(.ok) : themeMgr.color(.current))
-            divider
-            bottomCell("功率", powerText, "W",
-                       mgr.data.isRegen ? themeMgr.color(.ok) : amber)
-            divider
-            bottomCell("MOS", "\(mgr.data.mosTemp)", "°C",
-                       mgr.data.mosTemp > 60 ? red : themeMgr.color(.mosTemp))
-            divider
-            bottomCell("电机", "\(mgr.data.motorTemp)", "°C",
-                       mgr.data.motorTemp > 50 ? red : themeMgr.color(.motorTemp))
-            divider
-            bottomCell("平均", trip.avgPowerText, "W", themeMgr.color(.motorTemp))
+            if isObd {
+                // ── OBD2 模式：汽车/摩托的数据 ──
+                bottomCell("电瓶", obdVoltageText, "V",
+                           obdLowVoltage ? red : themeMgr.color(.voltage))
+                divider
+                bottomCell("水温", obdCoolantText, "°C",
+                           obdHot ? red : themeMgr.color(.current))
+                divider
+                bottomCell("进气", obdIntakeText, "°C", themeMgr.color(.motorTemp))
+                divider
+                bottomCell("节气门", obdThrottleText, "%", themeMgr.color(.rpm))
+                divider
+                bottomCell("负荷", obdLoadText, "%", amber)
+                divider
+                bottomCell("油耗", obdFuelText, "L", themeMgr.color(.ok))
+            } else {
+                // ── 远驱模式：电动车数据 ──
+                bottomCell("电压", String(format: "%.1f", mgr.data.voltage), "V",
+                           themeMgr.color(.voltage))
+                divider
+                bottomCell("电流", String(format: "%.1f", mgr.data.current), "A",
+                           mgr.data.isRegen ? themeMgr.color(.ok) : themeMgr.color(.current))
+                divider
+                bottomCell("功率", powerText, "W",
+                           mgr.data.isRegen ? themeMgr.color(.ok) : amber)
+                divider
+                bottomCell("MOS", "\(mgr.data.mosTemp)", "°C",
+                           mgr.data.mosTemp > 60 ? red : themeMgr.color(.mosTemp))
+                divider
+                bottomCell("电机", "\(mgr.data.motorTemp)", "°C",
+                           mgr.data.motorTemp > 50 ? red : themeMgr.color(.motorTemp))
+                divider
+                bottomCell("平均", trip.avgPowerText, "W", themeMgr.color(.motorTemp))
+            }
         }
         .frame(height: 42)
         .overlay(alignment: .top) {
@@ -973,6 +1114,43 @@ struct SportDashView: View {
                 .fill(amber.opacity(0.35))
                 .frame(height: 1)
         }
+    }
+
+    // MARK: OBD2 显示文字
+
+    private var obdVoltageText: String {
+        guard let v = obd.reading.batteryVoltage else { return "—" }
+        return String(format: "%.1f", v)
+    }
+    private var obdCoolantText: String {
+        guard let t = obd.reading.coolantTemp else { return "—" }
+        return String(format: "%.0f", t)
+    }
+    private var obdIntakeText: String {
+        guard let t = obd.reading.intakeTemp else { return "—" }
+        return String(format: "%.0f", t)
+    }
+    private var obdThrottleText: String {
+        guard let t = obd.reading.throttle else { return "—" }
+        return String(format: "%.0f", t)
+    }
+    private var obdLoadText: String {
+        guard let l = obd.reading.engineLoad else { return "—" }
+        return String(format: "%.0f", l)
+    }
+    /// 剩余油量（升），按「液位% × 油箱容量」估算
+    private var obdFuelText: String {
+        guard let l = obd.fuelLitres else { return "—" }
+        return String(format: "%.1f", l)
+    }
+
+    private var obdLowVoltage: Bool {
+        guard let v = obd.reading.batteryVoltage else { return false }
+        return v < 11.8
+    }
+    private var obdHot: Bool {
+        guard let t = obd.reading.coolantTemp else { return false }
+        return t > 105
     }
 
     private var powerText: String {
