@@ -112,7 +112,7 @@ struct BleInspectorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    private func charRow(_ item: CharInfo) -> some View {
+    private func charRow(_ item: ObdManager.CharInfo) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(item.serviceUUID)
