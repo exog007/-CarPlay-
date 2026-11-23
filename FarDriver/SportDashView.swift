@@ -1266,20 +1266,16 @@ struct SportDashView: View {
     private var bottomRow: some View {
         HStack(spacing: 0) {
             if isObd {
-                // ── OBD2 模式：汽车/摩托的数据 ──
-                bottomCell("电瓶", obdVoltageText, "V",
-                           obdLowVoltage ? red : themeMgr.color(.voltage))
-                divider
-                bottomCell("水温", obdCoolantText, "°C",
-                           obdHot ? red : themeMgr.color(.current))
-                divider
-                bottomCell("进气", obdIntakeText, "°C", themeMgr.color(.motorTemp))
-                divider
-                bottomCell("节气门", obdThrottleText, "%", themeMgr.color(.rpm))
-                divider
-                bottomCell("负荷", obdLoadText, "%", amber)
-                divider
-                bottomCell("油位", obdFuelLevelText, "%", themeMgr.color(.ok))
+                // ── OBD2 模式：按车实际支持的能力动态铺满 ──
+                //
+                // 汽车通常有水温/电压/节气门/负荷/进气/油位六项；
+                // 摩托车往往只有水温 + 电压，其余用转速/车速补位，
+                // 避免满屏 «—»。
+                ForEach(Array(obdCells.enumerated()), id: \.offset) { idx, cell in
+                    if idx > 0 { divider }
+                    bottomCell(cell.title, cell.value, cell.unit,
+                               cell.isAlert ? red : obdCellColor(cell.kind))
+                }
             } else {
                 // ── 远驱模式：电动车数据 ──
                 bottomCell("电压", String(format: "%.1f", mgr.data.voltage), "V",
@@ -1309,6 +1305,85 @@ struct SportDashView: View {
     }
 
     // MARK: OBD2 显示文字
+
+    /// 竞技仪表底部的动态格子
+    ///
+    /// 按车实际能读到的数据挑选，摩托车也不会满屏 «—»。
+    private var obdCells: [ObdDashCell] {
+        let r = obd.reading
+        let kinds = ObdCellSelector.pick(
+            maxCells: 6,
+            hasVoltage: obdVoltageText != "—",
+            hasCoolant: r.coolantTemp != nil,
+            hasIntake: r.intakeTemp != nil,
+            hasThrottle: r.throttle != nil,
+            hasLoad: r.engineLoad != nil,
+            hasFuel: obdFuelLevelText != "—"
+        )
+
+        return kinds.map { k in
+            switch k {
+            case .coolant:
+                return ObdDashCell(kind: .coolant, title: "水温",
+                                   value: obdCoolantText, unit: "°C",
+                                   isAlert: obdHot)
+            case .voltage:
+                return ObdDashCell(kind: .voltage, title: "电瓶",
+                                   value: obdVoltageText, unit: "V",
+                                   isAlert: obdLowVoltage)
+            case .throttle:
+                return ObdDashCell(kind: .throttle, title: "节气门",
+                                   value: obdThrottleText, unit: "%", isAlert: false)
+            case .load:
+                return ObdDashCell(kind: .load, title: "负荷",
+                                   value: obdLoadText, unit: "%", isAlert: false)
+            case .intake:
+                return ObdDashCell(kind: .intake, title: "进气",
+                                   value: obdIntakeText, unit: "°C", isAlert: false)
+            case .fuelLevel:
+                return ObdDashCell(kind: .fuelLevel, title: "油位",
+                                   value: obdFuelLevelText, unit: "%", isAlert: false)
+            case .rpm:
+                return ObdDashCell(kind: .rpm, title: "转速",
+                                   value: String(format: "%.0f", r.rpm ?? 0),
+                                   unit: "rpm", isAlert: false)
+            case .speed:
+                return ObdDashCell(kind: .speed, title: "车速",
+                                   value: String(format: "%.0f", r.speedKmh ?? 0),
+                                   unit: "km/h", isAlert: false)
+            case .maf:
+                return ObdDashCell(kind: .maf, title: "空流",
+                                   value: r.maf.map { String(format: "%.2f", $0) } ?? "—",
+                                   unit: "g/s", isAlert: false)
+            case .fuelRate:
+                return ObdDashCell(kind: .fuelRate, title: "油耗",
+                                   value: r.fuelRate.map { String(format: "%.1f", $0) } ?? "—",
+                                   unit: "L/h", isAlert: false)
+            case .runTime, .baro:
+                // 这两项暂未接入 reading，用转速占位
+                return ObdDashCell(kind: .rpm, title: "转速",
+                                   value: String(format: "%.0f", r.rpm ?? 0),
+                                   unit: "rpm", isAlert: false)
+            }
+        }
+    }
+
+    /// 各种格子的配色
+    private func obdCellColor(_ k: ObdDashCell.Kind) -> Color {
+        switch k {
+        case .coolant:  return themeMgr.color(.current)
+        case .voltage:  return themeMgr.color(.voltage)
+        case .intake:   return themeMgr.color(.motorTemp)
+        case .throttle: return themeMgr.color(.rpm)
+        case .load:     return amber
+        case .fuelLevel: return themeMgr.color(.ok)
+        case .rpm:      return themeMgr.color(.rpm)
+        case .speed:    return themeMgr.color(.ok)
+        case .maf:      return themeMgr.color(.power)
+        case .fuelRate: return themeMgr.color(.ok)
+        case .runTime, .baro: return themeMgr.secondary
+        }
+    }
 
     private var obdVoltageText: String {
         guard let v = obd.reading.batteryVoltage else { return "—" }
