@@ -38,7 +38,7 @@ struct DashThemeEditorSection: View {
                     Image(systemName: dataSource.icon)
                         .foregroundStyle(themeMgr.color(.ok))
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("正在编辑：\(dataSource == .obd2 ? "OBD2 仪表" : "电动车仪表")")
+                        Text("正在编辑：\(dataSource.isObdFamily ? (dataSource == .motorcycle ? "摩托车仪表" : "OBD2 仪表") : "电动车仪表")")
                             .font(.subheadline)
                             .foregroundStyle(themeMgr.foreground)
                         Text("两套独立保存，切换数据源自动切换主题")
@@ -395,7 +395,7 @@ struct DashThemeEditorSection: View {
             }
             // 长边压到 2000 以内，避免背景图太大拖慢渲染
             let resized = img.downscaled(maxSide: 2000)
-            let name = DashThemeStore.saveImage(resized, prefix: dataSource == .obd2 ? "obd" : "fd")
+            let name = DashThemeStore.saveImage(resized, prefix: dataSource.storageKey)
             await MainActor.run {
                 if let name {
                     DashThemeStore.deleteMedia(theme.photoName)
@@ -441,7 +441,7 @@ struct DashThemeEditorSection: View {
             }
 
             let name = DashThemeStore.saveVideo(from: tmp,
-                                                prefix: dataSource == .obd2 ? "obd" : "fd")
+                                                prefix: dataSource.storageKey)
             try? FileManager.default.removeItem(at: tmp)
 
             await MainActor.run {
@@ -469,7 +469,7 @@ struct DashThemeEditorSection: View {
                 .appendingPathComponent("themevid-\(UUID().uuidString).\(url.pathExtension.isEmpty ? "mp4" : url.pathExtension)")
             try? FileManager.default.copyItem(at: url, to: tmp)
             let name = DashThemeStore.saveVideo(from: tmp,
-                                                prefix: dataSource == .obd2 ? "obd" : "fd")
+                                                prefix: dataSource.storageKey)
             try? FileManager.default.removeItem(at: tmp)
             await MainActor.run {
                 if let name {

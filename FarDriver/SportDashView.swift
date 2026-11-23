@@ -65,7 +65,7 @@ struct SportDashView: View {
     ///   · 车速优先用 OBD2 的，没有则用 GPS
     ///   · 隐藏电机温度、BMS、档位等电动车专属区块
     ///   · 用「燃油表」代替「电量表」
-    private var isObd: Bool { dataSource == .obd2 }
+    private var isObd: Bool { dataSource.isObdFamily }
 
     /// 是否已经拿到数据（决定故障灯自检还是正常）
     private var sourceConnected: Bool {

@@ -1,45 +1,72 @@
 //
 //  DataSource.swift
-//  数据源选择：远驱控制器 / OBD2 汽车摩托
+//  数据源选择：远驱控制器 / OBD2 汽车 / 摩托车
 //
-//  两者互斥：选哪个就只启动哪个，不会同时抢占蓝牙。
+//  三者互斥：选哪个就只启动哪个，不会同时抢占蓝牙。
+//
+//  OBD2 和摩托车共用同一套 ELM327 读取代码，
+//  但蓝牙记忆、协议、主题、仪表布局各自独立，
+//  这样汽车和摩托的适配器可以各自记住，互不干扰。
 //
 
 import Foundation
 import Combine
 
 enum DataSource: String, CaseIterable, Identifiable {
-    case fardriver = "fardriver"
-    case obd2      = "obd2"
+    /// 远驱控制器（电动车 / 电摩）
+    case fardriver  = "fardriver"
+    /// OBD2 汽车
+    case obd2       = "obd2"
+    /// OBD2 摩托车
+    ///
+    /// 和 obd2 走同一套 ELM327 协议，区别是：
+    ///   · 默认协议偏向 KWP2000 / ISO9141（摩托常用）
+    ///   · 独立的适配器记忆、主题、布局
+    ///   · 仪表上档位默认隐藏（摩托多为手动，且读不到 AID）
+    case motorcycle = "motorcycle"
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .fardriver: return "远驱控制器（电动车/电摩）"
-        case .obd2:      return "OBD2（汽车/摩托车）"
+        case .fardriver:  return "远驱控制器（电动车/电摩）"
+        case .obd2:       return "OBD2（汽车）"
+        case .motorcycle: return "OBD2（摩托车）"
         }
     }
 
     var shortTitle: String {
         switch self {
-        case .fardriver: return "远驱"
-        case .obd2:      return "OBD2"
+        case .fardriver:  return "远驱"
+        case .obd2:       return "OBD2"
+        case .motorcycle: return "摩托车"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .fardriver: return "通过远驱 BLE 控制器读取电压/电流/转速/温度"
-        case .obd2:      return "通过 ELM327 适配器读取转速/车速/水温/电瓶电压/故障码"
+        case .fardriver:
+            return "通过远驱 BLE 控制器读取电压/电流/转速/温度"
+        case .obd2:
+            return "通过 ELM327 适配器读取转速/车速/水温/电瓶电压/故障码"
+        case .motorcycle:
+            return "摩托车 OBD 适配器，支持 KWP2000 / ISO 9141"
         }
     }
 
     var icon: String {
         switch self {
-        case .fardriver: return "bolt.car.fill"
-        case .obd2:      return "car.fill"
+        case .fardriver:  return "bolt.car.fill"
+        case .obd2:       return "car.fill"
+        case .motorcycle: return "motorcycle.fill"
         }
+    }
+
+    /// 是不是 OBD 系列（汽车 + 摩托）
+    ///
+    /// 仪表据此隐藏电机 / BMS 区块，设置据此显示 OBD 相关选项。
+    var isObdFamily: Bool {
+        self == .obd2 || self == .motorcycle
     }
 
     /// 读当前选择
@@ -53,8 +80,23 @@ enum DataSource: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 是不是 OBD2 模式（仪表据此隐藏电机/BMS 区块）
-    static var isObd: Bool { current == .obd2 }
+    /// 是不是 OBD 模式（汽车或摩托都算）
+    static var isObd: Bool { current.isObdFamily }
+
+    /// 是不是摩托车模式
+    static var isMotorcycle: Bool { current == .motorcycle }
+
+    /// 用于区分持久化 key 的后缀前缀
+    ///
+    /// 汽车用 "obd"，摩托用 "moto"，远驱用 "fd"。
+    /// 这样两套 OBD 配置完全独立。
+    var storageKey: String {
+        switch self {
+        case .fardriver:  return "fd"
+        case .obd2:       return "obd"
+        case .motorcycle: return "moto"
+        }
+    }
 }
 
 // MARK: - 变速箱类型（决定档位框长什么样）

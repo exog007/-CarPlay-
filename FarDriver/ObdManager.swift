@@ -104,26 +104,53 @@ final class ObdManager: NSObject, ObservableObject {
         var isConnected: Bool { self == .connected }
     }
 
-    // MARK: - 持久化设置（OBD2 独立记忆，和远驱完全分开）
+    // MARK: - 持久化设置（OBD2 / 摩托车 各自独立，和远驱完全分开）
+    //
+    // key 前缀按当前数据源区分：
+    //   汽车 → obd*
+    //   摩托 → moto*
+    // 这样同一个 App 里，汽车适配器和摩托适配器的记忆互不干扰。
+
+    /// 当前 OBD 系列的存储前缀（obd / moto）
+    private static var storePrefix: String {
+        DataSource.current == .motorcycle ? "moto" : "obd"
+    }
 
     /// 自动连接上次的适配器
     static var autoConnect: Bool {
         get {
+            let key = "\(storePrefix)AutoConnect"
             // 第一次进入时默认 true（有记住的设备就连）
-            if UserDefaults.standard.object(forKey: "obdAutoConnect") == nil { return true }
-            return UserDefaults.standard.bool(forKey: "obdAutoConnect")
+            if UserDefaults.standard.object(forKey: key) == nil { return true }
+            return UserDefaults.standard.bool(forKey: key)
         }
-        set { UserDefaults.standard.set(newValue, forKey: "obdAutoConnect") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "\(storePrefix)AutoConnect")
+        }
     }
 
     /// 上次连接的适配器 ID
     static var lastDeviceID: String? {
-        get { UserDefaults.standard.string(forKey: "obdLastID") }
-        set { UserDefaults.standard.set(newValue, forKey: "obdLastID") }
+        get { UserDefaults.standard.string(forKey: "\(storePrefix)LastID") }
+        set {
+            let key = "\(storePrefix)LastID"
+            if let v = newValue {
+                UserDefaults.standard.set(v, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
     }
     static var lastDeviceName: String? {
-        get { UserDefaults.standard.string(forKey: "obdLastName") }
-        set { UserDefaults.standard.set(newValue, forKey: "obdLastName") }
+        get { UserDefaults.standard.string(forKey: "\(storePrefix)LastName") }
+        set {
+            let key = "\(storePrefix)LastName"
+            if let v = newValue {
+                UserDefaults.standard.set(v, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
     }
 
     /// 有没有记住的设备
@@ -153,17 +180,28 @@ final class ObdManager: NSObject, ObservableObject {
 
     /// 汽油 / 柴油（影响功率估算）
     static var isDiesel: Bool {
-        get { UserDefaults.standard.bool(forKey: "obdIsDiesel") }
-        set { UserDefaults.standard.set(newValue, forKey: "obdIsDiesel") }
+        get { UserDefaults.standard.bool(forKey: "\(storePrefix)IsDiesel") }
+        set { UserDefaults.standard.set(newValue, forKey: "\(storePrefix)IsDiesel") }
     }
 
     /// 协议编号：0 = 自动，其它对应 ELM327 的 ATSPn
     ///
     /// 有些车自动选协议会返回 UNABLE TO CONNECT，
     /// 手动指定正确协议通常就能连上。
+    ///
+    /// 摩托车默认 5（KWP2000 快初始化），汽车默认 0（自动）。
     static var protocolNumber: Int {
-        get { UserDefaults.standard.integer(forKey: "obdProtocol") }
-        set { UserDefaults.standard.set(newValue, forKey: "obdProtocol") }
+        get {
+            let key = "\(storePrefix)Protocol"
+            let v = UserDefaults.standard.integer(forKey: key)
+            // 摩托第一次进入默认 KWP 快初始化
+            if v == 0 && DataSource.current == .motorcycle
+                && UserDefaults.standard.object(forKey: key) == nil {
+                return 5
+            }
+            return v
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "\(storePrefix)Protocol") }
     }
 
     /// 可选协议列表
@@ -514,12 +552,15 @@ final class ObdManager: NSObject, ObservableObject {
 
 
     /// 油箱容量（L），用于估算剩余油量
+    ///
+    /// 汽车默认 50L，摩托默认 15L。
     static var tankLitres: Double {
         get {
-            let v = UserDefaults.standard.double(forKey: "obdTankLitres")
-            return v > 0 ? v : 50
+            let v = UserDefaults.standard.double(forKey: "\(storePrefix)TankLitres")
+            if v > 0 { return v }
+            return DataSource.current == .motorcycle ? 15 : 50
         }
-        set { UserDefaults.standard.set(newValue, forKey: "obdTankLitres") }
+        set { UserDefaults.standard.set(newValue, forKey: "\(storePrefix)TankLitres") }
     }
 
     /// 轮询间隔（秒）

@@ -25,7 +25,7 @@ struct ContentView: View {
     /// 注意：body 内的 toolbar / overlay 里用的是局部 `landscape`
     /// （来自 GeometryReader，最准确），这个属性只用于非 body 场合。
     private var obdDataSourceSelected: Bool {
-        dataSource == .obd2
+        dataSource.isObdFamily
     }
 
     @State private var landscapeRequested = false
@@ -119,7 +119,7 @@ struct ContentView: View {
                         // 竖屏 + OBD2：右下角浮动按钮，作为数据页的第二入口
                         // （顶部 toolbar 图标有时不显示，这里保证一定能打开）
                         .overlay(alignment: .bottomTrailing) {
-                            if !landscape && dataSource == .obd2 {
+                            if !landscape && dataSource.isObdFamily {
                                 Button {
                                     showObdGrid = true
                                 } label: {
@@ -167,7 +167,7 @@ struct ContentView: View {
                     //   用透明度和禁用状态控制「看不见」。
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            if dataSource == .obd2 && !landscape {
+                            if dataSource.isObdFamily && !landscape {
                                 showObdGrid = true
                             }
                         } label: {
@@ -176,9 +176,9 @@ struct ContentView: View {
                                                  ? themeMgr.color(.ok)
                                                  : themeMgr.foreground)
                         }
-                        .opacity((!landscape && dataSource == .obd2) ? 1 : 0)
-                        .disabled(!(!landscape && dataSource == .obd2))
-                        .allowsHitTesting(!landscape && dataSource == .obd2)
+                        .opacity((!landscape && dataSource.isObdFamily) ? 1 : 0)
+                        .disabled(!(!landscape && dataSource.isObdFamily))
+                        .allowsHitTesting(!landscape && dataSource.isObdFamily)
                     }
                     // 标准 ↔ 竞技 切换：横屏时一键换皮肤
                     if landscape {
@@ -866,7 +866,7 @@ struct SettingsView: View {
     /// 打开调试页时是否立刻开始协议探测
     @State private var autoProbeOnOpen = false
     /// OBD 协议编号（0 = 自动）
-    @AppStorage("obdProtocol") private var obdProtocol: Int = 0
+    /// OBD 协议：走动态 Binding（汽车/摩托各存一份，切换数据源自动切换）
     /// 布局编辑器
     @State private var showDashLayout = false
     /// 布局存储（显示摘要用）
@@ -901,7 +901,15 @@ struct SettingsView: View {
     }
 
     private var bindingObdAutoConnect: Binding<Bool> {
-        Binding(get: { obdAutoConnect }, set: { obdAutoConnect = $0 })
+        Binding(
+            get: { ObdManager.autoConnect },
+            set: {
+                ObdManager.autoConnect = $0
+                obdAutoConnect = $0
+                // 同步刷新「记住的设备」显示
+                objectWillChange.send()
+            }
+        )
     }
 
     private var bindingTank: Binding<Double> {
@@ -915,11 +923,38 @@ struct SettingsView: View {
         Binding(get: { obdIsDiesel }, set: { obdIsDiesel = $0; ObdManager.isDiesel = $0 })
     }
 
+    /// OBD 协议：读写当前数据源对应的 key
+    ///
+    /// 汽车存在 obdProtocol，摩托存在 motoProtocol，
+    /// 切换数据源时 Picker 自动显示各自的值。
+    private var bindingObdProtocol: Binding<Int> {
+        Binding(
+            get: { ObdManager.protocolNumber },
+            set: { ObdManager.protocolNumber = $0 }
+        )
+    }
+
     /// 切换数据源：停掉另一个，启动新的
     private func switchDataSource(to src: DataSource) {
         guard src != dataSource else { return }
+
+        // 汽车 ↔ 摩托：两者共用 ObdManager，必须先断开，
+        // 否则新数据源会沿用旧连接的设备 ID
+        let wasObd = dataSource.isObdFamily
+        let willObd = src.isObdFamily
+
+        if wasObd && willObd {
+            // OBD2 ↔ 摩托：只换配置，连接要重来
+            ObdManager.shared.disconnect()
+        }
+
         DataSource.current = src
         dataSource = src
+
+        // 汽车/摩托的适配器记忆是两套，切换后重新读一次
+        if willObd {
+            refreshObdSettingsFromStore()
+        }
 
         switch src {
         case .fardriver:
@@ -928,16 +963,23 @@ struct SettingsView: View {
             if BluetoothMemory.autoConnectBms {
                 AntBmsManager.shared.startScan()
             }
-        case .obd2:
+        case .obd2, .motorcycle:
             // 断开控制器和 BMS，启动 OBD2
             ControllerManager.shared.disconnect()
             AntBmsManager.shared.disconnect()
-            if obdAutoConnect, ObdManager.lastDeviceID != nil {
+            if ObdManager.autoConnect, ObdManager.lastDeviceID != nil {
                 ObdManager.shared.reconnect()
             } else {
                 ObdManager.shared.startScan()
             }
         }
+    }
+
+    /// 切换 OBD 数据源后，把该数据源对应的设置读回来
+    private func refreshObdSettingsFromStore() {
+        obdTankLitres = ObdManager.tankLitres
+        obdIsDiesel = ObdManager.isDiesel
+        obdAutoConnect = ObdManager.autoConnect
     }
     /// 速度微调系数（存 UserDefaults，改了解码器立刻生效）
     @AppStorage("speedTrim") private var speedTrim: Double = 1.0
@@ -1126,11 +1168,11 @@ struct SettingsView: View {
                 } header: {
                     Text("数据源")
                 } footer: {
-                    Text("只启用一个数据源，避免两个蓝牙设备抢连接。\n\n· 远驱：电动车/电摩，读控制器数据\n· OBD2：汽车/摩托车，用 ELM327 适配器（必须是 BLE 版，经典蓝牙版 iOS 连不上）\n\n切换后会自动断开另一个数据源。")
+                    Text("只启用一个数据源，避免两个蓝牙设备抢连接。\n\n· 远驱：电动车/电摩，读控制器数据\n· OBD2（汽车）：用 ELM327 适配器读汽车数据，默认自动选协议\n· OBD2（摩托车）：同一套 ELM327，但默认用 KWP2000，适配器记忆和主题独立\n\n适配器必须是 BLE 版，经典蓝牙版 iOS 连不上。切换后会自动断开另一个数据源。")
                 }
 
                 // OBD2 专属设置（只在 OBD2 模式下显示）
-                if dataSource == .obd2 {
+                if dataSource.isObdFamily {
                     Section {
                         HStack {
                             Circle()
@@ -1219,9 +1261,11 @@ struct SettingsView: View {
                             }
                         }
                     } header: {
-                        Text("OBD2 适配器")
+                        Text(dataSource == .motorcycle ? "摩托车 OBD 适配器" : "OBD2 适配器")
                     } footer: {
-                        Text("适配器名字通常含 OBD / ELM / V-LINK / VGATE 等字样。\n连上后会自动初始化，约 3~5 秒开始出数据。\n\n如果连上了但读不到数据，点下面「OBD2 调试」看通信日志。")
+                        Text(dataSource == .motorcycle
+                             ? "摩托适配器常见名字：OBD / ELM / MTB / JBT 等。\n摩托多用 KWP2000（协议 4/5）或 ISO 9141（协议 3），默认已选协议 5。\n\n插好 OBD 口、车通电后再扫描。"
+                             : "适配器名字通常含 OBD / ELM / V-LINK / VGATE 等字样。\n连上后会自动初始化，约 3~5 秒开始出数据。\n\n如果连上了但读不到数据，点下面「OBD2 调试」看通信日志。")
                     }
 
                     Section {
@@ -1290,7 +1334,7 @@ struct SettingsView: View {
                     }
 
                     Section {
-                        Picker("OBD 协议", selection: $obdProtocol) {
+                        Picker("OBD 协议", selection: bindingObdProtocol) {
                             ForEach(ObdManager.protocolOptions, id: \.num) { opt in
                                 Text(opt.name).tag(opt.num)
                             }
@@ -1298,7 +1342,9 @@ struct SettingsView: View {
                     } header: {
                         Text("通信协议")
                     } footer: {
-                        Text("如果调试日志里一直是「UNABLE TO CONNECT」，说明适配器找不到车的 ECU。\n\n先保持「自动」；如果不行，依次试「CAN 11位 500k」→「ISO 9141-2」→「KWP」。\n汽油车绝大多数是 CAN 11位 500k。\n\n改完之后要断开重连才生效。")
+                        Text(dataSource == .motorcycle
+                             ? "摩托常见：KWP2000 快初始化（协议 5）→ KWP 5baud（协议 4）→ ISO 9141-2（协议 3）。\n\n默认已选协议 5。读不到就依次往下试，或点「一键自动探测」。\n\n改完之后要断开重连才生效。"
+                             : "如果调试日志里一直是「UNABLE TO CONNECT」，说明适配器找不到车的 ECU。\n\n先保持「自动」；如果不行，依次试「CAN 11位 500k」→「ISO 9141-2」→「KWP」。\n汽油车绝大多数是 CAN 11位 500k。\n\n改完之后要断开重连才生效。")
                     }
 
                     Section {
@@ -1482,7 +1528,7 @@ struct SettingsView: View {
                 // OBD2 模式：走 ELM327 读车辆 ECU 的 DTC
                 // 远驱模式：读控制器的故障码
                 Section {
-                    if dataSource == .obd2 {
+                    if dataSource.isObdFamily {
                         Button {
                             ObdManager.shared.readDtc()
                         } label: {
@@ -1612,7 +1658,7 @@ struct SettingsView: View {
                 } header: {
                     Text("故障码")
                 } footer: {
-                    Text(dataSource == .obd2
+                    Text(dataSource.isObdFamily
                          ? "清除故障码会同时清掉「就绪状态」，年检前请勿清除。"
                          : "远驱控制器不提供「清除故障码」接口，故障码由控制器检测到问题消失后自行消除。")
                 }

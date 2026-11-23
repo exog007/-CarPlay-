@@ -161,8 +161,15 @@ final class DashThemeStore: ObservableObject {
     private var saveWorks: [String: DispatchWorkItem] = [:]
 
     /// 当前编辑/显示哪一套（跟数据源走）
+    ///
+    /// 远驱 / 汽车 / 摩托 三套主题各自独立，
+    /// 这样摩托可以用和汽车完全不同的配色和背景。
     private func key(_ source: DataSource) -> String {
-        source == .obd2 ? "dashThemeObd2" : "dashThemeFarDriver"
+        switch source {
+        case .obd2:       return "dashThemeObd2"
+        case .motorcycle: return "dashThemeMoto"
+        case .fardriver:  return "dashThemeFarDriver"
+        }
     }
 
     func theme(for source: DataSource) -> DashTheme {
