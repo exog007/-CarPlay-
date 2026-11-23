@@ -36,10 +36,22 @@ enum ObdPid: String, CaseIterable {
     case fuelRate   = "015E"   // 燃油消耗率（部分车不支持）
     case gear       = "01A4"   // 变速箱档位（大部分车不支持，支持就能读真实档位）
 
+    // ── 发动机参数 ──
+    case manifoldPressure = "010B"   // 进气歧管绝对压力 kPa
+    case shortFuelTrim    = "0106"   // 短期燃油修正 %
+    case longFuelTrim     = "0107"   // 长期燃油修正 %
+    case timingAdvance    = "010E"   // 点火提前角 °
+    case o2Sensor1        = "0114"   // 氧传感器 1（电压 + 修正）
+    case fuelPressure     = "010A"   // 燃油压力 kPa
+    case baroPressure     = "0133"   // 大气压 kPa
+    case runtime          = "011F"   // 启动后运行时间 秒
+
     /// 这个 PID 需要几个数据字节
     var byteCount: Int {
         switch self {
         case .rpm, .voltage, .maf, .fuelRate: return 2
+        case .o2Sensor1: return 4          // 0114 返回 4 字节（电压2 + 修正2）
+        case .runtime: return 2
         default: return 1
         }
     }
@@ -67,6 +79,27 @@ struct ObdReading {
     var fuelRate: Double? = nil       // L/h
     /// 变速箱档位原始值（PID 01A4，0 = 不支持/未知）
     var gear: Int? = nil
+
+    // ── 发动机参数（PID 0B / 06 / 07 / 0E / 14 / 0A / 33）──
+    /// 进气歧管绝对压力 kPa（PID 010B）
+    var manifoldPressure: Double? = nil
+    /// 短期燃油修正 %（PID 0106，-100~100）
+    var shortFuelTrim: Double? = nil
+    /// 长期燃油修正 %（PID 0107，-100~100）
+    var longFuelTrim: Double? = nil
+    /// 点火提前角 °（PID 010E）
+    var timingAdvance: Double? = nil
+    /// 氧传感器 1 电压 V（PID 0114）
+    var o2Voltage: Double? = nil
+    /// 氧传感器 1 修正 %（PID 0114 后两字节，有些车不给）
+    var o2Trim: Double? = nil
+    /// 燃油压力 kPa（PID 010A）
+    var fuelPressure: Double? = nil
+    /// 大气压 kPa（PID 0133）
+    var barometricPressure: Double? = nil
+    /// 发动机启动后运行时间 秒（PID 011F）
+    var runTime: Double? = nil
+
     var updatedAt: Date = Date()
 
     /// 有没有至少一项数据
@@ -230,7 +263,43 @@ enum ObdParser {
             return (Double(d[0]) * 256 + Double(d[1])) / 20.0
         case .gear:
             return Double(d[0])
+
+        // ── 发动机参数 ──
+        case .manifoldPressure:
+            return Double(d[0])
+        case .shortFuelTrim, .longFuelTrim:
+            return (Double(d[0]) - 128.0) * 100.0 / 128.0
+        case .timingAdvance:
+            return Double(d[0]) / 2.0 - 64.0
+        case .o2Sensor1:
+            // 0114 返回 4 字节：电压(2) + 修正(2)
+            // 这里主值取电压
+            guard d.count >= 2 else { return nil }
+            return Double(d[0]) / 200.0
+        case .fuelPressure:
+            return Double(d[0]) * 3.0
+        case .baroPressure:
+            return Double(d[0])
+        case .runtime:
+            guard d.count >= 2 else { return nil }
+            return Double(d[0]) * 256.0 + Double(d[1])
         }
+    }
+
+    /// 解析氧传感器 1 的修正值（0114 后两字节）
+    static func o2Trim(_ bytes: [UInt8]) -> Double? {
+        guard let d = extract(bytes, pid: .o2Sensor1) else { return nil }
+        // extract 只取 byteCount 个字节，这里手动找 41 14 后的第 3、4 字节
+        var i = 0
+        while i + 1 < bytes.count {
+            if bytes[i] == 0x41, bytes[i + 1] == 0x14 {
+                let start = i + 4      // 跳过 41 14 + 电压2字节
+                guard start + 2 <= bytes.count else { return nil }
+                return 100.0 * Double(bytes[start]) / 128.0 - 100.0
+            }
+            i += 1
+        }
+        return nil
     }
 
 

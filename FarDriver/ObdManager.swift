@@ -1146,6 +1146,8 @@ final class ObdManager: NSObject, ObservableObject {
             // 拿到有效数据：用通用 PID 表解析，所有能读的都存起来
             if let bytes, !bytes.isEmpty, let v = Self.parseAny(bytes, code: pid.command) {
                 self.failStreak[pid] = 0
+                // 保存原始字节，供需要二次解析的 PID（如氧传感器）使用
+                self.lastRawData = bytes
                 self.apply(pid: pid, value: v)
                 // 同时写进通用仓库（界面上没用的也留着备用）
                 ObdValueStore.shared.update(code: pid.command, value: v)
@@ -1176,15 +1178,15 @@ final class ObdManager: NSObject, ObservableObject {
     /// 比之前只支持 10 个 PID 的 switch 覆盖面大得多，
     /// 只要表里有公式就能解。
     static func parseAny(_ bytes: [UInt8], code: String) -> Double? {
-        guard let def = ObdPidTable.def(code) else {
-            // 表里没有，退回老的 switch 解析
-            if let p = ObdPid(rawValue: code) {
-                return ObdParser.value(bytes, pid: p)
-            }
-            return nil
+        // ① 先用枚举里的专用解析（支持多字节 PID，如氧传感器 0114）
+        if let p = ObdPid(rawValue: code),
+           let v = ObdParser.value(bytes, pid: p) {
+            return v
         }
 
-        // 找到 "41 XX" 后面的数据
+        // ② 再退回通用表
+        guard let def = ObdPidTable.def(code) else { return nil }
+
         let target = def.pidByte
         var i = 0
         while i + 1 < bytes.count {
@@ -1214,9 +1216,27 @@ final class ObdManager: NSObject, ObservableObject {
         case .maf:        reading.maf = value
         case .fuelRate:   reading.fuelRate = value
         case .gear:       reading.gear = Int(value)
+
+        // ── 发动机参数 ──
+        case .manifoldPressure: reading.manifoldPressure = value
+        case .shortFuelTrim:    reading.shortFuelTrim = value
+        case .longFuelTrim:     reading.longFuelTrim = value
+        case .timingAdvance:    reading.timingAdvance = value
+        case .o2Sensor1:
+            reading.o2Voltage = value
+            // 顺便把修正值也取出来（0114 后两字节）
+            if let raw = lastRawData, let trim = ObdParser.o2Trim(raw) {
+                reading.o2Trim = trim
+            }
+        case .fuelPressure:     reading.fuelPressure = value
+        case .baroPressure:     reading.barometricPressure = value
+        case .runtime:          reading.runTime = value
         }
         reading.updatedAt = Date()
     }
+
+    /// 最近一次解析所用的原始字节（给需要二次解析的 PID 用）
+    private var lastRawData: [UInt8]? = nil
 
     /// 定期用 ATRV 读电瓶电压
     ///

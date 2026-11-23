@@ -2,8 +2,8 @@
 //  ObdCellSelector.swift
 //  按车实际支持的能力，决定竞技仪表底部显示哪几格
 //
-//  汽车有 6 个常用指标，摩托车往往只有 3~4 个。
-//  写死 6 格会让摩托车满屏 «—»，所以这里动态挑选：
+//  汽车有十几个常用发动机参数，摩托车往往只有 3~4 个。
+//  写死会让满屏 «—»，所以这里动态挑选：
 //    · 优先显示有数据的
 //    · 数据不足时用转速/车速补充
 //    · 保证整行铺满，不留空洞
@@ -14,18 +14,30 @@ import Foundation
 /// 竞技仪表底部的一格
 struct ObdDashCell: Identifiable, Equatable {
     enum Kind: String {
-        case voltage      // 电瓶电压
-        case coolant      // 水温
-        case intake       // 进气温度
-        case throttle     // 节气门
-        case load         // 负荷
-        case fuelLevel    // 燃油液位
-        case rpm          // 转速（补位用）
-        case speed        // 车速（补位用）
-        case maf          // 空气流量
-        case fuelRate     // 燃油消耗率
-        case runTime      // 启动后运行时间
-        case baro         // 大气压
+        // ── 基础 ──
+        case voltage        // 电瓶电压
+        case coolant        // 水温
+        case intake         // 进气温度
+        case throttle       // 节气门
+        case load           // 负荷
+        case fuelLevel      // 燃油液位
+
+        // ── 发动机参数 ──
+        case map            // 进气歧管压力
+        case stft           // 短期燃油修正
+        case ltft           // 长期燃油修正
+        case timing         // 点火提前角
+        case maf            // 空气流量
+        case fuelRate       // 燃油消耗率
+        case o2voltage      // 前氧传感器电压
+        case o2trim         // 前氧传感器修正
+        case baro           // 大气压
+        case runTime        // 启动后运行时间
+        case fuelPressure   // 燃油压力
+
+        // ── 补充位 ──
+        case rpm            // 转速
+        case speed          // 车速
     }
 
     let kind: Kind
@@ -41,43 +53,45 @@ struct ObdDashCell: Identifiable, Equatable {
 enum ObdCellSelector {
 
     /// 挑选要显示的格子
+    ///
     /// - Parameters:
-    ///   - hasCoolant: 有水温数据
-    ///   - hasIntake: 有进气温度
-    ///   - hasThrottle: 有节气门
-    ///   - hasLoad: 有负荷
-    ///   - hasFuel: 有燃油液位
-    ///   - hasVoltage: 有电压
+    ///   - available: 已经读到数据的参数集合
     ///   - maxCells: 最多显示几格（横屏一般 6 格）
     /// - Returns: 填满的顺序列表
-    static func pick(maxCells: Int,
-                     hasVoltage: Bool,
-                     hasCoolant: Bool,
-                     hasIntake: Bool,
-                     hasThrottle: Bool,
-                     hasLoad: Bool,
-                     hasFuel: Bool) -> [ObdDashCell.Kind] {
+    static func pick(available: Set<ObdDashCell.Kind>, maxCells: Int) -> [ObdDashCell.Kind] {
 
-        // 优先级顺序：最常看的排前面
-        var candidates: [ObdDashCell.Kind] = []
+        // 优先级：越靠前越重要
+        let priority: [ObdDashCell.Kind] = [
+            .coolant,       // 水温最常看
+            .voltage,       // 电瓶
+            .load,          // 负荷
+            .throttle,      // 节气门
+            .map,           // 进气压力
+            .intake,        // 进气温度
+            .timing,        // 点火提前角
+            .stft,          // 短期修正
+            .ltft,          // 长期修正
+            .maf,           // 空气流量
+            .o2voltage,     // 氧传感器
+            .o2trim,        // 氧传感器修正
+            .fuelPressure,  // 燃油压力
+            .fuelRate,      // 油耗率
+            .fuelLevel,     // 油位
+            .baro,          // 大气压
+            .runTime,       // 运行时间
+        ]
 
-        if hasCoolant  { candidates.append(.coolant) }
-        if hasVoltage  { candidates.append(.voltage) }
-        if hasThrottle { candidates.append(.throttle) }
-        if hasLoad     { candidates.append(.load) }
-        if hasIntake   { candidates.append(.intake) }
-        if hasFuel     { candidates.append(.fuelLevel) }
+        var result = priority.filter { available.contains($0) }
 
-        // 不够就用转速/车速轮换补位（避免整行半空）
+        // 不够就用转速/车速补充（避免整行半空）
         let fillers: [ObdDashCell.Kind] = [.rpm, .speed]
         var i = 0
-        while candidates.count < maxCells {
-            candidates.append(fillers[i % fillers.count])
+        while result.count < maxCells {
+            result.append(fillers[i % fillers.count])
             i += 1
-            // 防止无限循环
             if i > maxCells * 2 { break }
         }
 
-        return Array(candidates.prefix(maxCells))
+        return Array(result.prefix(maxCells))
     }
 }
