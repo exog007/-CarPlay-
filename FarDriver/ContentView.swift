@@ -859,6 +859,8 @@ struct SettingsView: View {
     @State private var showObdDebug = false
     /// 抓包页面
     @State private var showSniff = false
+    /// BLE 完整诊断页
+    @State private var showBleInspector = false
     /// 抓包模式（不发 AT 指令）
     @AppStorage("obdSniffMode") private var sniffMode: Bool = false
     /// 蓝牙扫描时显示所有设备（含非 ELM327 的私有模块）
@@ -1325,10 +1327,28 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+
+                        Button {
+                            showBleInspector = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "waveform.path.ecg")
+                                    .foregroundStyle(themeMgr.color(.rpm))
+                                Text("BLE 完整诊断")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text("\(ObdManager.shared.charList.count) 个特征")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(themeMgr.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     } header: {
                         Text("私有协议模块（元征 / 京宝通等）")
                     } footer: {
-                        Text("这些模块用私有二进制协议，不是 ELM327。\n\n抓包模式连上后不发任何 AT 指令，只被动记录模块发出的原始字节，用来分析帧结构。\n\n⚠️ 分析出协议之前，这类模块无法读取车辆数据。")
+                        Text("这些模块用私有二进制协议，不是 ELM327。\n\n· 抓包模式：连上后不发 AT 指令，只被动记录\n· BLE 诊断：列出所有服务和特征，可手动切换写/通知特征，支持带 \\r\\n 发送\n\n⚠️ 如果发指令完全没回应，多半是写特征选错了或需要专属握手。")
                     }
 
                     Section {
@@ -1902,6 +1922,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showSniff) {
                 ObdSniffView(themeMgr: themeMgr)
+            }
+            .sheet(isPresented: $showBleInspector) {
+                BleInspectorView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)

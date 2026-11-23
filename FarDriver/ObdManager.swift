@@ -811,6 +811,142 @@ final class ObdManager: NSObject, ObservableObject {
         handshakeLog.append("AT+CRYPT → 发送 \(sent) 期望 \(expect) 返回 \(code) → \(ok ? "正版✓" : "非正版✗")")
     }
 
+    // MARK: - BLE 诊断（列特征 / 手动选择 / 多格式发送）
+
+    /// 一个特征的信息（诊断页展示用）
+    struct CharInfo: Identifiable {
+        let id: String
+        let serviceUUID: String
+        let uuid: String
+        let properties: [String]
+        let canWrite: Bool
+        let canNotify: Bool
+        let isWriteSelected: Bool
+        let isNotifySelected: Bool
+    }
+
+    /// 已发现的所有特征
+    @Published private(set) var charList: [CharInfo] = []
+
+    /// 保存所有已发现的服务和特征，供诊断页使用
+    private var allServices: [CBService] = []
+
+    /// 重新扫描服务并刷新特征列表
+    func dumpCharacteristics() {
+        buildCharList()
+        // 如果还没发现服务，主动去发现
+        if allServices.isEmpty, let p = peripheral {
+            p.discoverServices(nil)
+        }
+    }
+
+    private func buildCharList() {
+        var out: [CharInfo] = []
+        for s in allServices {
+            guard let chars = s.characteristics else { continue }
+            for c in chars {
+                var props: [String] = []
+                if c.properties.contains(.read) { props.append("read") }
+                if c.properties.contains(.write) { props.append("write") }
+                if c.properties.contains(.writeWithoutResponse) { props.append("writeNR") }
+                if c.properties.contains(.notify) { props.append("notify") }
+                if c.properties.contains(.indicate) { props.append("indicate") }
+
+                out.append(CharInfo(
+                    id: c.uuid.uuidString,
+                    serviceUUID: s.uuid.uuidString,
+                    uuid: c.uuid.uuidString,
+                    properties: props,
+                    canWrite: c.properties.contains(.write) || c.properties.contains(.writeWithoutResponse),
+                    canNotify: c.properties.contains(.notify) || c.properties.contains(.indicate),
+                    isWriteSelected: txChar?.uuid == c.uuid,
+                    isNotifySelected: notifyChar?.uuid == c.uuid
+                ))
+            }
+        }
+        charList = out
+    }
+
+    /// 手动指定写特征
+    func selectWrite(uuid: String) {
+        for s in allServices {
+            for c in s.characteristics ?? [] where c.uuid.uuidString == uuid {
+                txChar = c
+                txNeedsResponse = c.properties.contains(.write)
+                appendLog("< 手动切换写特征为 \(uuid)")
+                buildCharList()
+                return
+            }
+        }
+        errorMsg = "找不到特征 \(uuid)"
+    }
+
+    /// 手动指定通知特征并订阅
+    func selectNotify(uuid: String) {
+        for s in allServices {
+            for c in s.characteristics ?? [] where c.uuid.uuidString == uuid {
+                notifyChar = c
+                peripheral?.setNotifyValue(true, for: c)
+                appendLog("< 手动订阅通知特征 \(uuid)")
+                buildCharList()
+                return
+            }
+        }
+        errorMsg = "找不到特征 \(uuid)"
+    }
+
+    /// 清空接收计数
+    func resetRxStats() {
+        clearSniff()
+    }
+
+    /// 诊断页发送：支持文本/十六进制，可加 \r \n
+    func inspectorSend(text: String, asHex: Bool, appendCR: Bool, appendLF: Bool) {
+        guard connected, let tx = txChar else {
+            errorMsg = "还没连上或没选写特征"
+            return
+        }
+
+        var data = Data()
+
+        if asHex {
+            let clean = text.replacingOccurrences(of: " ", with: "")
+                            .replacingOccurrences(of: "0x", with: "")
+                            .uppercased()
+            var i = clean.startIndex
+            while i < clean.endIndex {
+                let n = clean.index(i, offsetBy: 2, limitedBy: clean.endIndex) ?? clean.endIndex
+                if let b = UInt8(clean[i..<n], radix: 16) { data.append(b) }
+                i = n
+            }
+        } else {
+            data = (text).data(using: .ascii) ?? Data()
+        }
+
+        if appendCR { data.append(0x0D) }
+        if appendLF { data.append(0x0A) }
+
+        guard !data.isEmpty else {
+            errorMsg = "内容为空"
+            return
+        }
+
+        let hexDump = [UInt8](data).map { String(format: "%02X", $0) }.joined(separator: " ")
+        sniffLog.append(">>> 发送 [\(hexDump)] → \(tx.uuid.uuidString)")
+
+        peripheral?.writeValue(data, for: tx,
+                               type: txNeedsResponse ? .withResponse : .withoutResponse)
+
+        // 给个兜底提示：如果 3 秒内没有任何回包，提示可能写特征不对
+        let before = sniffByteCount
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            if self.sniffByteCount == before {
+                self.sniffLog.append("⚠️ 3 秒内没有任何回包（可能是写特征选错，或模块需要先握手）")
+            }
+        }
+    }
+
     // MARK: - 抓包模式（逆向私有协议用）
 
     /// 抓包模式：连上后**不发任何 AT 指令**，只被动接收并记录对方发的所有字节
@@ -1578,6 +1714,7 @@ extension ObdManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
         discoveredServiceCount = services.count
+        allServices = services          // 保存给诊断页用
         appendLog("< 发现 \(services.count) 个服务: " +
                   services.map { $0.uuid.uuidString }.joined(separator: ", "))
         if services.isEmpty {
@@ -1651,6 +1788,9 @@ extension ObdManager: CBPeripheralDelegate {
         peripheral.setNotifyValue(true, for: target)
 
         appendLog("< 选用 写=\(w.uuid.uuidString) 通知=\(target.uuid.uuidString)")
+
+        // 诊断页要用：刷新特征列表
+        buildCharList()
 
         beginInit()
     }
