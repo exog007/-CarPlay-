@@ -906,8 +906,6 @@ struct SettingsView: View {
             set: {
                 ObdManager.autoConnect = $0
                 obdAutoConnect = $0
-                // 同步刷新「记住的设备」显示
-                objectWillChange.send()
             }
         )
     }
