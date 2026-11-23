@@ -857,6 +857,12 @@ struct SettingsView: View {
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
     /// OBD2 调试面板
     @State private var showObdDebug = false
+    /// 抓包页面
+    @State private var showSniff = false
+    /// 抓包模式（不发 AT 指令）
+    @AppStorage("obdSniffMode") private var sniffMode: Bool = false
+    /// 蓝牙扫描时显示所有设备（含非 ELM327 的私有模块）
+    @AppStorage("obdShowAllBLE") private var showAllBLE: Bool = false
     /// 打开调试页时是否立刻开始协议探测
     @State private var autoProbeOnOpen = false
     /// OBD 协议编号（0 = 自动）
@@ -1253,6 +1259,34 @@ struct SettingsView: View {
                         }
                     } footer: {
                         Text("连上了但读不到数据时用「一键自动探测协议」：会自动把 9 种 OBD 协议全试一遍，找到能通的就自动设好。")
+                    }
+
+                    // ── 私有模块抓包 ──
+                    Section {
+                        Toggle("抓包模式（不发 AT 指令）", isOn: $sniffMode)
+                        Toggle("显示非 ELM327 设备", isOn: $showAllBLE)
+
+                        Button {
+                            showSniff = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                    .foregroundStyle(themeMgr.color(.power))
+                                Text("打开抓包页面")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text("\(ObdManager.shared.sniffLog.count)")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(themeMgr.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("私有协议模块（元征 / 京宝通等）")
+                    } footer: {
+                        Text("这些模块用私有二进制协议，不是 ELM327。\n\n抓包模式连上后不发任何 AT 指令，只被动记录模块发出的原始字节，用来分析帧结构。\n\n⚠️ 分析出协议之前，这类模块无法读取车辆数据。")
                     }
 
                     Section {
@@ -1821,6 +1855,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showObdDebug) {
                 ObdDebugView(themeMgr: themeMgr, autoStartProbe: autoProbeOnOpen)
+            }
+            .sheet(isPresented: $showSniff) {
+                ObdSniffView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)

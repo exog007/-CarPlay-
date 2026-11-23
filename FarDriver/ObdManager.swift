@@ -770,6 +770,78 @@ final class ObdManager: NSObject, ObservableObject {
         handshakeLog.append("AT+CRYPT → 发送 \(sent) 期望 \(expect) 返回 \(code) → \(ok ? "正版✓" : "非正版✗")")
     }
 
+    // MARK: - 抓包模式（逆向私有协议用）
+
+    /// 抓包模式：连上后**不发任何 AT 指令**，只被动接收并记录对方发的所有字节
+    ///
+    /// 用途：分析 MTB / JBT 这类私有模块的协议结构。
+    /// 开了这个模式，握手会跳过，直接进入监听。
+    static var sniffMode: Bool {
+        get { UserDefaults.standard.bool(forKey: "obdSniffMode") }
+        set { UserDefaults.standard.set(newValue, forKey: "obdSniffMode") }
+    }
+
+    /// 抓到的原始字节（hex + ASCII）
+    @Published private(set) var sniffLog: [String] = []
+    /// 抓到的总字节数
+    @Published private(set) var sniffByteCount: Int = 0
+
+    private var sniffBuffer: [UInt8] = []
+
+    /// 记录一帧收到的原始数据（抓包模式下由通知回调调用）
+    private func recordSniff(_ data: Data) {
+        let bytes = [UInt8](data)
+        sniffByteCount += bytes.count
+        sniffBuffer.append(contentsOf: bytes)
+
+        // 攒够一批或者遇到明显边界就输出一行
+        let hex = bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+        let ascii = String(bytes: bytes.map {
+            ($0 >= 0x20 && $0 < 0x7F) ? $0 : 0x2E
+        }, encoding: .ascii) ?? ""
+        sniffLog.append("[\(bytes.count)B] \(hex)   |\(ascii)|")
+        // 只留最近 300 条
+        if sniffLog.count > 300 { sniffLog.removeFirst(sniffLog.count - 300) }
+    }
+
+    func clearSniff() {
+        sniffLog.removeAll()
+        sniffBuffer.removeAll()
+        sniffByteCount = 0
+    }
+
+    /// 抓包日志的完整文本（复制用）
+    func sniffDump() -> String {
+        var out = "=== BLE 抓包（共 \(sniffByteCount) 字节，\(sniffLog.count) 帧）===\n"
+        out += sniffLog.joined(separator: "\n")
+        return out
+    }
+
+    /// 在抓包模式下主动发一条 hex（试探协议用）
+    func sniffSend(hex: String) {
+        guard connected, let tx = txChar else {
+            errorMsg = "还没连上"
+            return
+        }
+        let clean = hex.replacingOccurrences(of: " ", with: "")
+                     .replacingOccurrences(of: "0x", with: "")
+                     .uppercased()
+        var bytes: [UInt8] = []
+        var i = clean.startIndex
+        while i < clean.endIndex {
+            let n = clean.index(i, offsetBy: 2, limitedBy: clean.endIndex) ?? clean.endIndex
+            if let b = UInt8(clean[i..<n], radix: 16) { bytes.append(b) }
+            i = n
+        }
+        guard !bytes.isEmpty else {
+            errorMsg = "hex 格式不对"
+            return
+        }
+        sniffLog.append(">>> 主动发送 \(hex)")
+        peripheral?.writeValue(Data(bytes), for: tx,
+                               type: txNeedsResponse ? .withResponse : .withoutResponse)
+    }
+
     // MARK: - 初始化
     private func beginInit() {
         status = .initializing
@@ -779,6 +851,17 @@ final class ObdManager: NSObject, ObservableObject {
         supportedPids.removeAll()
         badPids.removeAll()
         failStreak.removeAll()
+
+        // 抓包模式：不发任何指令，只被动接收
+        if Self.sniffMode {
+            status = .connected
+            ready = false          // 不轮询
+            clearSniff()
+            handshakeLog.append("🔍 抓包模式：不发指令，等待模块主动发包")
+            handshakeLog.append("（发 AT 指令会看不到私有协议，所以这里什么都不发）")
+            appendLog("< 进入抓包模式")
+            return
+        }
 
         // 依次握手，全部完成后再开轮询
         //
@@ -1352,6 +1435,12 @@ extension ObdManager: CBCentralManagerDelegate {
             || upper.contains("IOS-VLINK")
             || upper.contains("CARISTA")
             || upper.contains("VSCAN")
+            // 抓包用：把元征 / 京宝通等私有模块也放进来
+            || upper.contains("MTB")
+            || upper.contains("JBT")
+            || upper.contains("X431")
+            || upper.contains("LAUNCH")
+            || upper.contains("VCI")
 
         // 还没连上时，优先自动连上次那台
         if !connected, peripheral.state != .connected,
@@ -1503,6 +1592,12 @@ extension ObdManager: CBPeripheralDelegate {
                     didUpdateValueFor characteristic: CBCharacteristic,
                     error: Error?) {
         guard let d = characteristic.value, !d.isEmpty else { return }
+
+        // 🔍 抓包模式：原样记录，不按 '>' 切帧（私有协议是二进制，没有 ASCII 结束符）
+        if Self.sniffMode {
+            recordSniff(d)
+            return
+        }
 
         // ── 关键：BLE 串口会把一条响应拆成多个包 ──
         //
