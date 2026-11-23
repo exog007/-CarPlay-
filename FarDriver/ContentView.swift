@@ -861,6 +861,10 @@ struct SettingsView: View {
     @State private var showSniff = false
     /// BLE 完整诊断页
     @State private var showBleInspector = false
+    /// AnChe 协议测试页
+    @State private var showAnChe = false
+    /// 用 AnChe 私有协议
+    @AppStorage("obdUseAnChe") private var useAnChe: Bool = false
     /// 抓包模式（不发 AT 指令）
     @AppStorage("obdSniffMode") private var sniffMode: Bool = false
     /// 蓝牙扫描时显示所有设备（含非 ELM327 的私有模块）
@@ -1345,10 +1349,32 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+
+                        // ── AnChe 私有协议 ──
+                        Toggle("用 AnChe 协议（金奔腾）", isOn: $useAnChe)
+
+                        Button {
+                            showAnChe = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "flame")
+                                    .foregroundStyle(themeMgr.color(.power))
+                                Text("AnChe 协议测试")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text(AnCheManager.shared.handshaked ? "已通" : "未通")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(AnCheManager.shared.handshaked
+                                                     ? themeMgr.color(.ok) : themeMgr.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     } header: {
                         Text("私有协议模块（元征 / 京宝通等）")
                     } footer: {
-                        Text("这些模块用私有二进制协议，不是 ELM327。\n\n· 抓包模式：连上后不发 AT 指令，只被动记录\n· BLE 诊断：列出所有服务和特征，可手动切换写/通知特征，支持带 \\r\\n 发送\n\n⚠️ 如果发指令完全没回应，多半是写特征选错了或需要专属握手。")
+                        Text("这些模块用私有二进制协议，不是 ELM327。\n\n· 抓包模式：连上后不发 AT 指令，只被动记录\n· BLE 诊断：列出所有服务和特征，可手动切换写/通知特征\n· AnChe 协议：金奔腾专属帧格式，已验证可用\n\n⚠️ 开启 AnChe 后不再发 ELM327 握手，直接按 AnChe 帧收发。")
                     }
 
                     Section {
@@ -1925,6 +1951,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showBleInspector) {
                 BleInspectorView(themeMgr: themeMgr)
+            }
+            .sheet(isPresented: $showAnChe) {
+                AnCheView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)

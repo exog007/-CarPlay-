@@ -579,6 +579,11 @@ final class ObdManager: NSObject, ObservableObject {
     private var notifyChar: CBCharacteristic?
     /// 写入方式：true 用 withResponse（更可靠），false 用 withoutResponse
     private(set) var txNeedsResponse = false
+
+    // MARK: - 给 AnCheManager 用的只读访问
+    var peripheralRef: CBPeripheral? { peripheral }
+    var txCharRef: CBCharacteristic? { txChar }
+    var txNeedsResponseRef: Bool { txNeedsResponse }
     /// 接收缓冲：BLE 会把一条响应拆包，必须攒到 '>' 才算完整
     private var rxBuffer = ""
     /// 发送队列：上一条命令没回来之前，后续命令排队等
@@ -949,6 +954,12 @@ final class ObdManager: NSObject, ObservableObject {
 
     // MARK: - 抓包模式（逆向私有协议用）
 
+    /// 用 AnChe（金奔腾）私有协议，而不是 ELM327
+    static var useAnChe: Bool {
+        get { UserDefaults.standard.bool(forKey: "obdUseAnChe") }
+        set { UserDefaults.standard.set(newValue, forKey: "obdUseAnChe") }
+    }
+
     /// 抓包模式：连上后**不发任何 AT 指令**，只被动接收并记录对方发的所有字节
     ///
     /// 用途：分析 MTB / JBT 这类私有模块的协议结构。
@@ -1037,6 +1048,20 @@ final class ObdManager: NSObject, ObservableObject {
             handshakeLog.append("🔍 抓包模式：不发指令，等待模块主动发包")
             handshakeLog.append("（发 AT 指令会看不到私有协议，所以这里什么都不发）")
             appendLog("< 进入抓包模式")
+            return
+        }
+
+        // AnChe 私有协议模式：不发 ELM327 握手，直接开始协议握手
+        if Self.useAnChe {
+            status = .connected
+            ready = false
+            handshakeLog.append("🔧 AnChe 协议模式：跳过 ELM327 握手")
+            AnCheManager.shared.clearLog()
+            AnCheManager.shared.ping { ok in
+                self.handshakeLog.append(ok
+                    ? "✅ AnChe 协议握手成功"
+                    : "⚠️ AnChe 协议握手失败（模块可能不认这个协议）")
+            }
             return
         }
 
@@ -1820,6 +1845,14 @@ extension ObdManager: CBPeripheralDelegate {
         // 🔍 抓包模式：原样记录，不按 '>' 切帧（私有协议是二进制，没有 ASCII 结束符）
         if Self.sniffMode {
             recordSniff(d)
+            // 同时转发给 AnChe 解析器（抓包模式下也能跑协议）
+            AnCheManager.shared.handleIncoming(d)
+            return
+        }
+
+        // 用 AnChe 协议时，数据直接交给 AnCheManager，不走 ELM327 解析
+        if Self.useAnChe {
+            AnCheManager.shared.handleIncoming(d)
             return
         }
 
