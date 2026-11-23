@@ -1758,14 +1758,31 @@ extension ObdManager: CBPeripheralDelegate {
         var writeChar: CBCharacteristic?
         var notifChar: CBCharacteristic?
 
+        // 优先级：
+        //   ① 同时支持 write + notify 的特征（真正的串口透传，如 FFE1）
+        //   ② 只支持 write 的
+        var fullDuplex: CBCharacteristic?   // write + notify 都有
+        var writeOnly: CBCharacteristic?
+
         for c in chars {
             let canWrite = c.properties.contains(.write)
                 || c.properties.contains(.writeWithoutResponse)
             let canNotify = c.properties.contains(.notify)
                 || c.properties.contains(.indicate)
-            if canWrite, writeChar == nil { writeChar = c }
+
+            if canWrite && canNotify, fullDuplex == nil {
+                fullDuplex = c
+            }
+            if canWrite && !canNotify && writeOnly == nil {
+                writeOnly = c
+            }
             if canNotify, notifChar == nil { notifChar = c }
         }
+
+        // 优先用全双工特征；没有才用只写的
+        writeChar = fullDuplex ?? writeOnly
+        // 全双工时，通知也用同一个（发了才回）
+        if let fd = fullDuplex { notifChar = fd }
 
         // 串口服务里优先；非串口服务只在还没有 tx 时兜底
         guard let w = writeChar else { return }
