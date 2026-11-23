@@ -1436,11 +1436,17 @@ extension ObdManager: CBCentralManagerDelegate {
             || upper.contains("CARISTA")
             || upper.contains("VSCAN")
             // 抓包用：把元征 / 京宝通等私有模块也放进来
+            // 这些前缀是从 MTB APK 的字符串池里挖出来的
             || upper.contains("MTB")
             || upper.contains("JBT")
+            || upper.contains("CN-OBD")
+            || upper.contains("CN-HDOBD")
+            || upper.contains("HONGYAN")
             || upper.contains("X431")
             || upper.contains("LAUNCH")
             || upper.contains("VCI")
+            || upper.contains("DBSCAR")
+            || upper.contains("EASYDIAG")
 
         // 还没连上时，优先自动连上次那台
         if !connected, peripheral.state != .connected,
