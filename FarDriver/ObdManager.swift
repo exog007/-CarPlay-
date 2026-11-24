@@ -844,7 +844,7 @@ final class ObdManager: NSObject, ObservableObject {
             handshakeLog.append("适配器 crypt: \(c)")
             // 立刻算一下要发的 SETCRYPT 值，方便调试
             if let raw = UInt32(c, radix: 16) {
-                let enc = Int(edesEnCrypt(Int(raw)))
+                let enc = Int(Self.edesEnCrypt(Int(raw)))
                 handshakeLog.append("将发 AT+SETCRYPT\(String(format: "%08X", enc))")
             }
         }
@@ -1209,7 +1209,7 @@ final class ObdManager: NSObject, ObservableObject {
             // 动态展开加密握手指令
             if cmd.hasPrefix("@@CRYPT@@") {
                 if let c = adapterCrypt, !c.isEmpty, let raw = UInt32(c, radix: 16) {
-                    let enc = Int(edesEnCrypt(Int(raw)))
+                    let enc = Int(Self.edesEnCrypt(Int(raw)))
                     cmd = "AT+SETCRYPT" + String(format: "%08X", enc)
                     handshakeLog.append("适配器型号 \(adapterDeviceType ?? "?")，crypt=\(c) → 发 SETCRYPT")
                 } else {
