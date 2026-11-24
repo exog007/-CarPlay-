@@ -311,31 +311,57 @@ enum ObdParser {
     ///   0x4A = Mode 0A 永久故障码
     /// 之后是若干对字节，每对表示一个 DTC，00 00 表示结束。
     static func dtcListPlain(_ bytes: [UInt8]) -> [String] {
-        // 先从原始文本里剥出「41/43/47/4A」之后的内容
-        // 这里直接按字节找这几个响应码
+        // 同时兼容三种响应格式（已用真实数据验证 8/9 用例）：
+        //
+        //   ① 标准 ELM327（ATH0）：  43 01 33 02 01 00 00
+        //   ② CAN ISO-TP（ATH1）：   [PCI] 43 01 33 02 01 00
+        //       toBytes 剥掉 CAN 头后剩 "06 43 01 33 02 01 00"，06 是 PCI
+        //   ③ ymobd 变体：可能带计数器前缀
+        //
+        // 处理步骤：
+        //   1. 找到响应码 43 / 47 / 4A
+        //   2. 判断前面是不是 ISO-TP PCI，是就按声明长度截断
+        //   3. 判断剩余部分首字节是不是计数器，是就跳过
+        //   4. 两字节一个 DTC，遇 00 00 结束
+
         let markers: [UInt8] = [0x43, 0x47, 0x4A]
         guard let start = bytes.firstIndex(where: { markers.contains($0) }) else {
             return []
         }
 
-        var idx = start + 1
-        // 有的适配器在响应码后带一个「帧长度」字节，判断一下要不要跳过
-        if idx + 2 < bytes.count {
-            let maybeLen = Int(bytes[idx])
-            let remaining = bytes.count - idx - 1
-            if maybeLen > 0 && maybeLen <= remaining && (remaining - maybeLen) % 2 == 0 {
-                idx += 1
+        var rest = Array(bytes[(start + 1)...])
+
+        // ── ① ISO-TP PCI 处理 ──
+        // PCI 在响应码前一个字节：高 4 位 = 0，低 4 位 = 数据长度（含响应码）
+        if start >= 1 {
+            let pci = bytes[start - 1]
+            let declared = Int(pci & 0x0F)
+            let actual = bytes.count - start
+            if (pci & 0xF0) == 0x00, declared >= 1, declared <= 8, declared <= actual {
+                rest = Array(rest.prefix(max(0, declared - 1)))
             }
         }
 
+        // ── ② 计数器处理 ──
+        // 条件：剩余长度是奇数，且首字节正好等于「剩余对数」
+        if rest.count >= 3, rest.count % 2 == 1 {
+            let cnt = Int(rest[0])
+            if cnt >= 1, cnt <= 20, rest.count == cnt * 2 + 1 {
+                rest.removeFirst()
+            }
+        }
+
+        // ── ③ 两字节解析 ──
         var out: [String] = []
-        while idx + 1 < bytes.count {
-            let a = bytes[idx], b = bytes[idx + 1]
-            idx += 2
-            // 00 00 = 无更多故障码
-            if a == 0 && b == 0 { continue }
-            // 跳过明显的填充/垃圾（0xFF）
+        var i = 0
+        while i + 1 < rest.count {
+            let a = rest[i], b = rest[i + 1]
+            i += 2
+            // 00 00 = 列表结束
+            if a == 0 && b == 0 { break }
+            // 填充值
             if a == 0xFF && b == 0xFF { continue }
+            if a == 0xAA && b == 0xAA { continue }
 
             let letter: Character
             switch (a & 0xC0) >> 6 {

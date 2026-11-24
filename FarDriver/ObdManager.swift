@@ -1510,10 +1510,19 @@ final class ObdManager: NSObject, ObservableObject {
         }
         stopPolling()
 
+        let isYmobd = DataSource.current.usesYmobdHandshake
+
         var stored = Set<String>()
         var pending = Set<String>()
         var permanent = Set<String>()
-        let queue = ["03", "07", "0A", "03", "07", "0A", "03", "07", "0A"]
+
+        // 读取序列按数据源区分：
+        //
+        // ymobd 兼容模式：03/07/0A 各跑 3 遍（它的解析有时不完整）
+        // 标准 ELM327：03/07/0A 各 1 遍就够，重试反而拖慢且容易触发限制
+        let queue: [String] = isYmobd
+            ? ["03", "07", "0A", "03", "07", "0A", "03", "07", "0A"]
+            : ["03", "07", "0A"]
 
         func step(_ i: Int) {
             guard i < queue.count else {
@@ -1533,7 +1542,10 @@ final class ObdManager: NSObject, ObservableObject {
                 return
             }
             let cmd = queue[i]
-            send(cmd, timeout: 5.0) { [weak self] bytes in
+            // 标准 ELM327 给 3 秒足够；ymobd 慢一点给 5 秒
+            let timeout: TimeInterval = isYmobd ? 5.0 : 3.0
+
+            send(cmd, timeout: timeout) { [weak self] bytes in
                 guard let self else { return }
                 if let bytes, !bytes.isEmpty {
                     let codes = ObdParser.dtcListPlain(bytes)
@@ -1543,6 +1555,9 @@ final class ObdManager: NSObject, ObservableObject {
                     case "0A": codes.forEach { permanent.insert($0) }
                     default: break
                     }
+                    self.handshakeLog.append("DTC \(cmd) → \(codes.isEmpty ? "无码" : codes.joined(separator: ","))")
+                } else {
+                    self.handshakeLog.append("DTC \(cmd) → 无响应")
                 }
                 step(i + 1)
             }
@@ -1567,12 +1582,25 @@ final class ObdManager: NSObject, ObservableObject {
         dtcClearing = true
         errorMsg = "正在清除…"
 
-        let queue: [(String, TimeInterval)] = [
-            ("04", 6.0),
-            ("14FF0000", 6.0),
-            ("14FFFF00", 6.0),
-            ("14FFFFFF", 6.0),
-        ]
+        let isYmobd = DataSource.current.usesYmobdHandshake
+
+        // 清除序列按数据源区分：
+        //
+        // ymobd 兼容模式：04 + 3 条 UDS 服务 14（"14FF0000" 等）
+        //   这是 ymobd 的做法，有些车只认 UDS 清除
+        //
+        // 标准 ELM327：只发 04
+        //   ELM327 对 "14FF0000" 这类未定义指令会返回 "?" 或超时，
+        //   反而可能让适配器进错误状态，所以标准模式只发 04。
+        let queue: [(String, TimeInterval)] = isYmobd
+            ? [
+                ("04", 6.0),
+                ("14FF0000", 6.0),
+                ("14FFFF00", 6.0),
+                ("14FFFFFF", 6.0),
+            ]
+            : [("04", 5.0)]
+
         var anyOK = false
 
         func step(_ i: Int) {
