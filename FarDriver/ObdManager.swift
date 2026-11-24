@@ -2007,7 +2007,7 @@ extension ObdManager: CBPeripheralDelegate {
         lastRaw = full
         logRx(full)
 
-        guard pendingCommand != nil else { return }
+        guard let snapshot = pendingCommand else { return }
 
         pendingTimer?.invalidate()
         pendingTimer = nil
@@ -2015,7 +2015,17 @@ extension ObdManager: CBPeripheralDelegate {
         let h = pendingHandler
         pendingHandler = nil
 
-        let bytes = ObdParser.toBytes(full) ?? []
+        // AT 指令的响应是文本（"OK" / "ELM327 v1.5" / "13.2V"），
+        // 不走 toBytes 解析（那个只认十六进制，会把文本变成空）。
+        // 数据指令（01XX）才走 toBytes。
+        let cmd = snapshot
+        let bytes: [UInt8]
+        if cmd.hasPrefix("AT") {
+            // AT 指令：原样返回 ASCII 字节
+            bytes = Array(full.utf8)
+        } else {
+            bytes = ObdParser.toBytes(full) ?? []
+        }
         h?(bytes)
 
         // 上一条完成了，放行队列里的下一条
