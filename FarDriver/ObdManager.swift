@@ -1380,12 +1380,26 @@ final class ObdManager: NSObject, ObservableObject {
 
         /// 转速永远每轮问
         static let rpmInterval: TimeInterval = 0
-        /// 车速 0.4 秒
-        static let speedInterval: TimeInterval = 0.4
-        /// 其它仪表项：电压/水温/进气/节气门/怠速油耗
-        static let dashInterval: TimeInterval = 2.0
+
+        /// 车速间隔
+        ///
+        /// 摩托的 KWP2000 是串行协议，一条命令要 80~150ms，
+        /// 时间片太紧会把转速拖慢，所以摩托放慢到 0.8 秒。
+        static var speedInterval: TimeInterval {
+            DataSource.current == .motorcycle ? 0.8 : 0.4
+        }
+
+        /// 其它仪表项（电压/水温/进气/节气门/怠速油耗）
+        ///
+        /// 汽车 2 秒，摩托 3 秒（摩托响应慢，给足带宽给转速）。
+        static var dashInterval: TimeInterval {
+            DataSource.current == .motorcycle ? 3.0 : 2.0
+        }
+
         /// 全量模式下的后台数据
-        static let extraInterval: TimeInterval = 5.0
+        static var extraInterval: TimeInterval {
+            DataSource.current == .motorcycle ? 8.0 : 5.0
+        }
     }
 
     /// 组装下一批要发的 PID
