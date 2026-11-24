@@ -85,12 +85,14 @@ struct SportDashView: View {
     private var theme: AppTheme { themeMgr.theme }
 
     /// 放大后的转速
+    ///
+    /// 三种数据源都应用「转速倍率」，这样：
+    ///   · 远驱：原厂报 100 → 显示 1000（×10）
+    ///   · OBD：真实 800 → 也能按需放大或缩小
+    /// 倍率在「设置 → 个性化 → 转速倍率」里调，1 就是原始值。
     private var displayRpm: Double {
-        if isObd {
-            // OBD2 的转速就是真实 r/min，不需要 ×10 那套放大
-            return obd.reading.rpm ?? 0
-        }
-        return mgr.data.rpm * theme.rpmMultiplier
+        let raw: Double = isObd ? (obd.reading.rpm ?? 0) : mgr.data.rpm
+        return raw * theme.rpmMultiplier
     }
 
     /// 转速百分比（自检动画期间跟着动画走）

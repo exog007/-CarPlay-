@@ -1511,6 +1511,10 @@ final class ObdManager: NSObject, ObservableObject {
                 self.lastReadAt[code] = Date()
                 self.applyCode(code, value: v)
                 ObdValueStore.shared.update(code: code, value: v)
+                // 车速更新时喂给行程统计（OBD 没有功率，用发动机输出估算）
+                if code == "010D" {
+                    self.feedTripMeter(speed: v)
+                }
                 self.pollPump()
                 return
             }
@@ -1532,6 +1536,43 @@ final class ObdManager: NSObject, ObservableObject {
             }
             self.pollPump()
         }
+    }
+
+    /// 把当前车速喂给行程统计
+    ///
+    /// OBD 没有直接的「功率」读数，用发动机输出功率估算：
+    ///   功率 ≈ 燃油消耗率(L/h) × 汽油热值(8.9 kWh/L) × 效率(0.25)
+    /// 拿不到油耗时用 MAF 反推，再不行就按车速做粗略估算。
+    private func feedTripMeter(speed: Double) {
+        let powerW = estimatedEnginePowerW(speedKmh: speed)
+        TripMeter.shared.update(speedKmh: speed, powerW: powerW)
+    }
+
+    /// 估算当前发动机输出功率（W）
+    private func estimatedEnginePowerW(speedKmh: Double) -> Double {
+        let store = ObdValueStore.shared
+
+        // ① 有燃油消耗率（L/h）→ 最准
+        if let rate = store.values["015E"]?.value, rate > 0 {
+            // 汽油热值约 8.9 kWh/L，发动机热效率按 25%
+            return rate * 8.9 * 0.25 * 1000
+        }
+
+        // ② 有空气流量（g/s）→ 按空燃比 14.7 反推
+        //   汽油质量流量(g/s) = MAF / 14.7
+        //   能量 = 汽油 × 43MJ/kg × 效率
+        if let maf = store.values["0110"]?.value, maf > 0 {
+            let fuelGps = maf / 14.7
+            let fuelKgs = fuelGps / 1000.0
+            // 43 MJ/kg × 0.25 效率 = 10.75 MJ/kg = 10.75 kJ/g
+            let powerKW = fuelKgs * 43000.0 * 0.25
+            return powerKW * 1000
+        }
+
+        // ③ 都没有：按「怠速 + 速度相关」粗略估
+        //   怠速约 2kW，每 km/h 加 60W
+        let idleKW = 2.0
+        return (idleKW + speedKmh * 0.06) * 1000
     }
 
     /// 把 code 的值写入 reading
