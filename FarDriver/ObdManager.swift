@@ -1198,6 +1198,24 @@ final class ObdManager: NSObject, ObservableObject {
                 ready = true
                 status = .connected
                 handshakeLog.append("握手完成（\(okCount)/\(steps.count) 条有回应）")
+
+                // ⭐ 关键：0100 没解析出 PID 就补读一次
+                //    SETCRYPT 解锁后第一次 0100 经常超时（实测 7 秒以上），
+                //    但之后 0120/0140 都能通，说明只是第一次握手慢。
+                if supportedCodes.isEmpty {
+                    handshakeLog.append("0100 没拿到位图，补读一次…")
+                    send("0100", timeout: 8.0) { [weak self] b in
+                        guard let self else { return }
+                        if let b, !b.isEmpty {
+                            self.parseSupportedMap(b)
+                            self.handshakeLog.append("补读 0100 成功，支持 \(self.supportedCodes.count) 个 PID")
+                        } else {
+                            self.handshakeLog.append("补读 0100 也失败，用全表轮询")
+                        }
+                        self.startPolling()
+                    }
+                    return
+                }
                 if okCount == 0 {
                     handshakeLog.append("⚠️ 所有服务都没回应，适配器可能不兼容")
                     errorMsg = "适配器没回应，试试断开重连"
@@ -1424,7 +1442,9 @@ final class ObdManager: NSObject, ObservableObject {
             // 两次都失败：累计失败轮数，连续 3 轮才永久跳过
             let streak = (self.codeFailStreak[code] ?? 0) + 1
             self.codeFailStreak[code] = streak
-            if streak >= 3 {
+            // 连续 5 轮失败才永久跳过
+            // SETCRYPT 刚解锁时会有几轮抖动，3 轮太急
+            if streak >= 5 {
                 self.deadCodes.insert(code)
                 self.refreshUnsupportedList()
             }
