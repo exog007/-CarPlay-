@@ -1089,9 +1089,14 @@ final class ObdManager: NSObject, ObservableObject {
 
         if isYmobd {
             // ── ymobd 兼容模式 ──
-            // 完全照搬 ymobd 的序列，ATH1 保持 CAN 头 + ATSP0 自动选
+            // 照搬 ymobd 的序列：ATH1 保持 CAN 头
             steps.append(("ATH1", 1.2))
-            steps.append(("ATSP0", 3.0))
+            // 用户在设置里指定了协议就用指定的，否则 ATSP0 自动选
+            if proto == 0 {
+                steps.append(("ATSP0", 3.0))
+            } else {
+                steps.append(("ATSP\(proto)", 3.0))
+            }
             steps.append(("AT+VERSION", 1.5))
             steps.append(("ATI", 1.2))
             steps.append(("ATRV", 1.2))
@@ -1165,6 +1170,10 @@ final class ObdManager: NSObject, ObservableObject {
                     // 0100 返回的是支持 PID 位图，解析出来只问支持的
                     if cmd == "0100" {
                         self.parseSupportedMap(bytes)
+                        if self.supportedCodes.isEmpty {
+                            self.handshakeLog.append("⚠️ 0100 有响应但没解析出支持的 PID")
+                            self.handshakeLog.append("   原始：\(text)")
+                        }
                     }
                 } else if bytes != nil {
                     self.handshakeLog.append("\(cmd) → 空 (\(ms)ms)")
@@ -1186,7 +1195,9 @@ final class ObdManager: NSObject, ObservableObject {
     /// 导致轮询全变 NO DATA。
     private func startPolling() {
         stopPolling()
-        handshakeLog.append("开始轮询（协议 \(Self.protocolNumber)）")
+        let src = DataSource.current.shortTitle
+        handshakeLog.append("开始轮询（数据源=\(src) 协议=\(Self.protocolNumber)）")
+        handshakeLog.append("支持 \(supportedCodes.count) 个 PID，待问 \(allReadableCodes.count) 个")
         startPollLoop()
     }
 
