@@ -1365,50 +1365,95 @@ final class ObdManager: NSObject, ObservableObject {
     ///   · 第 1 轮：只问仪表要用的（dashCodes），让六格立刻填满
     ///   · 第 2 轮起：仪表项的每条都问（保证实时），
     ///     其余支持的 PID 分 4 组轮转（把能读的全收上来）
+    /// 每个 code 上次读取成功的时间
+    private var lastReadAt: [String: Date] = [:]
+
+    /// 各优先级的最小刷新间隔（秒）
+    ///
+    ///   · 转速：最快，每轮都问
+    ///   · 车速：次优先，约 0.4 秒
+    ///   · 其余仪表项：1~3 秒
+    ///   · 后台数据（全量模式）：5 秒
+    private enum PidPriority {
+        static let rpmCode = "010C"
+        static let speedCode = "010D"
+
+        /// 转速永远每轮问
+        static let rpmInterval: TimeInterval = 0
+        /// 车速 0.4 秒
+        static let speedInterval: TimeInterval = 0.4
+        /// 其它仪表项：电压/水温/进气/节气门/怠速油耗
+        static let dashInterval: TimeInterval = 2.0
+        /// 全量模式下的后台数据
+        static let extraInterval: TimeInterval = 5.0
+    }
+
+    /// 组装下一批要发的 PID
+    ///
+    /// 不再是「固定一轮问一批」，而是**按到期时间排优先级**：
+    ///   ① 转速永不过期 → 每轮都发
+    ///   ② 车速 0.4 秒一次
+    ///   ③ 其它仪表项 2 秒一次
+    ///   ④ 全量模式下后台数据 5 秒一次（分 4 组轮转，避免一次发太多）
+    ///
+    /// 这样转速能接近适配器极限，车速紧跟，其余 1-3 秒一刷，
+    /// 不会因为后台数据把转速拖慢。
     private func buildPollCycle() -> [String] {
-        // 过滤掉确定读不到的
         func alive(_ c: String) -> Bool { !deadCodes.contains(c) }
-
-        // 第一轮：只问仪表要用的
-        if pollRound == 0 {
-            pollRound += 1
-            return Self.dashCodes.filter(alive)
+        func due(_ c: String, _ interval: TimeInterval) -> Bool {
+            guard let last = lastReadAt[c] else { return true }   // 没读过 → 立刻读
+            return Date().timeIntervalSince(last) >= interval
         }
 
-        // 非全量模式：只问仪表的 7 项，不再拉后台数据
-        if !fullPolling {
-            return Self.dashCodes.filter(alive)
+        var batch: [String] = []
+
+        // ① 转速：永远最先发，每次都发
+        if alive(PidPriority.rpmCode) {
+            batch.append(PidPriority.rpmCode)
         }
 
-        // 全量模式：仪表项 + 分组
-        var cycle: [String] = Self.dashCodes.filter(alive)
-
-        // 候选池：
-        //   · 位图解析正常（>=8 项）→ 只用位图里的，避免无效请求
-        //   · 位图为空或明显不全（<8 项）→ 用全表逐个试
-        //     （位图可能因为 BLE 分包被截断，不能全信）
-        let pool: [String]
-        if supportedCodes.count >= 8 {
-            pool = Self.allReadableCodes.filter { supportedCodes.contains($0) }
-        } else {
-            pool = Self.allReadableCodes
+        // ② 车速：到点就发（紧跟在转速后面）
+        if alive(PidPriority.speedCode), due(PidPriority.speedCode, PidPriority.speedInterval) {
+            batch.append(PidPriority.speedCode)
         }
 
-        let dashSet = Set(Self.dashCodes)
-        let extras = pool.filter { !dashSet.contains($0) && alive($0) }
-
-        if !extras.isEmpty {
-            let groupCount = 4
-            let perGroup = max(1, (extras.count + groupCount - 1) / groupCount)
-            let start = (pollRound % groupCount) * perGroup
-            let end = min(start + perGroup, extras.count)
-            if start < end {
-                cycle.append(contentsOf: extras[start..<end])
+        // ③ 其它仪表项：2 秒一刷
+        for c in Self.dashCodes {
+            guard c != PidPriority.rpmCode, c != PidPriority.speedCode else { continue }
+            guard alive(c) else { continue }
+            if due(c, PidPriority.dashInterval) {
+                batch.append(c)
             }
         }
 
+        // ④ 全量模式：后台数据，5 秒一刷，每次最多 2 条（不抢转速的时间片）
+        if fullPolling {
+            let pool: [String]
+            if supportedCodes.count >= 8 {
+                pool = Self.allReadableCodes.filter { supportedCodes.contains($0) }
+            } else {
+                pool = Self.allReadableCodes
+            }
+            let dashSet = Set(Self.dashCodes)
+            let extras = pool.filter { !dashSet.contains($0) && alive($0) }
+
+            var picked = 0
+            for c in extras {
+                guard picked < 2 else { break }
+                if due(c, PidPriority.extraInterval) {
+                    batch.append(c)
+                    picked += 1
+                }
+            }
+        }
+
+        // 全都没到期（理论上转速总在），兜底发一次转速
+        if batch.isEmpty {
+            batch.append(PidPriority.rpmCode)
+        }
+
         pollRound += 1
-        return cycle
+        return batch
     }
 
     /// 请求一个 PID code，失败就重发（最多 2 次）
@@ -1440,6 +1485,7 @@ final class ObdManager: NSObject, ObservableObject {
                         self.reading.updatedAt = Date()
                         ObdValueStore.shared.update(code: "0142", value: v)
                         self.codeFailStreak[code] = 0
+                        self.lastReadAt[code] = Date()
                         self.pollPump()
                         return
                     }
@@ -1448,6 +1494,7 @@ final class ObdManager: NSObject, ObservableObject {
                       let v = Self.parseAny(bytes, code: code) {
                 // ── 标准 PID ──
                 self.codeFailStreak[code] = 0
+                self.lastReadAt[code] = Date()
                 self.applyCode(code, value: v)
                 ObdValueStore.shared.update(code: code, value: v)
                 self.pollPump()
