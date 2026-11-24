@@ -121,6 +121,15 @@ struct ObdGridView: View {
                     Button("完成") { dismiss() }
                 }
             }
+        
+            .onAppear {
+                // 数据页要求全量读取
+                obd.fullPolling = true
+            }
+            .onDisappear {
+                // 退出后恢复只读仪表 7 项，保证竞技仪表刷新率
+                obd.fullPolling = false
+            }
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }

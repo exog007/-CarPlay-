@@ -1338,6 +1338,22 @@ final class ObdManager: NSObject, ObservableObject {
     /// 车支持的全部 PID code（从 0100 / 0120 / 0140 位图解析）
     @Published private(set) var supportedCodes: Set<String> = []
 
+    /// 是否全量轮询
+    ///
+    ///   false（默认）：只轮询仪表要用的 7 项，刷新最快
+    ///   true          ：轮询全部支持的 PID，给数据网格用
+    ///
+    /// 竞技仪表只显示 7 项，没必要为了后台数据拖慢刷新率。
+    /// 打开 OBD2 数据页时置 true，关掉时恢复 false。
+    @Published var fullPolling: Bool = false {
+        didSet {
+            guard oldValue != fullPolling else { return }
+            // 立刻清空队列，让新策略马上生效
+            pollQueue.removeAll()
+            pollRound = 0
+        }
+    }
+
     /// 已知读不到的 PID code（连续失败后加入，轮询时跳过）
     private var deadCodes: Set<String> = []
     /// 每个 code 连续失败了几轮
@@ -1359,7 +1375,12 @@ final class ObdManager: NSObject, ObservableObject {
             return Self.dashCodes.filter(alive)
         }
 
-        // 之后：仪表项 + 分组
+        // 非全量模式：只问仪表的 7 项，不再拉后台数据
+        if !fullPolling {
+            return Self.dashCodes.filter(alive)
+        }
+
+        // 全量模式：仪表项 + 分组
         var cycle: [String] = Self.dashCodes.filter(alive)
 
         // 候选池：
