@@ -1264,8 +1264,8 @@ struct SettingsView: View {
                         Text(dataSource == .motorcycle ? "摩托车 OBD 适配器" : "OBD2 适配器")
                     } footer: {
                         Text(dataSource == .motorcycle
-                             ? "摩托适配器常见名字：OBD / ELM / MTB / JBT 等。\n摩托多用 KWP2000（协议 4/5）或 ISO 9141（协议 3），默认已选协议 5。\n\n插好 OBD 口、车通电后再扫描。"
-                             : "适配器名字通常含 OBD / ELM / V-LINK / VGATE 等字样。\n连上后会自动初始化，约 3~5 秒开始出数据。\n\n如果连上了但读不到数据，点下面「OBD2 调试」看通信日志。")
+                             ? "支持 Vgate iCar Pro、V-Link、ELM327 等标准适配器。\n蓝牙名通常含 VGATE / V-LINK / OBD / ELM 等字样。\n\n摩托多用 KWP2000（协议 4/5）或 ISO 9141（协议 3），默认已选协议 5。\n插好 OBD 口、车通电后再扫描。"
+                             : "支持 Vgate iCar Pro、V-Link、Veepeak、ELM327 等标准适配器。\n蓝牙名通常含 VGATE / V-LINK / OBD / ELM 等字样。\n\n连上后会自动初始化，约 3~5 秒开始出数据。\n如果连上了但读不到数据，点下面「OBD2 调试」看通信日志。")
                     }
 
                     Section {
@@ -1362,7 +1362,7 @@ struct SettingsView: View {
                         Text("通信协议")
                     } footer: {
                         Text(dataSource == .motorcycle
-                             ? "摩托常见协议（按概率排序）：\n① ISO 14230-4 KWP2000 快初始化（协议 5）\n② ISO 14230-4 KWP2000 5baud（协议 4）\n③ ISO 9141-2（协议 3）\n④ CAN 11位 500k（协议 6，少数进口车）\n\n默认已选协议 5。读不到就依次往下试，或点「一键自动探测」（会按这个顺序自动试）。\n\n改完之后要断开重连才生效。"
+                             ? "Vgate iCar Pro 等标准适配器都支持这些协议。\n\n摩托常见协议（按概率排序）：\n① ISO 14230-4 KWP2000 快初始化（协议 5）\n② ISO 14230-4 KWP2000 5baud（协议 4）\n③ ISO 9141-2（协议 3）\n④ CAN 11位 500k（协议 6，少数进口车）\n\n默认已选协议 5。读不到就依次往下试，或点「一键自动探测」（会按这个顺序自动试）。\n\n改完之后要断开重连才生效。"
                              : "如果调试日志里一直是「UNABLE TO CONNECT」，说明适配器找不到车的 ECU。\n\n先保持「自动」；如果不行，依次试「CAN 11位 500k」→「ISO 9141-2」→「KWP」。\n汽油车绝大多数是 CAN 11位 500k。\n\n改完之后要断开重连才生效。")
                     }
 

@@ -1691,11 +1691,16 @@ extension ObdManager: CBCentralManagerDelegate {
             || upper.contains("V-LINK")
             || upper.contains("VLINK")
             || upper.contains("VEEPEAK")
-            || upper.contains("VGATE")
+            || upper.contains("VGATE")      // Vgate iCar Pro
+            || upper.contains("ICAR")
             || upper.contains("KONNWEI")
             || upper.contains("IOS-VLINK")
             || upper.contains("CARISTA")
             || upper.contains("VSCAN")
+            || upper.contains("OBDLINK")
+            || upper.contains("SCANTOOL")
+            || upper.contains("AUTEL")
+            || upper.contains("MINI")
             // 抓包用：把元征 / 京宝通等私有模块也放进来
             // 这些前缀是从 MTB APK 的字符串池里挖出来的
             || upper.contains("MTB")
