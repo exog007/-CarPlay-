@@ -197,20 +197,37 @@ enum ObdParser {
                 // 单个字符，跳过（可能是残留）
                 continue
             default:
-                // 更长的词：按 2 位切分
-                var idx = word.startIndex
-                while idx < word.endIndex {
-                    let next = word.index(idx, offsetBy: 2, limitedBy: word.endIndex) ?? word.endIndex
-                    let chunk = String(word[idx..<next])
+                // 更长的词：可能是多个字节粘连，也可能混了 CAN 头
+                //
+                // BLE 分包会产生这种情况（实测）：
+                //   "7E8064100BE3FA817E9064100981E801"
+                //   前半是 7E8 帧，后半 "7E9064..." 里的 7E9 是第二个 ECU 的头
+                //
+                // 处理：逐字符扫描，识别并跳过 3 位 CAN 头（7E0~7EF / 7DF）
+                var i = word.startIndex
+                while i < word.endIndex {
+                    // 优先匹配 3 位 CAN 头
+                    if word[i] == "7" {
+                        let threeEnd = word.index(i, offsetBy: 3, limitedBy: word.endIndex) ?? word.endIndex
+                        if word.distance(from: i, to: threeEnd) == 3 {
+                            let head = String(word[i..<threeEnd])
+                            if let hv = UInt8(head, radix: 16),
+                               (0x7E0...0x7EF).contains(Int(hv)) || hv == 0x7DF {
+                                i = threeEnd
+                                continue
+                            }
+                        }
+                    }
+                    // 普通 2 位数据
+                    let twoEnd = word.index(i, offsetBy: 2, limitedBy: word.endIndex) ?? word.endIndex
+                    let chunk = String(word[i..<twoEnd])
                     if chunk.count == 2, let b = UInt8(chunk, radix: 16) {
                         bytes.append(b)
                     }
-                    idx = next
+                    i = twoEnd
                 }
             }
-        }
-
-        return bytes.isEmpty ? nil : bytes
+        }        return bytes.isEmpty ? nil : bytes
     }
 
     /// 从字节里找「41 <pid> <数据...>」

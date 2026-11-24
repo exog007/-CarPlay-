@@ -1275,12 +1275,15 @@ final class ObdManager: NSObject, ObservableObject {
         // 之后：仪表项 + 分组
         var cycle: [String] = Self.dashCodes.filter(alive)
 
-        // 候选池：优先车声明支持的，没读到 0100 时用全表
+        // 候选池：
+        //   · 位图解析正常（>=8 项）→ 只用位图里的，避免无效请求
+        //   · 位图为空或明显不全（<8 项）→ 用全表逐个试
+        //     （位图可能因为 BLE 分包被截断，不能全信）
         let pool: [String]
-        if supportedCodes.isEmpty {
-            pool = Self.allReadableCodes
-        } else {
+        if supportedCodes.count >= 8 {
             pool = Self.allReadableCodes.filter { supportedCodes.contains($0) }
+        } else {
+            pool = Self.allReadableCodes
         }
 
         let dashSet = Set(Self.dashCodes)
@@ -1950,23 +1953,37 @@ extension ObdManager: CBPeripheralDelegate {
             return
         }
 
-        // ── 关键：BLE 串口会把一条响应拆成多个包 ──
+        // ── BLE 收包 ──
         //
-        // 例如 "41 0C 1A F8" 可能分两次到：
-        //   包1: "41 0C 1A"
-        //   包2: " F8\r\r>"
-        // 必须累积到 '>' 才算一条完整响应，否则只拿到半截。
+        // ELM327 的响应格式是 "数据\r\r>"，
+        // 但 BLE 会把它拆成多个包，而且**某些适配器/特征不保证带上 '>'**。
+        //
+        // 关键问题：如果只认 '>'，那么：
+        //   ① 没收到 '>' 就一直等，超时后数据被丢弃
+        //   ② 收到 '>' 但包被截断（如 "7E9 06 41 00 98 1E 80 1" 缺了最后一位）
+        //
+        // 改进：
+        //   ① 收到 '>' 就立即完成当前响应
+        //   ② 同时也接受 \r 作为结束符（有些适配器不发 '>'）
+        //   ③ 如果缓冲区已有内容且长时间没新增，也当作完整（靠超时兜底）
         let chunk = String(data: d, encoding: .ascii) ?? ""
         rxBuffer += chunk
 
-        // 没收到结束符就继续等
-        guard rxBuffer.contains(">") else {
-            // 有些适配器用 \r 结尾但不发 '>'，超时兜底也算完整
+        // 有 '>' 或者 已收到 \r\r（两个回车）就当完整
+        let hasPrompt = rxBuffer.contains(">")
+        let hasDoubleCR = rxBuffer.contains("\r\r")
+
+        guard hasPrompt || hasDoubleCR else {
+            // 还没结束，继续等
+            // 但如果 pending 已经超时，timer 会自己处理
             return
         }
 
-        // 取出完整响应，清空缓冲
-        let full = rxBuffer
+        // 取出完整响应（去掉 '>' 之后的内容）
+        var full = rxBuffer
+        if let gtIdx = full.firstIndex(of: ">") {
+            full = String(full[...gtIdx])
+        }
         rxBuffer = ""
 
         lastRaw = full
