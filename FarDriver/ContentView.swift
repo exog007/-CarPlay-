@@ -1005,6 +1005,14 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+
+                Section {
+                    Text("启动与外观")
+                        .font(.caption2.bold())
+                        .foregroundStyle(themeMgr.secondary)
+                        .listRowBackground(Color.clear)
+                }
+
                 Section {
                     Toggle("打开 App 直接进竞技仪表", isOn: Binding(
                         get: { BluetoothMemory.launchInSportMode },
@@ -1117,15 +1125,12 @@ struct SettingsView: View {
                     Text("仪表布局：横纵单独缩放 + 上下左右挪动，带实时预览。觉得内容顶边或留白多就在这里调。")
                 }
 
+
                 Section {
-                    TextField("服务器地址", text: $url)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("本地 deepseek 地址")
-                } footer: {
-                    Text("例如 http://192.168.100.101:38281\n手机和电脑要在同一个 WiFi 下")
+                    Text("数据源与车辆")
+                        .font(.caption2.bold())
+                        .foregroundStyle(themeMgr.secondary)
+                        .listRowBackground(Color.clear)
                 }
 
                 Section {
@@ -1164,6 +1169,7 @@ struct SettingsView: View {
                 }
 
                 // OBD2 专属设置（只在 OBD2 模式下显示）
+
                 if dataSource.isObdFamily {
                     Section {
                         HStack {
@@ -1491,6 +1497,7 @@ struct SettingsView: View {
                 //
                 // OBD2 模式：走 ELM327 读车辆 ECU 的 DTC
                 // 远驱模式：读控制器的故障码
+
                 Section {
                     if dataSource.isObdFamily {
                         Button {
@@ -1627,57 +1634,12 @@ struct SettingsView: View {
                          : "远驱控制器不提供「清除故障码」接口，故障码由控制器检测到问题消失后自行消除。")
                 }
 
-                Section {
-                    Toggle("自动连接控制器", isOn: $mgr.autoConnect)
-                } header: {
-                    Text("蓝牙")
-                } footer: {
-                    Text("关闭后不会自动搜索控制器，需要手动点「搜索蓝牙」")
-                }
 
                 Section {
-                    Toggle("记住控制器，搜到就自动连",
-                           isOn: Binding(
-                            get: { BluetoothMemory.autoConnectController },
-                            set: { BluetoothMemory.autoConnectController = $0 }
-                           ))
-                    if let n = BluetoothMemory.lastControllerName, !n.isEmpty {
-                        HStack {
-                            Text("上次连接")
-                                .foregroundStyle(themeMgr.foreground)
-                            Spacer()
-                            Text(n)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Toggle("记住 BMS，搜到就自动连",
-                           isOn: Binding(
-                            get: { BluetoothMemory.autoConnectBms },
-                            set: { BluetoothMemory.autoConnectBms = $0 }
-                           ))
-                    if let n = BluetoothMemory.lastBmsName, !n.isEmpty {
-                        HStack {
-                            Text("上次连接的 BMS")
-                                .foregroundStyle(themeMgr.foreground)
-                            Spacer()
-                            Text(n)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("蓝牙记忆")
-                } footer: {
-                    Text("打开后，App 会记住上次连过的设备。下次进入 App 搜索时，一旦发现那台设备就自动连接，不用手动点。")
-                }
-
-                Section {
-                    Toggle("自动上传（每 60 秒）", isOn: $mgr.autoUpload)
-                } header: {
-                    Text("数据上传")
-                } footer: {
-                    Text("主界面的上传卡片上也有这个开关，两边同步")
+                    Text("仪表显示")
+                        .font(.caption2.bold())
+                        .foregroundStyle(themeMgr.secondary)
+                        .listRowBackground(Color.clear)
                 }
 
                 Section {
@@ -1821,6 +1783,86 @@ struct SettingsView: View {
                     Text("里程按控制器速度 × 时间累加；百公里电耗 = 累计电量 ÷ 里程 × 100。清空后重新统计。")
                 }
 
+
+                Section {
+                    Text("诊断")
+                        .font(.caption2.bold())
+                        .foregroundStyle(themeMgr.secondary)
+                        .listRowBackground(Color.clear)
+                }
+
+                Section {
+                    Toggle("自动连接控制器", isOn: $mgr.autoConnect)
+                } header: {
+                    Text("蓝牙")
+                } footer: {
+                    Text("关闭后不会自动搜索控制器，需要手动点「搜索蓝牙」")
+                }
+
+
+                Section {
+                    Text("连接与数据")
+                        .font(.caption2.bold())
+                        .foregroundStyle(themeMgr.secondary)
+                        .listRowBackground(Color.clear)
+                }
+
+                Section {
+                    Toggle("记住控制器，搜到就自动连",
+                           isOn: Binding(
+                            get: { BluetoothMemory.autoConnectController },
+                            set: { BluetoothMemory.autoConnectController = $0 }
+                           ))
+                    if let n = BluetoothMemory.lastControllerName, !n.isEmpty {
+                        HStack {
+                            Text("上次连接")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(n)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Toggle("记住 BMS，搜到就自动连",
+                           isOn: Binding(
+                            get: { BluetoothMemory.autoConnectBms },
+                            set: { BluetoothMemory.autoConnectBms = $0 }
+                           ))
+                    if let n = BluetoothMemory.lastBmsName, !n.isEmpty {
+                        HStack {
+                            Text("上次连接的 BMS")
+                                .foregroundStyle(themeMgr.foreground)
+                            Spacer()
+                            Text(n)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("蓝牙记忆")
+                } footer: {
+                    Text("打开后，App 会记住上次连过的设备。下次进入 App 搜索时，一旦发现那台设备就自动连接，不用手动点。")
+                }
+
+                Section {
+                    Toggle("自动上传（每 60 秒）", isOn: $mgr.autoUpload)
+                } header: {
+                    Text("数据上传")
+                } footer: {
+                    Text("主界面的上传卡片上也有这个开关，两边同步")
+                }
+
+                Section {
+                    TextField("服务器地址", text: $url)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("本地 deepseek 地址")
+                } footer: {
+                    Text("例如 http://192.168.100.101:38281\n手机和电脑要在同一个 WiFi 下")
+                }
+
                 Section {
                     Button("测试连接服务器") {
                         testServer()
@@ -1837,6 +1879,7 @@ struct SettingsView: View {
                     Label("左上角按钮切换横屏/竖屏", systemImage: "rectangle.landscape.rotate")
                         .font(.caption)
                 }
+
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
