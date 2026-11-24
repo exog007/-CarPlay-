@@ -1067,26 +1067,40 @@ final class ObdManager: NSObject, ObservableObject {
 
         // 依次握手，全部完成后再开轮询
         //
-        // ⭐ 序列完全照搬 ymobd（com.ymobd 反编译得到的）：
-        //   ATZ → ATE0 → ATL0 → ATH1 → ATSP0 → AT+VERSION → ATI → ATRV
-        //   → AT+CRYPT<随机hex> → 0100 → 020000 → 0600 → 0900 → ATDP → ...
+        // 分两条路径：
+        //   · C 系列（CAN）：ATH1 保持 CAN 头，ATSP0 自动选
+        //   · K 系列（KWP / ISO9141，摩托常用）：ATH0 关 CAN 头，直接指定协议
         //
-        // 关键差异（之前一直失败的原因）：
-        //   · ATH1 保持 CAN 头开启（不是 ATH0）
-        //   · ATSP0 自动选协议（不是固定 ATSP6）
-        //   · AT+CRYPT 是厂商自定义的授权握手，不发它适配器可能拒绝回数据
-        let steps: [(String, TimeInterval)] = [
+        // KWP2000 / ISO9141 是串行协议，没有 CAN 头概念，
+        // 发 ATH1 反而会让响应多出字节，解析容易错位。
+        let proto = Self.protocolNumber
+        let isSerial = (proto == 3 || proto == 4 || proto == 5 || proto == 1 || proto == 2)
+
+        var steps: [(String, TimeInterval)] = [
             ("ATZ", 3.5),
             ("ATE0", 1.5),
             ("ATL0", 1.2),
-            ("ATH1", 1.2),          // 保持 CAN 头（和 ymobd 一致）
-            ("ATSP0", 3.0),         // 自动选协议，给足搜索时间
-            ("AT+VERSION", 1.5),
-            ("ATI", 1.2),
-            ("ATRV", 1.2),
-            ("AT+CRYPT" + Self.randomCryptHex(), 2.5),   // ⭐ 授权握手
-            ("0100", 12.0),
         ]
+
+        if isSerial {
+            // 串行协议（KWP / ISO9141 / J1850）
+            steps.append(("ATH0", 1.2))     // 关 CAN 头（串行协议不需要）
+            steps.append(("ATS0", 1.2))     // 关空格，简化解析
+            steps.append(("ATAT1", 1.5))    // 自适应计时，慢 ECU 必需
+            steps.append(("ATSP\(proto)", 3.0))
+        } else {
+            // CAN 协议
+            steps.append(("ATH1", 1.2))     // 保持 CAN 头
+            steps.append(("ATSP\(proto)", 3.0))
+        }
+
+        steps.append(("ATI", 1.5))
+        steps.append(("ATRV", 1.2))
+        // 非 K 线协议才发 AT+CRYPT（ymobd 私有，标准适配器不需要）
+        if !isSerial {
+            steps.append(("AT+CRYPT" + Self.randomCryptHex(), 2.0))
+        }
+        steps.append(("0100", 12.0))
 
         var okCount = 0
 
