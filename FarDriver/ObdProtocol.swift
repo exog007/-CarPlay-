@@ -206,13 +206,14 @@ enum ObdParser {
                 // 处理：逐字符扫描，识别并跳过 3 位 CAN 头（7E0~7EF / 7DF）
                 var i = word.startIndex
                 while i < word.endIndex {
-                    // 优先匹配 3 位 CAN 头
+                    // 优先匹配 3 位 CAN 头（7E0~7EF / 7DF）
                     if word[i] == "7" {
                         let threeEnd = word.index(i, offsetBy: 3, limitedBy: word.endIndex) ?? word.endIndex
                         if word.distance(from: i, to: threeEnd) == 3 {
                             let head = String(word[i..<threeEnd])
-                            if let hv = UInt8(head, radix: 16),
-                               (0x7E0...0x7EF).contains(Int(hv)) || hv == 0x7DF {
+                            // 用 Int 比较，避免超出 UInt8 范围
+                            if let hv = Int(head, radix: 16),
+                               (0x7E0...0x7EF).contains(hv) || hv == 0x7DF {
                                 i = threeEnd
                                 continue
                             }
