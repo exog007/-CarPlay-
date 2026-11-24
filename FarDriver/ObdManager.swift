@@ -806,8 +806,49 @@ final class ObdManager: NSObject, ObservableObject {
         return Int(cc)
     }
 
+    /// 适配器 AT+VERSION 报出来的 crypt 值（如 "6CCA5477"）
+    private var adapterCrypt: String? = nil
+    /// 适配器型号（如 "B02-Z"）
+    private var adapterDeviceType: String? = nil
+
     /// 最近一次 AT+CRYPT 的验证结果（调试面板显示用）
     @Published private(set) var cryptVerified: Bool? = nil
+
+    /// 解析 AT+VERSION 的响应，提取 device type 和 crypt
+    ///
+    /// 响应形如：
+    ///   Shenzhen Yuming Electronics Co., Ltd.
+    ///   version:V1.0.0
+    ///   device type:B02-Z
+    ///   device name:OBDII
+    ///   device mac:A4:44:08:05:29:11
+    ///   interface:v2.1
+    ///   cust id:NONE
+    ///   crypt:6CCA5477
+    private func parseVersionInfo(_ text: String) {
+        func field(_ key: String) -> String? {
+            let lower = text.lowercased()
+            let k = key.lowercased()
+            guard let r = lower.range(of: k + ":") else { return nil }
+            let rest = text[r.upperBound...]
+            let line = rest.split(whereSeparator: { $0 == "\r" || $0 == "\n" }).first.map(String.init) ?? ""
+            let v = line.trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? nil : v
+        }
+        if let dt = field("device type") {
+            adapterDeviceType = dt
+            handshakeLog.append("适配器型号: \(dt)")
+        }
+        if let c = field("crypt") {
+            adapterCrypt = c
+            handshakeLog.append("适配器 crypt: \(c)")
+            // 立刻算一下要发的 SETCRYPT 值，方便调试
+            if let raw = UInt32(c, radix: 16) {
+                let enc = Int(edesEnCrypt(Int(raw)))
+                handshakeLog.append("将发 AT+SETCRYPT\(String(format: "%08X", enc))")
+            }
+        }
+    }
 
     /// 处理 AT+CRYPT 的响应，判断适配器是不是正版
     private func checkCryptResponse(command: String, bytes: [UInt8]) {
@@ -1100,7 +1141,10 @@ final class ObdManager: NSObject, ObservableObject {
             steps.append(("AT+VERSION", 1.5))
             steps.append(("ATI", 1.2))
             steps.append(("ATRV", 1.2))
-            steps.append(("AT+CRYPT" + Self.randomCryptHex(), 2.5))
+            // 占位：真正要发什么要等 AT+VERSION 回来后才知道
+            //   · 有 crypt 字段 → AT+SETCRYPT<加密值>
+            //   · 没有         → AT+CRYPT<随机值>（老的验证方式）
+            steps.append(("@@CRYPT@@", 2.5))
         } else if isSerial {
             // ── 串行协议（KWP / ISO9141 / J1850）──
             steps.append(("ATH0", 1.2))     // 关 CAN 头（串行协议不需要）
@@ -1161,7 +1205,17 @@ final class ObdManager: NSObject, ObservableObject {
                 startPolling()
                 return
             }
-            let (cmd, t) = steps[index]
+            var (cmd, t) = steps[index]
+            // 动态展开加密握手指令
+            if cmd.hasPrefix("@@CRYPT@@") {
+                if let c = adapterCrypt, !c.isEmpty, let raw = UInt32(c, radix: 16) {
+                    let enc = Int(edesEnCrypt(Int(raw)))
+                    cmd = "AT+SETCRYPT" + String(format: "%08X", enc)
+                    handshakeLog.append("适配器型号 \(adapterDeviceType ?? "?")，crypt=\(c) → 发 SETCRYPT")
+                } else {
+                    cmd = "AT+CRYPT" + Self.randomCryptHex()
+                }
+            }
             let sentAt = Date()
             send(cmd, timeout: t) { [weak self] bytes in
                 guard let self else { return }
@@ -1174,8 +1228,12 @@ final class ObdManager: NSObject, ObservableObject {
                     if !text.contains("UNABLETOCONNECT") && !text.contains("NODATA") {
                         okCount += 1
                     }
-                    // AT+CRYPT 的返回要单独校验
-                    if cmd.hasPrefix("AT+CRYPT") {
+                    // AT+VERSION：解析 device type 和 crypt
+                    if cmd == "AT+VERSION" {
+                        self.parseVersionInfo(text)
+                    }
+                    // AT+CRYPT / AT+SETCRYPT 的返回单独校验
+                    if cmd.hasPrefix("AT+CRYPT") || cmd.hasPrefix("AT+SETCRYPT") {
                         self.checkCryptResponse(command: cmd, bytes: bytes)
                     }
                     // 0100 返回的是支持 PID 位图，解析出来只问支持的
