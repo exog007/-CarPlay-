@@ -16,24 +16,31 @@ struct ObdGridView: View {
     @Environment(\.dismiss) private var dismiss
 
     /// 是否只显示「有值」的项目
-    @State private var hideEmpty = true
+    @State private var hideEmpty = false
     /// 搜索关键字
     @State private var keyword = ""
 
     /// 展示列表：车支持的 PID，有值就填值，没值显示 —
     private var items: [Item] {
-        // 优先用车声明支持的 PID，没有就展示全部
-        let codes: [String]
-        if !obd.supportedPids.isEmpty {
-            codes = ObdPidTable.all
-                .map { $0.code }
-                .filter { c in
-                    guard let b = UInt8(c.suffix(2), radix: 16) else { return false }
-                    return obd.supportedPids.contains { $0.pidByte == b }
-                }
-        } else {
+        // 展示范围：
+        //   · 车声明支持的（supportedCodes）
+        //   · 已经读到过值的（store 里有）
+        // 两者合并，没读到 0100 时退回全部
+        let supported = obd.supportedCodes
+        let hasValue = Set(store.values.keys)
+
+        var codes: [String]
+        if supported.isEmpty && hasValue.isEmpty {
+            // 还没握手完，先展示全部（显示 —）
             codes = ObdPidTable.all.map { $0.code }
+        } else {
+            codes = ObdPidTable.all.map { $0.code }.filter { c in
+                supported.contains(c) || hasValue.contains(c)
+            }
         }
+
+        // 按 ID 排序，稳定不跳
+        codes.sort()
 
         var list: [Item] = []
         for code in codes {
@@ -66,7 +73,7 @@ struct ObdGridView: View {
                             .fill(obd.status.isConnected ? themeMgr.color(.ok) : Color.gray)
                             .frame(width: 8, height: 8)
                         Text(obd.status.isConnected
-                             ? "已连接 · \(store.values.count) 项有数据"
+                             ? "已连接 · 支持 \(obd.supportedCodes.count) 项 · 已读到 \(store.values.count) 项"
                              : obd.status.text)
                             .font(.caption)
                             .foregroundStyle(themeMgr.secondary)

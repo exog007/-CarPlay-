@@ -72,11 +72,7 @@ final class ObdManager: NSObject, ObservableObject {
 
     /// 把「不支持的 PID」集合转成可显示的命令字符串列表
     private func refreshUnsupportedList() {
-        var list: [String] = []
-        for p in ObdPid.allCases where unsupported.contains(p) || badPids.contains(p) {
-            list.append(p.command)
-        }
-        unsupportedPids = list
+        unsupportedPids = deadCodes.sorted()
     }
 
     enum ConnectStatus: Equatable {
@@ -645,19 +641,10 @@ final class ObdManager: NSObject, ObservableObject {
     private var pendingTimer: Timer?
     /// 初始化完成后才开始轮询
     private var ready = false
-    /// 本轮轮询的 PID 队列
-    private var pollQueue: [ObdPid] = []
-    private var currentPollPid: ObdPid?
-    /// 记录哪些 PID 这台车不支持，后续跳过
-    private var unsupported: Set<ObdPid> = []
+    /// 本轮轮询的 PID 队列（用字符串 code，覆盖 ObdPidTable 全部 91 个）
+    private var pollQueue: [String] = []
+    private var currentPollPid: String?
 
-    /// 连续失败多轮、确定读不到的 PID（轮询时跳过）
-    ///
-    /// 和 unsupported 的区别：那个是「发一次就 NO DATA 就放弃」，
-    /// 这个要连续失败 5 轮才判定，避免克隆版偶发丢包导致永久禁用。
-    private var badPids: Set<ObdPid> = []
-    /// 每个 PID 连续失败了几轮
-    private var failStreak: [ObdPid: Int] = [:]
 
     private override init() {
         super.init()
@@ -1065,9 +1052,9 @@ final class ObdManager: NSObject, ObservableObject {
         ready = false
         handshakeLog.removeAll()
         handshakeLog.append("开始握手")
+        deadCodes.removeAll()
+        codeFailStreak.removeAll()
         supportedPids.removeAll()
-        badPids.removeAll()
-        failStreak.removeAll()
 
         // 抓包模式：不发任何指令，只被动接收
         if Self.sniffMode {
@@ -1150,7 +1137,6 @@ final class ObdManager: NSObject, ObservableObject {
 
                 ready = true
                 status = .connected
-                unsupported.removeAll()
                 handshakeLog.append("握手完成（\(okCount)/\(steps.count) 条有回应）")
                 if okCount == 0 {
                     handshakeLog.append("⚠️ 所有服务都没回应，适配器可能不兼容")
@@ -1217,28 +1203,20 @@ final class ObdManager: NSObject, ObservableObject {
 
     /// 轮询泵：上一条一结束就立刻发下一条
     ///
-    /// 之前的做法是每 0.05 秒定时触发一次 pollNext()，
-    /// 但 requestWithRetry 是异步的，定时器往往会撞上
-    /// pendingCommand != nil 而空转，白等一个周期。
-    ///
-    /// 现在改成：每次 send 的回调里主动调 pollPump()，
-    /// 真正做到「一有响应就发下一条」。
+    /// 真正「一有响应就发下一条」，把适配器往返时间压到最低。
     private func pollPump() {
         guard ready, connected else { return }
-        // 上一条还没回来，等它的回调来驱动
         guard pendingCommand == nil else { return }
 
         if pollQueue.isEmpty {
-            pollQueue = buildPollCycle().filter {
-                !unsupported.contains($0) && !badPids.contains($0)
-            }
+            pollQueue = buildPollCycle()
         }
         guard !pollQueue.isEmpty else { return }
 
-        let pid = pollQueue.removeFirst()
-        currentPollPid = pid
+        let code = pollQueue.removeFirst()
+        currentPollPid = code
 
-        requestWithRetry(pid: pid, attempt: 0)
+        requestCode(code, attempt: 0)
     }
 
     private func stopPolling() {
@@ -1249,7 +1227,6 @@ final class ObdManager: NSObject, ObservableObject {
         pendingCommand = nil
         pendingHandler = nil
         currentPollPid = nil
-        // 清空队列，避免重连后还在跑旧数据
         pollQueue.removeAll()
     }
 
@@ -1260,60 +1237,119 @@ final class ObdManager: NSObject, ObservableObject {
     /// 轮询轮次计数
     private var pollRound = 0
 
-    /// 仪表要用的 PID（每轮必问，保证实时性）
-    ///
-    ///   · 转速、车速：大数字
-    ///   · 水温、负荷、节气门、进气温度：底部四格
-    /// 转速和车速各出现两次，让最显眼的数字更新更勤。
-    private static let dashCriticalPids: [ObdPid] = [
-        .rpm, .speed, .voltage, .rpm, .coolant, .rpm, .engineLoad, .throttle, .intakeAir,
-        .rpm, .speed, .voltage,
-    ]
+    /// 车支持的全部 PID code（从 0100 / 0120 / 0140 位图解析）
+    @Published private(set) var supportedCodes: Set<String> = []
+
+    /// 已知读不到的 PID code（连续失败后加入，轮询时跳过）
+    private var deadCodes: Set<String> = []
+    /// 每个 code 连续失败了几轮
+    private var codeFailStreak: [String: Int] = [:]
 
     /// 组装一轮轮询
     ///
-    /// 实时性优先：
-    ///   · 第一轮：只问仪表要用的关键 PID，让六格**立刻填满**
-    ///   · 后续轮：关键 PID + 其余 PID 分 4 组轮转
-    ///
-    /// 这样仪表上的数据始终是最新的，后台数据（燃油修正、氧传感器等）
-    /// 慢慢补，不拖慢主干。
-    private func buildPollCycle() -> [ObdPid] {
-        // 第一轮：只问仪表要用的，快速填满
+    /// 策略：
+    ///   · 第 1 轮：只问仪表要用的（dashCodes），让六格立刻填满
+    ///   · 第 2 轮起：仪表项的每条都问（保证实时），
+    ///     其余支持的 PID 分 4 组轮转（把能读的全收上来）
+    private func buildPollCycle() -> [String] {
+        // 过滤掉确定读不到的
+        func alive(_ c: String) -> Bool { !deadCodes.contains(c) }
+
+        // 第一轮：只问仪表要用的
         if pollRound == 0 {
             pollRound += 1
-            return Self.dashCriticalPids.filter { pid in
-                !badPids.contains(pid)
-            }
+            return Self.dashCodes.filter(alive)
         }
 
-        // 后续轮：关键 PID + 分组次要数据
-        var cycle: [ObdPid] = Self.dashCriticalPids
+        // 之后：仪表项 + 分组
+        var cycle: [String] = Self.dashCodes.filter(alive)
 
-        // 剩下的支持 PID 分 4 组轮转（燃油修正、氧传感器等后台数据）
-        let extras: [ObdPid] = supportedPids.isEmpty
-            ? ObdPid.allCases
-            : ObdPid.allCases.filter { supportedPids.contains($0) }
+        // 候选池：优先车声明支持的，没读到 0100 时用全表
+        let pool: [String]
+        if supportedCodes.isEmpty {
+            pool = Self.allReadableCodes
+        } else {
+            pool = Self.allReadableCodes.filter { supportedCodes.contains($0) }
+        }
 
-        // 去掉已经在关键列表里的，避免重复
-        let keySet = Set(Self.dashCriticalPids)
-        let pool = extras.filter { !keySet.contains($0) && !badPids.contains($0) }
+        let dashSet = Set(Self.dashCodes)
+        let extras = pool.filter { !dashSet.contains($0) && alive($0) }
 
-        if !pool.isEmpty {
+        if !extras.isEmpty {
             let groupCount = 4
-            let perGroup = max(1, (pool.count + groupCount - 1) / groupCount)
+            let perGroup = max(1, (extras.count + groupCount - 1) / groupCount)
             let start = (pollRound % groupCount) * perGroup
-            let end = min(start + perGroup, pool.count)
+            let end = min(start + perGroup, extras.count)
             if start < end {
-                cycle.append(contentsOf: pool[start..<end])
+                cycle.append(contentsOf: extras[start..<end])
             }
         }
 
         pollRound += 1
+        return cycle
+    }
 
-        return cycle.filter { pid in
-            !badPids.contains(pid)
+    /// 请求一个 PID code，失败就重发（最多 2 次）
+    ///
+    /// 响应一到立刻驱动下一条，形成流水线。
+    private func requestCode(_ code: String, attempt: Int) {
+        let isLast = attempt + 1 >= 2
+        let cmd = (code == "0142") ? "ATRV" : code
+
+        send(cmd, timeout: isLast ? 1.0 : 0.5) { [weak self] bytes in
+            guard let self else { return }
+
+            // ── ATRV：文本响应 "13.2V" ──
+            if code == "0142" {
+                if let bytes, !bytes.isEmpty {
+                    let text = ObdParser.rawString(bytes)
+                    let digits = text.replacingOccurrences(of: "V", with: "")
+                                      .replacingOccurrences(of: "v", with: "")
+                                      .trimmingCharacters(in: .whitespaces)
+                    if let v = Double(digits), v > 5, v < 30 {
+                        self.reading.batteryVoltage = v
+                        self.reading.updatedAt = Date()
+                        ObdValueStore.shared.update(code: "0142", value: v)
+                        self.codeFailStreak[code] = 0
+                        self.pollPump()
+                        return
+                    }
+                }
+            } else if let bytes, !bytes.isEmpty,
+                      let v = Self.parseAny(bytes, code: code) {
+                // ── 标准 PID ──
+                self.codeFailStreak[code] = 0
+                self.applyCode(code, value: v)
+                ObdValueStore.shared.update(code: code, value: v)
+                self.pollPump()
+                return
+            }
+
+            // 失败：还有机会就立即重发
+            if !isLast {
+                self.requestCode(code, attempt: attempt + 1)
+                return
+            }
+
+            // 两次都失败：累计失败轮数，连续 3 轮才永久跳过
+            let streak = (self.codeFailStreak[code] ?? 0) + 1
+            self.codeFailStreak[code] = streak
+            if streak >= 3 {
+                self.deadCodes.insert(code)
+                self.refreshUnsupportedList()
+            }
+            self.pollPump()
         }
+    }
+
+    /// 把 code 的值写入 reading
+    private func applyCode(_ code: String, value: Double) {
+        if let p = ObdPid(rawValue: code) {
+            apply(pid: p, value: value)
+            return
+        }
+        // 枚举外的 PID：只写进仓库，reading 不动
+        reading.updatedAt = Date()
     }
 
     /// 车支持的 PID 集合（从 0100 / 0120 / 0140 的位图解析出来）
@@ -1346,70 +1382,13 @@ final class ObdManager: NSObject, ObservableObject {
             }
             i += 6
         }
-        if found {
-            let names = supportedPids.map { $0.command }.sorted().joined(separator: ",")
-            handshakeLog.append("车支持 \(supportedPids.count) 个 PID: \(names)")
-        }
-    }
+        // 同时用字符串 code 记录（覆盖 ObdPidTable 全部 91 个）
+        let codes = Self.parseSupportedCodes(bytes)
+        for c in codes { supportedCodes.insert(c) }
 
-    /// 请求一个 PID，失败就重发（最多 3 次）
-    ///
-    /// 背景：这台 ELM327 v2.1 是克隆芯片，对单 PID 查询会丢应答——
-    /// 9 种 AT 配置测下来，0100 能读、010C 全是 NO DATA。
-    /// 重发就是碰运气，克隆版偶发能成功。
-    private func requestWithRetry(pid: ObdPid, attempt: Int) {
-        // 只重试一次：通信已经稳定，多重试只会拖慢刷新率
-        let maxAttempts = 2
-        let isLast = attempt + 1 >= maxAttempts
-
-        // 超时给得短：正常响应 30~80ms 就回来了，
-        // 拖到 1 秒只会让一整车数据变慢
-        // 电压用 ATRV（所有适配器都支持），其余用标准 PID
-        let cmd = (pid == .voltage) ? "ATRV" : pid.command
-        send(cmd, timeout: isLast ? 1.0 : 0.5) { [weak self] bytes in
-            guard let self else { return }
-
-            // 拿到有效数据：用通用 PID 表解析，所有能读的都存起来
-            if let bytes, !bytes.isEmpty {
-                // ATRV 是文本响应（"13.2V"），单独解析
-                if pid == .voltage {
-                    let text = ObdParser.rawString(bytes)
-                    let digits = text.replacingOccurrences(of: "V", with: "")
-                                      .replacingOccurrences(of: "v", with: "")
-                                      .trimmingCharacters(in: .whitespaces)
-                    if let v = Double(digits), v > 5, v < 30 {
-                        self.reading.batteryVoltage = v
-                        self.failStreak[pid] = 0
-                        self.pollPump()
-                        return
-                    }
-                } else if let v = Self.parseAny(bytes, code: pid.command) {
-                    self.failStreak[pid] = 0
-                    self.lastRawData = bytes
-                    self.apply(pid: pid, value: v)
-                    ObdValueStore.shared.update(code: pid.command, value: v)
-                    // ⭐ 关键：响应一到，立刻发下一条
-                    self.pollPump()
-                    return
-                }
-            }
-
-            // 还有机会，立刻重发（不延迟）
-            if !isLast {
-                self.requestWithRetry(pid: pid, attempt: attempt + 1)
-                return
-            }
-
-            // 都失败：累计失败轮数
-            let streak = (self.failStreak[pid] ?? 0) + 1
-            self.failStreak[pid] = streak
-            // 连续 5 轮才永久跳过，避免偶发丢包误判
-            if streak >= 5 {
-                self.badPids.insert(pid)
-                self.refreshUnsupportedList()
-            }
-            // ⭐ 失败也要继续下一条，不能卡住
-            self.pollPump()
+        if found || !codes.isEmpty {
+            let all = supportedCodes.sorted().joined(separator: ",")
+            handshakeLog.append("车支持 \(supportedCodes.count) 个 PID: \(all)")
         }
     }
 
