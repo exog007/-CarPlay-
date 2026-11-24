@@ -1119,6 +1119,17 @@ final class ObdManager: NSObject, ObservableObject {
 
         steps.append(("0100", 12.0))
 
+        // ymobd 在 0100 之后还会发一串查询，让适配器/ECU 进入工作状态
+        // （实测：只发 0100 时后续单 PID 全是 NO DATA）
+        if isYmobd {
+            steps.append(("020000", 3.0))
+            steps.append(("0600", 3.0))
+            steps.append(("0900", 3.0))
+            steps.append(("ATDP", 2.0))
+            steps.append(("0120", 3.0))
+            steps.append(("0140", 3.0))
+        }
+
         var okCount = 0
 
         func run(_ index: Int) {
@@ -1307,10 +1318,17 @@ final class ObdManager: NSObject, ObservableObject {
     ///
     /// 响应一到立刻驱动下一条，形成流水线。
     private func requestCode(_ code: String, attempt: Int) {
-        let isLast = attempt + 1 >= 2
+        // ymobd 模式的适配器更挑剔：重试 3 次、超时给足
+        let isYmobd = DataSource.current.usesYmobdHandshake
+        let maxAttempts = isYmobd ? 3 : 2
+        let isLast = attempt + 1 >= maxAttempts
         let cmd = (code == "0142") ? "ATRV" : code
 
-        send(cmd, timeout: isLast ? 1.0 : 0.5) { [weak self] bytes in
+        let timeout: TimeInterval = isYmobd
+            ? (isLast ? 1.5 : 0.8)
+            : (isLast ? 1.0 : 0.5)
+
+        send(cmd, timeout: timeout) { [weak self] bytes in
             guard let self else { return }
 
             // ── ATRV：文本响应 "13.2V" ──
