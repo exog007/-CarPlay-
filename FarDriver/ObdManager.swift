@@ -207,16 +207,33 @@ final class ObdManager: NSObject, ObservableObject {
     /// 可选协议列表
     static let protocolOptions: [(num: Int, name: String)] = [
         (0, "自动（先试这个）"),
+        // ── 摩托车最常用（排前面）──
+        (5, "KWP2000 快初始化 ★摩托常用"),
+        (4, "KWP2000 5baud 慢初始化"),
+        (3, "ISO 9141-2 ★老摩托常用"),
+        // ── 汽车常用 ──
         (6, "CAN 11位 500k（汽油车最常见）"),
         (8, "CAN 11位 250k"),
         (7, "CAN 29位 500k"),
         (9, "CAN 29位 250k"),
-        (3, "ISO 9141-2"),
-        (4, "KWP 5baud"),
-        (5, "KWP 快初始化"),
+        // ── 老美系 ──
         (1, "SAE J1850 PWM"),
         (2, "SAE J1850 VPW"),
     ]
+
+    /// 摩托车推荐协议（按顺序尝试）
+    ///
+    /// ISO 14230-4 KWP（协议 5 快 / 4 慢）是摩托最常用的，
+    /// 其次是 ISO 9141-2（协议 3），少数进口车用 CAN。
+    static let motorcycleProtocols: [Int] = [5, 4, 3, 6, 8, 7, 9]
+
+    /// 汽车推荐协议
+    static let carProtocols: [Int] = [6, 8, 7, 9, 3, 5, 4, 1, 2]
+
+    /// 当前数据源推荐的探测顺序
+    static var probeOrder: [Int] {
+        DataSource.current == .motorcycle ? motorcycleProtocols : carProtocols
+    }
 
     // MARK: - 一键自动探测
 
@@ -246,17 +263,33 @@ final class ObdManager: NSObject, ObservableObject {
         // 探测期间停掉轮询，避免命令打架
         stopPolling()
 
-        let testOrder: [(num: Int, name: String)] = [
-            (6, "CAN 11/500"),
-            (8, "CAN 11/250"),
-            (7, "CAN 29/500"),
-            (9, "CAN 29/250"),
-            (5, "KWP 快初始化"),
-            (4, "KWP 5baud"),
-            (3, "ISO 9141-2"),
-            (1, "J1850 PWM"),
-            (2, "J1850 VPW"),
-        ]
+        // 按数据源决定探测顺序：
+        //   摩托车先试 KWP / ISO9141（串行协议）
+        //   汽车先试 CAN（并行协议）
+        let isMoto = DataSource.current == .motorcycle
+        let testOrder: [(num: Int, name: String)] = isMoto
+            ? [
+                (5, "KWP2000 快初始化"),
+                (4, "KWP2000 5baud"),
+                (3, "ISO 9141-2"),
+                (6, "CAN 11/500"),
+                (8, "CAN 11/250"),
+                (7, "CAN 29/500"),
+                (9, "CAN 29/250"),
+                (1, "J1850 PWM"),
+                (2, "J1850 VPW"),
+              ]
+            : [
+                (6, "CAN 11/500"),
+                (8, "CAN 11/250"),
+                (7, "CAN 29/500"),
+                (9, "CAN 29/250"),
+                (3, "ISO 9141-2"),
+                (5, "KWP2000 快初始化"),
+                (4, "KWP2000 5baud"),
+                (1, "J1850 PWM"),
+                (2, "J1850 VPW"),
+              ]
 
         // ① 先读硬件信息
         send("ATI", timeout: 3.0) { [weak self] b1 in
@@ -580,10 +613,6 @@ final class ObdManager: NSObject, ObservableObject {
     /// 写入方式：true 用 withResponse（更可靠），false 用 withoutResponse
     private(set) var txNeedsResponse = false
 
-    // MARK: - 给 AnCheManager 用的只读访问
-    var peripheralRef: CBPeripheral? { peripheral }
-    var txCharRef: CBCharacteristic? { txChar }
-    var txNeedsResponseRef: Bool { txNeedsResponse }
     /// 接收缓冲：BLE 会把一条响应拆包，必须攒到 '>' 才算完整
     private var rxBuffer = ""
     /// 发送队列：上一条命令没回来之前，后续命令排队等
@@ -952,13 +981,8 @@ final class ObdManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 抓包模式（逆向私有协议用）
+    // MARK: - 抓包模式（调试用）
 
-    /// 用 AnChe（金奔腾）私有协议，而不是 ELM327
-    static var useAnChe: Bool {
-        get { UserDefaults.standard.bool(forKey: "obdUseAnChe") }
-        set { UserDefaults.standard.set(newValue, forKey: "obdUseAnChe") }
-    }
 
     /// 抓包模式：连上后**不发任何 AT 指令**，只被动接收并记录对方发的所有字节
     ///
@@ -1048,20 +1072,6 @@ final class ObdManager: NSObject, ObservableObject {
             handshakeLog.append("🔍 抓包模式：不发指令，等待模块主动发包")
             handshakeLog.append("（发 AT 指令会看不到私有协议，所以这里什么都不发）")
             appendLog("< 进入抓包模式")
-            return
-        }
-
-        // AnChe 私有协议模式：不发 ELM327 握手，直接开始协议握手
-        if Self.useAnChe {
-            status = .connected
-            ready = false
-            handshakeLog.append("🔧 AnChe 协议模式：跳过 ELM327 握手")
-            AnCheManager.shared.clearLog()
-            AnCheManager.shared.ping { ok in
-                self.handshakeLog.append(ok
-                    ? "✅ AnChe 协议握手成功"
-                    : "⚠️ AnChe 协议握手失败（模块可能不认这个协议）")
-            }
             return
         }
 
@@ -1859,14 +1869,6 @@ extension ObdManager: CBPeripheralDelegate {
         // 🔍 抓包模式：原样记录，不按 '>' 切帧（私有协议是二进制，没有 ASCII 结束符）
         if Self.sniffMode {
             recordSniff(d)
-            // 同时转发给 AnChe 解析器（抓包模式下也能跑协议）
-            AnCheManager.shared.handleIncoming(d)
-            return
-        }
-
-        // 用 AnChe 协议时，数据直接交给 AnCheManager，不走 ELM327 解析
-        if Self.useAnChe {
-            AnCheManager.shared.handleIncoming(d)
             return
         }
 

@@ -861,10 +861,6 @@ struct SettingsView: View {
     @State private var showSniff = false
     /// BLE 完整诊断页
     @State private var showBleInspector = false
-    /// AnChe 协议测试页
-    @State private var showAnChe = false
-    /// 用 AnChe 私有协议
-    @AppStorage("obdUseAnChe") private var useAnChe: Bool = false
     /// 抓包模式（不发 AT 指令）
     @AppStorage("obdSniffMode") private var sniffMode: Bool = false
     /// 蓝牙扫描时显示所有设备（含非 ELM327 的私有模块）
@@ -1350,32 +1346,11 @@ struct SettingsView: View {
                             }
                         }
 
-                        // ── AnChe 私有协议 ──
-                        Toggle("用 AnChe 协议（金奔腾）", isOn: $useAnChe)
-
-                        Button {
-                            showAnChe = true
-                        } label: {
-                            HStack {
-                                Image(systemName: "flame")
-                                    .foregroundStyle(themeMgr.color(.power))
-                                Text("AnChe 协议测试")
-                                    .foregroundStyle(themeMgr.foreground)
-                                Spacer()
-                                Text(AnCheManager.shared.handshaked ? "已通" : "未通")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(AnCheManager.shared.handshaked
-                                                     ? themeMgr.color(.ok) : themeMgr.secondary)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } header: {
-                        Text("私有协议模块（元征 / 京宝通等）")
-                    } footer: {
-                        Text("这些模块用私有二进制协议，不是 ELM327。\n\n· 抓包模式：连上后不发 AT 指令，只被动记录\n· BLE 诊断：列出所有服务和特征，可手动切换写/通知特征\n· AnChe 协议：金奔腾专属帧格式，已验证可用\n\n⚠️ 开启 AnChe 后不再发 ELM327 握手，直接按 AnChe 帧收发。")
-                    }
+                } header: {
+                    Text("私有协议模块（元征 / 京宝通等）")
+                } footer: {
+                    Text("这些模块用私有二进制协议，不是 ELM327，无法直接读取车辆数据。\n\n· 抓包模式：连上后不发 AT 指令，只被动记录原始字节\n· BLE 诊断：列出所有服务和特征，可手动切换写/通知特征\n\n⚠️ 建议改用标准 ELM327 BLE 适配器（支持 KWP2000 / CAN 等标准协议）。")
+                }
 
                     Section {
                         Picker("OBD 协议", selection: bindingObdProtocol) {
@@ -1387,7 +1362,7 @@ struct SettingsView: View {
                         Text("通信协议")
                     } footer: {
                         Text(dataSource == .motorcycle
-                             ? "摩托常见：KWP2000 快初始化（协议 5）→ KWP 5baud（协议 4）→ ISO 9141-2（协议 3）。\n\n默认已选协议 5。读不到就依次往下试，或点「一键自动探测」。\n\n改完之后要断开重连才生效。"
+                             ? "摩托常见协议（按概率排序）：\n① ISO 14230-4 KWP2000 快初始化（协议 5）\n② ISO 14230-4 KWP2000 5baud（协议 4）\n③ ISO 9141-2（协议 3）\n④ CAN 11位 500k（协议 6，少数进口车）\n\n默认已选协议 5。读不到就依次往下试，或点「一键自动探测」（会按这个顺序自动试）。\n\n改完之后要断开重连才生效。"
                              : "如果调试日志里一直是「UNABLE TO CONNECT」，说明适配器找不到车的 ECU。\n\n先保持「自动」；如果不行，依次试「CAN 11位 500k」→「ISO 9141-2」→「KWP」。\n汽油车绝大多数是 CAN 11位 500k。\n\n改完之后要断开重连才生效。")
                     }
 
@@ -1951,9 +1926,6 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showBleInspector) {
                 BleInspectorView(themeMgr: themeMgr)
-            }
-            .sheet(isPresented: $showAnChe) {
-                AnCheView(themeMgr: themeMgr)
             }
             .sheet(isPresented: $showBootSound) {
                 BootSoundView(themeMgr: themeMgr)
