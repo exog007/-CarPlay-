@@ -1,12 +1,12 @@
 //
 //  DataSource.swift
-//  数据源选择：远驱控制器 / OBD2 汽车 / 摩托车
+//  数据源选择：远驱 / ymobd 汽车 / 标准 OBD2 汽车 / 摩托车
 //
-//  三者互斥：选哪个就只启动哪个，不会同时抢占蓝牙。
+//  四者互斥：选哪个就只启动哪个，不会同时抢占蓝牙。
 //
-//  OBD2 和摩托车共用同一套 ELM327 读取代码，
-//  但蓝牙记忆、协议、主题、仪表布局各自独立，
-//  这样汽车和摩托的适配器可以各自记住，互不干扰。
+//  三个 OBD 数据源共用同一套读取代码，但：
+//   · 握手序列不同（ymobd 版有私有授权指令）
+//   · 适配器记忆、协议、主题、布局各自独立
 //
 
 import Foundation
@@ -15,14 +15,24 @@ import Combine
 enum DataSource: String, CaseIterable, Identifiable {
     /// 远驱控制器（电动车 / 电摩）
     case fardriver  = "fardriver"
-    /// OBD2 汽车
+
+    /// ymobd 兼容模式（特殊 ELM327 变体）
+    ///
+    /// 有些适配器只认 ymobd 的握手序列：
+    ///   ATH1（保持 CAN 头）+ ATSP0（自动选协议）+ AT+CRYPT（授权）
+    /// 普通 ELM327 不需要这些，发了反而可能出问题。
+    case obdYmobd   = "obdYmobd"
+
+    /// 标准 OBD2 汽车（ELM327 / Vgate iCar Pro 等）
+    ///
+    /// 走最标准的 ELM327 流程：
+    ///   ATZ → ATE0 → ATL0 → ATS0 → ATSPn → 0100
+    /// 兼容绝大多数适配器。
     case obd2       = "obd2"
+
     /// OBD2 摩托车
     ///
-    /// 和 obd2 走同一套 ELM327 协议，区别是：
-    ///   · 默认协议偏向 KWP2000 / ISO9141（摩托常用）
-    ///   · 独立的适配器记忆、主题、布局
-    ///   · 仪表上档位默认隐藏（摩托多为手动，且读不到 AID）
+    /// 同上，但默认协议偏向 KWP2000 / ISO9141（摩托常用）。
     case motorcycle = "motorcycle"
 
     var id: String { rawValue }
@@ -30,7 +40,8 @@ enum DataSource: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .fardriver:  return "远驱控制器（电动车/电摩）"
-        case .obd2:       return "OBD2（汽车）"
+        case .obdYmobd:   return "OBD2（ymobd 兼容模式）"
+        case .obd2:       return "OBD2（标准汽车）"
         case .motorcycle: return "OBD2（摩托车）"
         }
     }
@@ -38,6 +49,7 @@ enum DataSource: String, CaseIterable, Identifiable {
     var shortTitle: String {
         switch self {
         case .fardriver:  return "远驱"
+        case .obdYmobd:   return "ymobd"
         case .obd2:       return "OBD2"
         case .motorcycle: return "摩托车"
         }
@@ -47,8 +59,10 @@ enum DataSource: String, CaseIterable, Identifiable {
         switch self {
         case .fardriver:
             return "通过远驱 BLE 控制器读取电压/电流/转速/温度"
+        case .obdYmobd:
+            return "ymobd 专用握手（ATH1 + ATSP0 + AT+CRYPT）"
         case .obd2:
-            return "通过 ELM327 适配器读取转速/车速/水温/电瓶电压/故障码"
+            return "标准 ELM327 / Vgate iCar Pro，读转速/车速/水温/故障码"
         case .motorcycle:
             return "摩托车 OBD 适配器，支持 KWP2000 / ISO 9141"
         }
@@ -57,16 +71,22 @@ enum DataSource: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .fardriver:  return "bolt.car.fill"
+        case .obdYmobd:   return "car.side.fill"
         case .obd2:       return "car.fill"
         case .motorcycle: return "motorcycle.fill"
         }
     }
 
-    /// 是不是 OBD 系列（汽车 + 摩托）
+    /// 是不是 OBD 系列（三个 OBD 数据源）
     ///
     /// 仪表据此隐藏电机 / BMS 区块，设置据此显示 OBD 相关选项。
     var isObdFamily: Bool {
-        self == .obd2 || self == .motorcycle
+        self == .obdYmobd || self == .obd2 || self == .motorcycle
+    }
+
+    /// 用 ymobd 特殊握手
+    var usesYmobdHandshake: Bool {
+        self == .obdYmobd
     }
 
     /// 读当前选择
@@ -80,19 +100,25 @@ enum DataSource: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 是不是 OBD 模式（汽车或摩托都算）
+    /// 是不是 OBD 模式（三个 OBD 数据源都算）
     static var isObd: Bool { current.isObdFamily }
 
     /// 是不是摩托车模式
     static var isMotorcycle: Bool { current == .motorcycle }
 
-    /// 用于区分持久化 key 的后缀前缀
+    /// 是不是 ymobd 兼容模式
+    static var isYmobd: Bool { current == .obdYmobd }
+
+    /// 用于区分持久化 key 的前缀
     ///
-    /// 汽车用 "obd"，摩托用 "moto"，远驱用 "fd"。
-    /// 这样两套 OBD 配置完全独立。
+    ///   ymobd  → ym
+    ///   标准汽车 → obd
+    ///   摩托   → moto
+    ///   远驱   → fd
     var storageKey: String {
         switch self {
         case .fardriver:  return "fd"
+        case .obdYmobd:   return "ym"
         case .obd2:       return "obd"
         case .motorcycle: return "moto"
         }

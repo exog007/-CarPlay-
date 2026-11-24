@@ -113,7 +113,7 @@ final class ObdManager: NSObject, ObservableObject {
 
     /// 当前 OBD 系列的存储前缀（obd / moto）
     private static var storePrefix: String {
-        DataSource.current == .motorcycle ? "moto" : "obd"
+        DataSource.current.storageKey
     }
 
     /// 自动连接上次的适配器
@@ -194,10 +194,15 @@ final class ObdManager: NSObject, ObservableObject {
         get {
             let key = "\(storePrefix)Protocol"
             let v = UserDefaults.standard.integer(forKey: key)
-            // 摩托第一次进入默认 KWP 快初始化
-            if v == 0 && DataSource.current == .motorcycle
-                && UserDefaults.standard.object(forKey: key) == nil {
-                return 5
+            let src = DataSource.current
+            // 第一次进入时给不同的默认值
+            if UserDefaults.standard.object(forKey: key) == nil {
+                switch src {
+                case .motorcycle: return 5    // 摩托：KWP2000 快初始化
+                case .obdYmobd:   return 0    // ymobd：自动（它的握手就是 ATSP0）
+                case .obd2:       return 0    // 标准汽车：自动
+                case .fardriver:  return 0
+                }
             }
             return v
         }
@@ -1077,12 +1082,15 @@ final class ObdManager: NSObject, ObservableObject {
 
         // 依次握手，全部完成后再开轮询
         //
-        // 分两条路径：
-        //   · C 系列（CAN）：ATH1 保持 CAN 头，ATSP0 自动选
-        //   · K 系列（KWP / ISO9141，摩托常用）：ATH0 关 CAN 头，直接指定协议
+        // 三条路径：
+        //   ① ymobd 兼容模式：ATH1 + ATSP0 + AT+CRYPT（特殊适配器）
+        //   ② 标准 CAN：ATH1 + ATSPn
+        //   ③ 串行协议（KWP / ISO9141）：ATH0 + ATS0 + ATAT1 + ATSPn
         //
         // KWP2000 / ISO9141 是串行协议，没有 CAN 头概念，
         // 发 ATH1 反而会让响应多出字节，解析容易错位。
+        let src = DataSource.current
+        let isYmobd = src.usesYmobdHandshake
         let proto = Self.protocolNumber
         let isSerial = (proto == 3 || proto == 4 || proto == 5 || proto == 1 || proto == 2)
 
@@ -1092,24 +1100,31 @@ final class ObdManager: NSObject, ObservableObject {
             ("ATL0", 1.2),
         ]
 
-        if isSerial {
-            // 串行协议（KWP / ISO9141 / J1850）
+        if isYmobd {
+            // ── ymobd 兼容模式 ──
+            // 完全照搬 ymobd 的序列，ATH1 保持 CAN 头 + ATSP0 自动选
+            steps.append(("ATH1", 1.2))
+            steps.append(("ATSP0", 3.0))
+            steps.append(("AT+VERSION", 1.5))
+            steps.append(("ATI", 1.2))
+            steps.append(("ATRV", 1.2))
+            steps.append(("AT+CRYPT" + Self.randomCryptHex(), 2.5))
+        } else if isSerial {
+            // ── 串行协议（KWP / ISO9141 / J1850）──
             steps.append(("ATH0", 1.2))     // 关 CAN 头（串行协议不需要）
             steps.append(("ATS0", 1.2))     // 关空格，简化解析
             steps.append(("ATAT1", 1.5))    // 自适应计时，慢 ECU 必需
             steps.append(("ATSP\(proto)", 3.0))
+            steps.append(("ATI", 1.5))
+            steps.append(("ATRV", 1.2))
         } else {
-            // CAN 协议
+            // ── 标准 CAN ──
             steps.append(("ATH1", 1.2))     // 保持 CAN 头
             steps.append(("ATSP\(proto)", 3.0))
+            steps.append(("ATI", 1.5))
+            steps.append(("ATRV", 1.2))
         }
 
-        steps.append(("ATI", 1.5))
-        steps.append(("ATRV", 1.2))
-        // 非 K 线协议才发 AT+CRYPT（ymobd 私有，标准适配器不需要）
-        if !isSerial {
-            steps.append(("AT+CRYPT" + Self.randomCryptHex(), 2.0))
-        }
         steps.append(("0100", 12.0))
 
         var okCount = 0

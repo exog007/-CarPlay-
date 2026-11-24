@@ -963,7 +963,7 @@ struct SettingsView: View {
             if BluetoothMemory.autoConnectBms {
                 AntBmsManager.shared.startScan()
             }
-        case .obd2, .motorcycle:
+        case .obdYmobd, .obd2, .motorcycle:
             // 断开控制器和 BMS，启动 OBD2
             ControllerManager.shared.disconnect()
             AntBmsManager.shared.disconnect()

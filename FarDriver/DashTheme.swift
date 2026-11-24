@@ -166,6 +166,7 @@ final class DashThemeStore: ObservableObject {
     /// 这样摩托可以用和汽车完全不同的配色和背景。
     private func key(_ source: DataSource) -> String {
         switch source {
+        case .obdYmobd:   return "dashThemeYmobd"
         case .obd2:       return "dashThemeObd2"
         case .motorcycle: return "dashThemeMoto"
         case .fardriver:  return "dashThemeFarDriver"
