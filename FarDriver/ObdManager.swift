@@ -1197,7 +1197,7 @@ final class ObdManager: NSObject, ObservableObject {
         stopPolling()
         let src = DataSource.current.shortTitle
         handshakeLog.append("开始轮询（数据源=\(src) 协议=\(Self.protocolNumber)）")
-        handshakeLog.append("支持 \(supportedCodes.count) 个 PID，待问 \(allReadableCodes.count) 个")
+        handshakeLog.append("支持 \(supportedCodes.count) 个 PID")
         startPollLoop()
     }
 
