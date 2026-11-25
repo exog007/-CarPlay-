@@ -855,6 +855,8 @@ struct SettingsView: View {
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
     /// 是否显示档位框
     @AppStorage("dashShowGear") private var showGear: Bool = true
+    /// 是否显示百公里油耗
+    @AppStorage("dashShowFuelConsumption") private var showFuelConsumption: Bool = true
     /// 速度来源（按数据源隔离，用 storageKey 后缀区分）
     @AppStorage("speedSource.obd") private var speedSourceObd: SpeedSource = .obd
     @AppStorage("speedSource.ym") private var speedSourceYm: SpeedSource = .obd
@@ -1512,6 +1514,7 @@ struct SettingsView: View {
                     // 档位显示方式（车读不到 A4 时手动指定）
                     Section {
                         Toggle("显示档位框", isOn: $showGear)
+                        Toggle("显示百公里油耗", isOn: $showFuelConsumption)
 
                         if showGear {
                             ForEach(GearboxMode.allCases) { m in
@@ -1547,7 +1550,7 @@ struct SettingsView: View {
                     } header: {
                         Text("变速箱类型")
                     } footer: {
-                        Text("决定仪表上档位框的样式。\n\n自动挡：显示 «Gear: P/R/N/D»，挂手动挡时显示 M1~M6。\n手动挡：只显示当前档位字符。\n\n关掉「显示档位框」可以隐藏——大多数车读不到真实档位（PID A4），档位会一直停在同一个值。")
+                        Text("决定仪表上档位框的样式。\n\n自动挡：显示 «Gear: P/R/N/D»，挂手动挡时显示 M1~M6。\n手动挡：只显示当前档位字符。\n\n关掉「显示档位框」可以隐藏——大多数车读不到真实档位（PID A4），档位会一直停在同一个值。\n\n百公里油耗靠 PID 5E（燃油消耗率）算，很多车不报这一项，开着也一直显示 —，可以关掉。")
                     }
 
                     Section {

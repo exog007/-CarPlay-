@@ -1406,6 +1406,12 @@ final class ObdManager: NSObject, ObservableObject {
         /// （进 OBD2 数据页时 fullPolling=true，会改成高频读取）
         static let dashInterval: TimeInterval = 10.0
 
+        /// 燃油消耗率的间隔（20 秒）
+        ///
+        /// 这个 PID 只用来算油耗，不需要快；
+        /// 部分车回它要 200ms 以上，问太勤会把转速的时间片吃掉。
+        static let fuelRateInterval: TimeInterval = 20.0
+
         /// 全量模式下后台数据的间隔（数据页里才用）
         static var extraInterval: TimeInterval {
             DataSource.current == .motorcycle ? 8.0 : 5.0
@@ -1453,7 +1459,11 @@ final class ObdManager: NSObject, ObservableObject {
             // 摩托车不问车速
             if !PidPriority.needsObdSpeed, c == PidPriority.speedCode { continue }
             guard alive(c) else { continue }
-            if due(c, dashGap) {
+
+            // 燃油消耗率单独用 20 秒间隔：
+            // 它只用来算油耗，不需要高频；而某些车回它特别慢，会拖累转速
+            let gap = (c == "015E") ? PidPriority.fuelRateInterval : dashGap
+            if due(c, gap) {
                 batch.append(c)
             }
         }

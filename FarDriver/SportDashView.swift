@@ -41,6 +41,12 @@ struct SportDashView: View {
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
     /// 变速箱类型（自动挡 / 手动挡）：决定档位框长什么样
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
+    /// 是否显示百公里油耗（只对 OBD 有效）
+    ///
+    /// 很多车不上报 PID 5E（燃油消耗率），这时这一格永远是 "—"，
+    /// 与其占地方不如让用户关掉。
+    @AppStorage("dashShowFuelConsumption") private var showFuelConsumption: Bool = true
+
     /// 是否显示档位框
     ///
     /// 大多数车读不到真实档位（PID A4 不支持），档位框会一直停在同一个值，
@@ -1029,22 +1035,18 @@ struct SportDashView: View {
     /// 优���用 PID 5E 的燃油消耗率（L/h）÷ 车速算，
     /// 没有 5E 就用 MAF 推算，都没有就显示 —
     private var obdFuelConsumptionText: String {
-        let speed = obd.reading.speedKmh ?? 0
+        // 用户可以在设置里关掉油耗显示
+        guard showFuelConsumption else { return "—" }
+
+        let speed = speed
         guard speed > 3 else { return "—" }
 
-        // ① 燃油消耗率 L/h
-        var litresPerHour: Double?
-        if let rate = obd.reading.fuelRate, rate > 0 {
-            litresPerHour = rate
-        } else if let maf = obd.reading.maf, maf > 0 {
-            // MAF g/s → 燃油 L/h：÷空燃比 ÷ 汽油密度(745 g/L) × 3600
-            let fuelGs = maf / 14.7
-            litresPerHour = fuelGs * 3600 / 745
-        }
-        guard let lph = litresPerHour else { return "—" }
+        // 优先用「燃油消耗率」(PID 5E)：
+        //   有就用，没有就忽略这一格（不拿 MAF 硬凑，免得显示错的油耗）
+        guard let rate = obd.reading.fuelRate, rate > 0 else { return "—" }
 
         // L/h ÷ km/h × 100 = L/100km
-        let per100 = lph / speed * 100
+        let per100 = rate / speed * 100
         guard per100.isFinite, per100 >= 0, per100 < 200 else { return "—" }
         return String(format: "%.1f", per100)
     }
