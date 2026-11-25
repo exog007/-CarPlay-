@@ -17,6 +17,8 @@ struct ObdGridView: View {
 
     /// 是否只显示「有值」的项目
     @State private var hideEmpty = false
+    /// 行程统计喂数据定时器
+    @State private var tripFeedTimer: Timer?
     /// 搜索关键字
     @State private var keyword = ""
 
@@ -125,13 +127,47 @@ struct ObdGridView: View {
             .onAppear {
                 // 数据页要求全量读取
                 obd.fullPolling = true
+                // 停在数据页时也要继续累计里程和油耗
+                startTripFeeding()
             }
             .onDisappear {
                 // 退出后恢复只读仪表 7 项，保证竞技仪表刷新率
                 obd.fullPolling = false
+                stopTripFeeding()
             }
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
+    }
+
+    // MARK: - 行程统计
+
+    /// 停在数据页时也继续累计里程和油耗
+    ///
+    /// 和竞技仪表用同一套逻辑：速度来源选哪个都算。
+    private func startTripFeeding() {
+        guard tripFeedTimer == nil else { return }
+        let t = Timer(timeInterval: 1.0, repeats: true) { _ in
+            let kmh: Double
+            if DataSource.current == .motorcycle {
+                kmh = GpsSpeed.shared.smoothSpeed
+            } else {
+                switch SpeedSource.current {
+                case .gps: kmh = GpsSpeed.shared.smoothSpeed
+                case .obd: kmh = obd.lastObdSpeed
+                }
+            }
+            let rpm = obd.reading.rpm ?? 0
+            guard kmh >= 0, !(kmh == 0 && rpm == 0) else { return }
+            TripMeter.shared.update(speedKmh: kmh, powerW: 0, rpm: rpm)
+        }
+        t.tolerance = 0.1
+        RunLoop.main.add(t, forMode: .common)
+        tripFeedTimer = t
+    }
+
+    private func stopTripFeeding() {
+        tripFeedTimer?.invalidate()
+        tripFeedTimer = nil
     }
 
     // MARK: - 数据卡片

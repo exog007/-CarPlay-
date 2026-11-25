@@ -421,28 +421,38 @@ struct SportDashView: View {
 
     /// 行程统计喂数据
     ///
-    /// 里程必须按「仪表实际显示的速度」算：
-    ///   · 速度来源 = GPS  → 用 GPS 速度（摩托固定 GPS）
-    ///   · 速度来源 = OBD  → 由 ObdManager 在收到 010D 时自己喂，这里不动
+    /// 三个 OBD 数据源统一在这里喂，**不看速度来源选的是哪个都算**：
+    ///   速度来源 = OBD → 用 ECU 报的车速
+    ///   速度来源 = GPS → 用手机定位速度
+    ///   摩托车固定 GPS
     ///
+    /// 两种来源都计算小计里程 + 百公里油耗，只是里程按各自选的速度累计。
     /// 每秒喂一次，既够准又不会把 TripMeter 刷爆。
     private func startTripFeeding() {
         guard tripFeedTimer == nil else { return }
         let t = Timer(timeInterval: 1.0, repeats: true) { _ in
             guard dataSource.isObdFamily else { return }
 
-            // 判断这个数据源用的是不是 GPS 速度
-            let useGps: Bool
+            // 决定这一秒用哪个速度
+            let kmh: Double
             if dataSource == .motorcycle {
-                useGps = true                      // 摩托固定 GPS
+                // 摩托固定 GPS
+                kmh = gps.smoothSpeed
             } else {
-                useGps = (SpeedSource.current == .gps)
+                switch SpeedSource.current {
+                case .gps:
+                    kmh = gps.smoothSpeed
+                case .obd:
+                    kmh = obd.lastObdSpeed
+                }
             }
-            guard useGps else { return }           // OBD 模式由 Manager 自己喂
 
-            let kmh = gps.smoothSpeed
-            guard kmh >= 0 else { return }
+            // 转速总是从 OBD 拿（油耗算法要用）
             let rpm = obd.reading.rpm ?? 0
+
+            // 速度和转速都没有就不喂，避免把时间戳浪费在无效样本上
+            guard kmh >= 0, !(kmh == 0 && rpm == 0) else { return }
+
             TripMeter.shared.update(speedKmh: kmh, powerW: 0, rpm: rpm)
         }
         t.tolerance = 0.1

@@ -1543,14 +1543,14 @@ final class ObdManager: NSObject, ObservableObject {
                 self.lastReadAt[code] = Date()
                 self.applyCode(code, value: v)
                 ObdValueStore.shared.update(code: code, value: v)
-                // 车速更新时喂给行程统计（带上转速，油耗按缸数/排量推算）
-                // 只在「速度来源 = OBD」时用这个值；
-                // 选 GPS 的话由 SportDashView 用 GPS 速度来喂，避免重复累计
+                // 只记录车速，不在这里喂行程统计
+                //
+                // 统一由 SportDashView 每秒喂一次：
+                //   速度来源 OBD → 用 lastObdSpeed
+                //   速度来源 GPS → 用 GPS 速度
+                // 两条路径都走同一处，里程和油耗都算，且不会重复累计。
                 if code == "010D" {
                     self.lastObdSpeed = v
-                    if SpeedSource.current == .obd {
-                        self.feedTripMeter(speed: v)
-                    }
                 }
                 self.pollPump()
                 return
