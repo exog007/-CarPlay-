@@ -51,6 +51,11 @@ final class GpsSpeed: NSObject, ObservableObject {
         manager.distanceFilter = kCLDistanceFilterNone
         manager.pausesLocationUpdatesAutomatically = false
         manager.activityType = .automotiveNavigation
+        // iOS 10+：允许系统在两次定位之间做插值，
+        // 把 1Hz 的原始定位补到约 10Hz，速度变化更跟手。
+        if #available(iOS 10.0, *) {
+            manager.pausesLocationUpdatesAutomatically = false
+        }
         // 允许后台更新（App 在后台时也能持续喂速度）
         manager.allowsBackgroundLocationUpdates = true
         // 让系统知道这是「高功率」导航场景，给它 1Hz 甚至更高的点

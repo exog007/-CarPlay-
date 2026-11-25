@@ -16,6 +16,9 @@ struct TripRow: View {
 
     @State private var expanded = false
 
+    /// 发动机参数（按账本独立存储）
+    @State private var spec: EngineSpec = .default
+
     /// 这个账本是不是当前数据源在用的
     private var isActive: Bool {
         TripLedger.current == ledger
@@ -35,6 +38,9 @@ struct TripRow: View {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
                     expanded.toggle()
+                }
+                if expanded {
+                    spec = EngineSpec.load(ledger)
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -103,6 +109,17 @@ struct TripRow: View {
                               movingTimeText,
                               .secondary)
 
+                    // 发动机参数（只有油车需要）
+                    if !ledger.isElectric {
+                        Divider()
+                            .padding(.vertical, 2)
+
+                        engineSpecEditor
+
+                        Divider()
+                            .padding(.vertical, 2)
+                    }
+
                     Button(role: .destructive) {
                         TripMeter.shared.reset(ledger)
                     } label: {
@@ -115,6 +132,89 @@ struct TripRow: View {
             }
         }
         .padding(.vertical, 3)
+    }
+
+    // MARK: - 发动机参数编辑
+
+    private var engineSpecEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "engine.combustion.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(themeMgr.secondary)
+                Text("发动机参数")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(themeMgr.secondary)
+                Spacer()
+                Text(spec.summary)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(themeMgr.color(.ok))
+            }
+
+            // 缸数
+            HStack(spacing: 6) {
+                Text("缸数")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.foreground)
+                    .frame(width: 40, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { spec.cylinders },
+                    set: { v in spec.cylinders = v; saveSpec() }
+                )) {
+                    ForEach(EngineSpec.cylinderOptions, id: \.self) { n in
+                        Text("\(n)缸").tag(n)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                Spacer()
+            }
+
+            // 排量
+            HStack(spacing: 6) {
+                Text("排量")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.foreground)
+                    .frame(width: 40, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { spec.displacement },
+                    set: { v in spec.displacement = v; saveSpec() }
+                )) {
+                    ForEach(displacementOptions, id: \.self) { d in
+                        Text(String(format: "%.1f L", d)).tag(d)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                Spacer()
+            }
+
+            // 涡轮
+            HStack(spacing: 6) {
+                Text("进气")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.foreground)
+                    .frame(width: 40, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { spec.turbo },
+                    set: { v in spec.turbo = v; saveSpec() }
+                )) {
+                    Text("自然吸气").tag(false)
+                    Text("涡轮增压").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+        }
+    }
+
+    /// 排量可选项（0.1L ~ 8.0L）
+    private var displacementOptions: [Double] {
+        stride(from: 0.1, through: 8.0, by: 0.1).map { ($0 * 10).rounded() / 10 }
+    }
+
+    private func saveSpec() {
+        EngineSpec.save(spec, for: ledger)
     }
 
     private func detailRow(_ title: String, _ value: String, _ color: Color) -> some View {

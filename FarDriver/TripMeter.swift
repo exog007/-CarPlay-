@@ -185,8 +185,12 @@ final class TripMeter: ObservableObject {
     /// 每收到一帧数据调用一次
     ///
     ///   speedKmh：车速
-    ///   powerW  ：功率（远驱给真实 W；OBD 传等效功率 W）
-    func update(speedKmh: Double, powerW: Double) {
+    ///   powerW  ：功率（远驱给真实 W）
+    ///   rpm     ：发动机转速（OBD 用；远驱传 0）
+    ///
+    /// 油车不再用「等效功率」估油耗，改用「车速 + 转速 + 发动机参数」推算：
+    /// 更贴近真实——同样车速下，低档高转明显更费油。
+    func update(speedKmh: Double, powerW: Double, rpm: Double = 0) {
         let now = Date()
         defer { lastTick = now }
 
@@ -194,24 +198,26 @@ final class TripMeter: ObservableObject {
         let dt = now.timeIntervalSince(prev)
         guard dt > 0, dt <= maxGap else { return }
 
-        // 慢速不计里程，避免停车噪声
-        guard speedKmh >= 1.0 else { return }
-
         var b = books[ledger] ?? Book()
 
-        // 里程：km/h × 秒 ÷ 3600
-        b.distance += speedKmh * dt / 3600.0
-        b.seconds += dt
+        // ── 里程：速度 × 时间 ──
+        // 慢速不计，避免停车噪声（但油耗仍要算，怠速也在烧油）
+        if speedKmh >= 1.0 {
+            b.distance += speedKmh * dt / 3600.0
+            b.seconds += dt
+        }
 
+        // ── 能量 ──
         if ledger.isElectric {
-            // 电耗：W × 小时 ÷ 1000 = kWh
-            // 负功率（回收）也要算，反映真实净电耗
-            b.energy += powerW * dt / 3600.0 / 1000.0
-        } else {
-            // 油耗：等效功率 → kWh → ÷ 8.9 = 升
-            if powerW > 0 {
-                b.energy += powerW * dt / 3600.0 / 1000.0 / 8.9
+            // 电摩：功率 × 时间（负功率=回收，也计入净电耗）
+            if speedKmh >= 1.0 {
+                b.energy += powerW * dt / 3600.0 / 1000.0
             }
+        } else {
+            // 油车：用车速 + 转速 + 发动机参数推算
+            let spec = EngineSpec.load(ledger)
+            let ratePerHour = spec.fuelRate(speedKmh: speedKmh, rpm: rpm)   // L/h
+            b.energy += ratePerHour * dt / 3600.0
         }
 
         books[ledger] = b

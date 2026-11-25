@@ -1563,8 +1563,11 @@ final class ObdManager: NSObject, ObservableObject {
     ///   功率 ≈ 燃油消耗率(L/h) × 汽油热值(8.9 kWh/L) × 效率(0.25)
     /// 拿不到油耗时用 MAF 反推，再不行就按车速做粗略估算。
     private func feedTripMeter(speed: Double) {
+        // 转速从当前 reading 拿（每一帧都在刷新）
+        let rpm = reading.rpm ?? 0
+        // 功率仍然传（远驱以外的场景里 trip 用转速算油耗，powerW 只作参考）
         let powerW = estimatedEnginePowerW(speedKmh: speed)
-        TripMeter.shared.update(speedKmh: speed, powerW: powerW)
+        TripMeter.shared.update(speedKmh: speed, powerW: powerW, rpm: rpm)
     }
 
     /// 估算当前发动机输出功率（W）
