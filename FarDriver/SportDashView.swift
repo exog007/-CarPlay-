@@ -991,7 +991,7 @@ struct SportDashView: View {
                     .foregroundStyle(amber.opacity(0.5))
             }
 
-            // 右边一格：远驱模式显示电耗（kWh/100km），OBD2 模式显示油耗（L/100km）
+            // 右边一格：电摩显示电耗（kWh/100km），OBD 显示油耗（L/100km）
             HStack(spacing: 2) {
                 Text(isObd ? obdFuelConsumptionText : trip.consumptionText)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))

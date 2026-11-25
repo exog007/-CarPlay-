@@ -945,6 +945,9 @@ struct SettingsView: View {
         DataSource.current = src
         dataSource = src
 
+        // 行程统计切到对应账本
+        TripMeter.shared.syncWithDataSource()
+
         // 汽车/摩托的适配器记忆是两套，切换后重新读一次
         if willObd {
             refreshObdSettingsFromStore()
@@ -1746,47 +1749,23 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    HStack {
-                        Text("小计里程")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text("\(TripMeter.shared.distanceText) km")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("累计电量")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text(String(format: "%.3f kWh", TripMeter.shared.energyKWh))
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("百公里电耗")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text("\(TripMeter.shared.consumptionText) kWh")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(themeMgr.color(.ok))
-                    }
-                    HStack {
-                        Text("平均功率")
-                            .foregroundStyle(themeMgr.foreground)
-                        Spacer()
-                        Text("\(TripMeter.shared.avgPowerText) W")
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    Button(role: .destructive) {
-                        TripMeter.shared.reset()
-                    } label: {
-                        Label("清空小计里程", systemImage: "arrow.counterclockwise")
+                    ForEach(TripLedger.allCases) { l in
+                        TripRow(ledger: l)
                     }
                 } header: {
                     Text("行程统计")
                 } footer: {
-                    Text("里程按控制器速度 × 时间累加；百公里电耗 = 累计电量 ÷ 里程 × 100。清空后重新统计。")
+                    Text("每个数据源独立记账，互不干扰。\n· 远驱（电摩）：里程 + 百公里电耗（kWh/100km）\n· OBD 系列：里程 + 百公里油耗（L/100km）\n\n里程按车速 × 时间累加；能耗 = 累计能量 ÷ 里程 × 100。")
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        TripMeter.shared.resetAll()
+                    } label: {
+                        Label("清空全部行程统计", systemImage: "arrow.counterclockwise")
+                    }
+                } footer: {
+                    Text("会把四个数据源的里程和能耗一起清零。只想清某一个，展开对应行点它右边的重置按钮。")
                 }
 
 
