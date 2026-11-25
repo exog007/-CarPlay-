@@ -36,8 +36,12 @@ final class GpsSpeed: NSObject, ObservableObject {
     private let manager = CLLocationManager()
     /// 60Hz 平滑定时器：每帧朝目标速度靠一点，把 1 秒一次的数字跳变变成连续变化
     private var smoothTimer: Timer?
-    /// 平滑系数：每帧追 18%，约 0.25 秒追到 90%
-    private let smoothFactor: Double = 0.18
+    /// 平滑系数：每帧追 42%
+    ///
+    /// 之前是 0.18（约 0.25 秒追到 90%），看起来「拖」。
+    /// 现在提到 0.42，约 0.1 秒追到 90%，跟随更紧。
+    /// 再高就会让 GPS 的抖动直接透出来。
+    private let smoothFactor: Double = 0.42
     /// 最后一次 GPS 读到「在动」的时间
     private var lastMovingAt: Date = .distantPast
     /// 最后一次收到定位回调的时间（用来判断 GPS 是否还在喂数据）
@@ -46,10 +50,15 @@ final class GpsSpeed: NSObject, ObservableObject {
     override init() {
         super.init()
         manager.delegate = self
+        // 最高精度 + 不限距离：每次系统给点就用，不做节流
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.distanceFilter = kCLDistanceFilterNone
         manager.pausesLocationUpdatesAutomatically = false
         manager.activityType = .automotiveNavigation
+        // 允许后台更新（App 在后台时也能持续喂速度）
+        manager.allowsBackgroundLocationUpdates = true
+        // 让系统知道这是「高功率」导航场景，给它 1Hz 甚至更高的点
+        manager.showsBackgroundLocationIndicator = false
         enabled = UserDefaults.standard.object(forKey: "gpsSpeedEnabled") as? Bool ?? true
     }
 
@@ -107,26 +116,26 @@ final class GpsSpeed: NSObject, ObservableObject {
     ///   · 变化量 < 0.01 → 不提交
     private func startSmoothTimer() {
         guard smoothTimer == nil else { return }
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
 
             let target = self.speedKmh
             let cur = self.smoothSpeed
             let diff = target - cur
-            let next = abs(diff) < 0.05 ? target : cur + diff * self.smoothFactor
+            let next = abs(diff) < 0.02 ? target : cur + diff * self.smoothFactor
 
             // 已经追平且发布过同样的值 → 直接跳过
-            if abs(diff) < 0.05, abs(self.lastPublishedSmooth - next) < 0.001 {
+            if abs(diff) < 0.02, abs(self.lastPublishedSmooth - next) < 0.001 {
                 return
             }
-            // 变化太小，肉眼看不出来，不折腾 SwiftUI
-            if abs(next - self.lastPublishedSmooth) < 0.01 { return }
+            // 变化太小就不提交（阈值从 0.01 收到 0.005，肉眼几乎无感的抖动才跳过）
+            if abs(next - self.lastPublishedSmooth) < 0.005 { return }
 
             self.lastPublishedSmooth = next
             self.smoothSpeed = next
         }
-        // 给点容差，系统可以合并唤醒，省电也省 CPU
-        t.tolerance = 0.005
+        // 容差给 0：宁可贵一点也要准时，速度表最怕「跟不上脚」
+        t.tolerance = 0
         RunLoop.main.add(t, forMode: .common)
         smoothTimer = t
     }
@@ -171,16 +180,17 @@ extension GpsSpeed: CLLocationManagerDelegate {
         guard loc.speed >= 0 else { return }
         // 太旧的定位不要
         guard abs(loc.timestamp.timeIntervalSinceNow) < 5 else { return }
-        // 精度太差的定位不要：>30 米时速度基本是噪声，静止也会读出 3~10 km/h
-        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy < 30 else { return }
+        // 精度太差的不要，但阈值放宽到 50 米：
+        // 车在跑时 GPS 水平精度会变差，可速度值本身仍然准
+        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy < 50 else { return }
 
         accuracy = loc.horizontalAccuracy
         hasFix = true
         lastLocationAt = Date()
 
         let kmh = loc.speed * 3.6
-        // 低于 3 km/h 一律当静止：GPS 在静止时的速度噪声通常就是这个量级
-        if kmh > 3.0 {
+        // 低于 2 km/h 一律当静止（GPS 静止噪声约 1~3 km/h，取 2 兼顾灵敏和稳定）
+        if kmh > 2.0 {
             lastMovingAt = Date()
             speedKmh = kmh
         } else {

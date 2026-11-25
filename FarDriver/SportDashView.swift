@@ -78,11 +78,25 @@ struct SportDashView: View {
     }
 
     /// 融合车速
+    ///
+    ///   · 远驱：控制器转速换算（远驱没得选）
+    ///   · OBD 三个数据源：按设置里的「速度来源」走
+    ///       OBD → PID 010D
+    ///       GPS → 手机定位（刷新快、精度高）
     private var speed: Double {
         if isObd {
-            // OBD2 车速是 ECU 给的，比 GPS 更贴仪表读数；没有就用 GPS
-            if let s = obd.reading.speedKmh { return s }
-            return gps.smoothSpeed
+            switch SpeedSource.current {
+            case .gps:
+                // GPS：有定位就用它，没定位就退回 OBD
+                if gps.hasFix {
+                    return gps.smoothSpeed
+                }
+                return obd.reading.speedKmh ?? 0
+            case .obd:
+                // OBD：优先 ECU 值，ECU 不给就用 GPS 兜底
+                if let s = obd.reading.speedKmh { return s }
+                return gps.smoothSpeed
+            }
         }
         return gps.fused(with: mgr.data.speed)
     }
