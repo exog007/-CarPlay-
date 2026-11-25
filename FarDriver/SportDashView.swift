@@ -47,6 +47,13 @@ struct SportDashView: View {
 
     /// 行程统计喂数据用的定时器（GPS 模式）
     @State private var tripFeedTimer: Timer?
+
+    /// 顶满爆闪相位（0~1，三角波），只有转速到红线才跑
+    @State private var redlineFlash: Double = 0
+    /// 爆闪定时器
+    @State private var redlineTimer: Timer?
+    /// 触发爆闪的转速比例（0.97 = 满量程的 97%）
+    private let redlineThreshold: Double = 0.97
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
     /// 报警阈值：改完设置立刻反映到故障灯
@@ -318,6 +325,8 @@ struct SportDashView: View {
                 startRpmSmoothing()
                 // 行程统计：GPS 模式下由这里喂速度
                 startTripFeeding()
+                // 顶满爆闪
+                startRedlineFlash()
                 // 已经在横屏就直接播，否则等尺寸就绪
                 if ready { scheduleBoot(after: 0.15) }
             }
@@ -333,6 +342,7 @@ struct SportDashView: View {
                 rpmSmoother.snap(to: targetRpm)
                 tripFeedTimer?.invalidate()
                 tripFeedTimer = nil
+                stopRedlineFlash()
             }
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
@@ -458,6 +468,34 @@ struct SportDashView: View {
         t.tolerance = 0.1
         RunLoop.main.add(t, forMode: .common)
         tripFeedTimer = t
+    }
+
+    /// 爆闪相位推进
+    ///
+    /// 25Hz 刷新（每 40ms 一步），一个完整闪周期约 0.24 秒（4Hz 闪频），
+    /// 够刺眼但不至于癫痫。
+    private func startRedlineFlash() {
+        guard redlineTimer == nil else { return }
+        let t = Timer(timeInterval: 0.04, repeats: true) { _ in
+            // 只有顶满时才推相位，否则复位
+            let ratio = rpmRatio
+            guard ratio >= redlineThreshold, !bootAnimating else {
+                if redlineFlash != 0 { redlineFlash = 0 }
+                return
+            }
+            // 0 → 1 → 0 三角波，周期 4 步
+            let ph = redlineFlash + 0.25
+            redlineFlash = ph >= 1.0 ? 0 : ph
+        }
+        t.tolerance = 0.01
+        RunLoop.main.add(t, forMode: .common)
+        redlineTimer = t
+    }
+
+    private func stopRedlineFlash() {
+        redlineTimer?.invalidate()
+        redlineTimer = nil
+        redlineFlash = 0
     }
 
     private func stopRpmSmoothing() {
@@ -736,18 +774,34 @@ struct SportDashView: View {
                     let ratio = min(max(rpmRatio, 0), 1)
                     let fillW = w * ratio
 
-                    // ① 底色
+                    // 是否顶满在爆闪（>=97% 才算，留一点抖动余量）
+                    let flashing = ratio >= redlineThreshold
+                    let flash = redlineFlash      // 0~1 三角波
+
+                    // ① 底色（爆闪时整体泛红）
+                    let baseAlpha: Double = flashing ? 0.12 + flash * 0.30 : 0.12
+                    let baseColor: Color = flashing ? red : amber
                     ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: h)),
-                             with: .color(amber.opacity(0.12)))
+                             with: .color(baseColor.opacity(baseAlpha)))
 
-                    // ② 红区（右侧 25%）
+                    // ② 红区（右侧 25%，爆闪时更亮）
+                    let zoneAlpha: Double = flashing ? 0.22 + flash * 0.35 : 0.22
                     ctx.fill(Path(CGRect(x: w * 0.75, y: 0, width: w * 0.25, height: h)),
-                             with: .color(red.opacity(0.22)))
+                             with: .color(red.opacity(zoneAlpha)))
 
-                    // ③ 已填部分
+                    // ③ 已填部分（爆闪时红白交替）
                     if fillW > 0 {
+                        let fillColor: Color
+                        if flashing {
+                            // 白热闪：亮度在红色和近白之间来回
+                            fillColor = flash > 0.55
+                                ? Color(red: 1.0, green: 0.85, blue: 0.85)
+                                : red
+                        } else {
+                            fillColor = ratio > 0.85 ? red : amber
+                        }
                         ctx.fill(Path(CGRect(x: 0, y: 0, width: fillW, height: h)),
-                                 with: .color(ratio > 0.85 ? red : amber))
+                                 with: .color(fillColor))
                     }
 
                     // ④ 分隔条（20 段，一次画完）
@@ -757,6 +811,17 @@ struct SportDashView: View {
                         let x = segW * CGFloat(i)
                         ctx.fill(Path(CGRect(x: x - 1, y: 0, width: 2, height: h)),
                                  with: .color(Color.black.opacity(0.85)))
+                    }
+
+                    // ⑤ 爆闪时加一圈外发光描边
+                    if flashing {
+                        let glowW = 1.0 + flash * 2.5
+                        ctx.stroke(
+                            Path(CGRect(x: glowW / 2, y: glowW / 2,
+                                        width: w - glowW, height: h - glowW)),
+                            with: .color(red.opacity(0.35 + flash * 0.55)),
+                            lineWidth: glowW
+                        )
                     }
                 }
                 .frame(height: 12)
