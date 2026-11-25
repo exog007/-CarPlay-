@@ -44,6 +44,9 @@ struct SportDashView: View {
         get { rpmSmoother.timer }
         nonmutating set { rpmSmoother.timer = newValue }
     }
+
+    /// 行程统计喂数据用的定时器（GPS 模式）
+    @State private var tripFeedTimer: Timer?
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
     /// 报警阈值：改完设置立刻反映到故障灯
@@ -311,8 +314,10 @@ struct SportDashView: View {
             .background(sportBackground)
             .onAppear {
                 weather.refreshIfNeeded()
-                // 转速平滑：60Hz 让数字和刻度条连续变化
+                // 转速平滑：让数字和刻度条连续变化
                 startRpmSmoothing()
+                // 行程统计：GPS 模式下由这里喂速度
+                startTripFeeding()
                 // 已经在横屏就直接播，否则等尺寸就绪
                 if ready { scheduleBoot(after: 0.15) }
             }
@@ -326,6 +331,8 @@ struct SportDashView: View {
                 bootAnimating = false
                 // 自检结束：平滑值直接对齐真实转速，避免从满量程慢慢滑下来
                 rpmSmoother.snap(to: targetRpm)
+                tripFeedTimer?.invalidate()
+                tripFeedTimer = nil
             }
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
@@ -410,6 +417,37 @@ struct SportDashView: View {
         t.tolerance = 0.003
         RunLoop.main.add(t, forMode: .common)
         rpmSmoothTimer = t
+    }
+
+    /// 行程统计喂数据
+    ///
+    /// 里程必须按「仪表实际显示的速度」算：
+    ///   · 速度来源 = GPS  → 用 GPS 速度（摩托固定 GPS）
+    ///   · 速度来源 = OBD  → 由 ObdManager 在收到 010D 时自己喂，这里不动
+    ///
+    /// 每秒喂一次，既够准又不会把 TripMeter 刷爆。
+    private func startTripFeeding() {
+        guard tripFeedTimer == nil else { return }
+        let t = Timer(timeInterval: 1.0, repeats: true) { _ in
+            guard dataSource.isObdFamily else { return }
+
+            // 判断这个数据源用的是不是 GPS 速度
+            let useGps: Bool
+            if dataSource == .motorcycle {
+                useGps = true                      // 摩托固定 GPS
+            } else {
+                useGps = (SpeedSource.current == .gps)
+            }
+            guard useGps else { return }           // OBD 模式由 Manager 自己喂
+
+            let kmh = gps.smoothSpeed
+            guard kmh >= 0 else { return }
+            let rpm = obd.reading.rpm ?? 0
+            TripMeter.shared.update(speedKmh: kmh, powerW: 0, rpm: rpm)
+        }
+        t.tolerance = 0.1
+        RunLoop.main.add(t, forMode: .common)
+        tripFeedTimer = t
     }
 
     private func stopRpmSmoothing() {

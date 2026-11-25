@@ -806,6 +806,9 @@ final class ObdManager: NSObject, ObservableObject {
         return Int(cc)
     }
 
+    /// 最近一次读到的 OBD 车速（km/h）
+    private(set) var lastObdSpeed: Double = 0
+
     /// 适配器 AT+VERSION 报出来的 crypt 值（如 "6CCA5477"）
     private var adapterCrypt: String? = nil
     /// 适配器型号（如 "B02-Z"）
@@ -1540,9 +1543,14 @@ final class ObdManager: NSObject, ObservableObject {
                 self.lastReadAt[code] = Date()
                 self.applyCode(code, value: v)
                 ObdValueStore.shared.update(code: code, value: v)
-                // 车速更新时喂给行程统计（OBD 没有功率，用发动机输出估算）
+                // 车速更新时喂给行程统计（带上转速，油耗按缸数/排量推算）
+                // 只在「速度来源 = OBD」时用这个值；
+                // 选 GPS 的话由 SportDashView 用 GPS 速度来喂，避免重复累计
                 if code == "010D" {
-                    self.feedTripMeter(speed: v)
+                    self.lastObdSpeed = v
+                    if SpeedSource.current == .obd {
+                        self.feedTripMeter(speed: v)
+                    }
                 }
                 self.pollPump()
                 return
@@ -1572,7 +1580,7 @@ final class ObdManager: NSObject, ObservableObject {
     /// OBD 没有直接的「功率」读数，用发动机输出功率估算：
     ///   功率 ≈ 燃油消耗率(L/h) × 汽油热值(8.9 kWh/L) × 效率(0.25)
     /// 拿不到油耗时用 MAF 反推，再不行就按车速做粗略估算。
-    private func feedTripMeter(speed: Double) {
+    func feedTripMeter(speed: Double) {
         // 转速从当前 reading 拿（每一帧都在刷新）
         let rpm = reading.rpm ?? 0
         // 功率仍然传（远驱以外的场景里 trip 用转速算油耗，powerW 只作参考）
