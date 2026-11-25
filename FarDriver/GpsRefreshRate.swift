@@ -25,6 +25,9 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// @AppStorage 需要 RawRepresentable，String 枚举自带，这里补上显式声明
+    /// （Swift 会为 String 原始值枚举自动合成，写出来是为了清楚）
+
     var title: String {
         switch self {
         case .battery:  return "省电（30 Hz）"

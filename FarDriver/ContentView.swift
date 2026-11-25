@@ -861,16 +861,13 @@ struct SettingsView: View {
     @AppStorage("speedSource.moto") private var speedSourceMoto: SpeedSource = .obd
 
     /// GPS 刷新率档位（全局设置，不分数据源）
-    @AppStorage("gpsRefreshRate") private var gpsRefreshRateStorage: String = "fast"
+    @AppStorage("gpsRefreshRate") private var gpsRefreshRate: GpsRefreshRate = .fast
 
-    /// 当前 GPS 刷新率（读写都转成枚举）
-    private var gpsRefreshRate: GpsRefreshRate {
-        get { GpsRefreshRate(rawValue: gpsRefreshRateStorage) ?? .fast }
-        nonmutating set {
-            gpsRefreshRateStorage = newValue.rawValue
-            // 立刻重建定时器让新频率生效
-            GpsSpeed.shared.applyRefreshRate()
-        }
+    /// 刷新率摘要文字（单独提出来，避免 Form 表达式过于复杂）
+    private var gpsRateSummary: String {
+        String(format: "%.0f Hz · 追 %.0f%%",
+               gpsRefreshRate.timerHz,
+               gpsRefreshRate.smoothFactor * 100)
     }
 
     /// 当前数据源对应的速度来源（读写自动路由）
@@ -1385,7 +1382,10 @@ struct SettingsView: View {
                     // GPS 刷新率（只在速度来源选了 GPS 时才显示）
                     if speedSource == .gps {
                         Section {
-                            Picker("刷新率", selection: $gpsRefreshRate) {
+                            Picker("刷新率", selection: Binding(
+                                get: { gpsRefreshRate },
+                                set: { gpsRefreshRate = $0 }
+                            )) {
                                 ForEach(GpsRefreshRate.allCases) { r in
                                     Text(r.title).tag(r)
                                 }
@@ -1397,9 +1397,7 @@ struct SettingsView: View {
                                 Text("当前")
                                     .foregroundStyle(themeMgr.foreground)
                                 Spacer()
-                                Text(String(format: "%.0f Hz · 追 %.0f%%",
-                                            gpsRefreshRate.timerHz,
-                                            gpsRefreshRate.smoothFactor * 100))
+                                Text(gpsRateSummary)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(themeMgr.color(.ok))
                             }
@@ -1983,9 +1981,15 @@ struct SettingsView: View {
                 // 设置页不需要 60Hz 的实时速度，挂起平滑定时器省性能
                 gps.pauseSmoothing()
             }
+            .onChange(of: gpsRefreshRate) { _, _ in
+                // 刷新率档位变了，重建平滑定时器让新频率立刻生效
+                gps.applyRefreshRate()
+            }
             .onDisappear {
                 // 离开设置页恢复平滑
                 gps.resumeSmoothing()
+                // 顺便应用最新的刷新率档位
+                gps.applyRefreshRate()
             }
             .sheet(isPresented: $showAppearance) {
                 AppearanceView(themeMgr: themeMgr)
