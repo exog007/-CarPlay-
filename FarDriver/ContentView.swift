@@ -981,6 +981,8 @@ struct SettingsView: View {
 
         // 行程统计切到对应账本
         TripMeter.shared.syncWithDataSource()
+        // 转速显示设置切到对应数据源
+        RpmDisplayStore.shared.syncWithDataSource()
 
         // 汽车/摩托的适配器记忆是两套，切换后重新读一次
         if willObd {

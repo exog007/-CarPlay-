@@ -8,6 +8,7 @@ import PhotosUI
 
 struct AppearanceView: View {
     @ObservedObject var themeMgr: ThemeManager
+    @ObservedObject var rpmStore = RpmDisplayStore.shared
     @Environment(\.dismiss) private var dismiss
 
     /// 相册选图
@@ -118,46 +119,81 @@ struct AppearanceView: View {
 
     private var rpmSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("转速倍率")
-                        .foregroundStyle(themeMgr.foreground)
-                    Spacer()
-                    Text(String(format: "×%.0f", themeMgr.theme.rpmMultiplier))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(themeMgr.color(.power))
+            ForEach(DataSource.allCases) { src in
+                rpmBlock(for: src)
+            }
+        } header: {
+            Text("转速显示（每个数据源独立）")
+        } footer: {
+            Text("竞技仪表上的转速 = 原始转速 × 倍率。\n\n· 远驱：原厂报 100 这类小数值，倍率 10 显示 1000\n· OBD / 摩托：报的是真实转速，倍率保持 1 即可\n\n满量程决定刻度条跑满对应多少 rpm。每个数据源各记各的。")
+                .font(.caption2)
+        }
+    }
+
+    /// 单个数据源的转速设置块
+    @ViewBuilder
+    private func rpmBlock(for src: DataSource) -> some View {
+        let d = rpmStore.display(for: src)
+        let isCurrent = DataSource.current == src
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: src.icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(isCurrent ? themeMgr.color(.ok) : themeMgr.secondary)
+                Text(src.shortTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(themeMgr.foreground)
+                if isCurrent {
+                    Text("当前")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(themeMgr.color(.ok).opacity(0.18))
+                        .foregroundStyle(themeMgr.color(.ok))
+                        .clipShape(Capsule())
                 }
-                Slider(value: Binding(
-                    get: { themeMgr.theme.rpmMultiplier },
-                    set: { themeMgr.theme.rpmMultiplier = $0 }
-                ), in: 1...20, step: 1)
-                .tint(themeMgr.color(.power))
-                Text("原厂报 \(Int(mgrRpmSample)) rpm ✕ \(Int(themeMgr.theme.rpmMultiplier)) = 显示 \(Int(mgrRpmSample * themeMgr.theme.rpmMultiplier)) rpm")
-                    .font(.caption2)
+                Spacer()
+                Text(String(format: "×%.0f · %d rpm", d.multiplier, Int(d.scaleMax)))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(themeMgr.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("转速表满量程")
-                        .foregroundStyle(themeMgr.foreground)
-                    Spacer()
-                    Text("\(Int(themeMgr.theme.rpmScaleMax)) rpm")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(themeMgr.secondary)
-                }
+            // 倍率
+            HStack(spacing: 6) {
+                Text("倍率")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
+                    .frame(width: 32, alignment: .leading)
                 Slider(value: Binding(
-                    get: { themeMgr.theme.rpmScaleMax },
-                    set: { themeMgr.theme.rpmScaleMax = $0 }
-                ), in: 4000...30000, step: 1000)
+                    get: { rpmStore.display(for: src).multiplier },
+                    set: { v in
+                        var nd = rpmStore.display(for: src)
+                        nd.multiplier = v
+                        rpmStore.setDisplay(nd, for: src)
+                    }
+                ), in: 1...20, step: 1)
+                .tint(themeMgr.color(.power))
+            }
+
+            // 满量程
+            HStack(spacing: 6) {
+                Text("满量程")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
+                    .frame(width: 32, alignment: .leading)
+                Slider(value: Binding(
+                    get: { rpmStore.display(for: src).scaleMax },
+                    set: { v in
+                        var nd = rpmStore.display(for: src)
+                        nd.scaleMax = v
+                        rpmStore.setDisplay(nd, for: src)
+                    }
+                ), in: 4000...30000, step: 500)
                 .tint(themeMgr.color(.rpm))
             }
-        } header: {
-            Text("转速显示")
-        } footer: {
-            Text("竞技仪表上的转速 = 原厂转速 × 倍率。原厂报 100 rpm，倍率 10 就显示 1000 rpm。满量程决定刻度条跑满时对应多少。")
-                .font(.caption2)
         }
+        .padding(.vertical, 4)
     }
 
     /// 示例用的原厂转速

@@ -27,6 +27,7 @@ struct SportDashView: View {
     @ObservedObject var weather = WeatherService.shared
     @ObservedObject var bms = AntBmsManager.shared
     @ObservedObject var trip = TripMeter.shared
+    @ObservedObject var rpmStore = RpmDisplayStore.shared
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
     /// 报警阈值：改完设置立刻反映到故障灯
@@ -115,13 +116,14 @@ struct SportDashView: View {
     /// 倍率在「设置 → 个性化 → 转速倍率」里调，1 就是原始值。
     private var displayRpm: Double {
         let raw: Double = isObd ? (obd.reading.rpm ?? 0) : mgr.data.rpm
-        return raw * theme.rpmMultiplier
+        return raw * rpmStore.current.multiplier
     }
 
     /// 转速百分比（自检动画期间跟着动画走）
     private var rpmRatio: Double {
-        guard theme.rpmScaleMax > 0 else { return 0 }
-        return min(max(displayRpmValue / theme.rpmScaleMax, 0), 1)
+        let maxRpm = rpmStore.current.scaleMax
+        guard maxRpm > 0 else { return 0 }
+        return min(max(displayRpmValue / maxRpm, 0), 1)
     }
 
     /// 电量百分比（按电压阈值线性插值）
@@ -353,7 +355,7 @@ struct SportDashView: View {
     /// 自检动画期间显示的转速值（已乘倍率）
     private var displayRpmValue: Double {
         if bootAnimating {
-            return theme.rpmScaleMax * bootProgress
+            return rpmStore.current.scaleMax * bootProgress
         }
         return displayRpm
     }
@@ -653,7 +655,7 @@ struct SportDashView: View {
 
     /// 刻度数字，跟着满量程走
     private var scaleLabels: [Double] {
-        let maxV = theme.rpmScaleMax
+        let maxV = rpmStore.current.scaleMax
         return stride(from: 0, through: maxV, by: maxV / 6).map { $0 }
     }
 
