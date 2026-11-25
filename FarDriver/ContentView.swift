@@ -1342,7 +1342,8 @@ struct SettingsView: View {
                         Text("连上了但读不到数据时用「一键自动探测协议」：会自动把 9 种 OBD 协议全试一遍，找到能通的就自动设好。")
                     }
 
-                    // 速度来源（只对 OBD 数据源有意义）
+                    // 速度来源（摩托车固定 GPS，不显示）
+                    if dataSource != .motorcycle {
                     Section {
                         ForEach(SpeedSource.allCases) { s in
                             Button {
@@ -1377,6 +1378,7 @@ struct SettingsView: View {
                         Text("速度来源")
                     } footer: {
                         Text("仪表上的车速取哪个：\n· OBD 车速：读车辆 ECU 的 PID 010D，不受手机信号影响\n· GPS 速度：用手机定位，刷新更快、起步更灵敏，但进隧道/地下室会丢\n\n选 GPS 需要开定位权限。这一项每个数据源单独记。")
+                    }
                     }
 
                     // GPS 刷新率（只在速度来源选了 GPS 时才显示）

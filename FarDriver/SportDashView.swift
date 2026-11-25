@@ -85,6 +85,10 @@ struct SportDashView: View {
     ///       GPS → 手机定位（刷新快、精度高）
     private var speed: Double {
         if isObd {
+            // 摩托车固定用 GPS：OBD 那边已经不轮询 010D 了
+            if dataSource == .motorcycle {
+                return gps.smoothSpeed
+            }
             switch SpeedSource.current {
             case .gps:
                 // GPS：有定位就用它，没定位就退回 OBD

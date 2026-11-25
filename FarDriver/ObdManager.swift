@@ -1378,6 +1378,16 @@ final class ObdManager: NSObject, ObservableObject {
         static let rpmCode = "010C"
         static let speedCode = "010D"
 
+        /// 是否要问 OBD 车速
+        ///
+        /// 摩托车固定用 GPS：
+        ///   · 很多摩托 ECU 不上报 010D
+        ///   · KWP2000 串行协议带宽紧张，省下这一条能明显提升转速刷新率
+        ///   · 手机 GPS 在摩托上精度已经够用
+        static var needsObdSpeed: Bool {
+            DataSource.current != .motorcycle
+        }
+
         /// 转速永远每轮问
         static let rpmInterval: TimeInterval = 0
 
@@ -1427,13 +1437,18 @@ final class ObdManager: NSObject, ObservableObject {
         }
 
         // ② 车速：到点就发（紧跟在转速后面）
-        if alive(PidPriority.speedCode), due(PidPriority.speedCode, PidPriority.speedInterval) {
+        //    摩托车跳过这一条，改用 GPS 速度
+        if PidPriority.needsObdSpeed,
+           alive(PidPriority.speedCode),
+           due(PidPriority.speedCode, PidPriority.speedInterval) {
             batch.append(PidPriority.speedCode)
         }
 
         // ③ 其它仪表项：2 秒一刷
         for c in Self.dashCodes {
-            guard c != PidPriority.rpmCode, c != PidPriority.speedCode else { continue }
+            guard c != PidPriority.rpmCode else { continue }
+            // 摩托车不问车速
+            if !PidPriority.needsObdSpeed, c == PidPriority.speedCode { continue }
             guard alive(c) else { continue }
             if due(c, PidPriority.dashInterval) {
                 batch.append(c)
