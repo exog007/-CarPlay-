@@ -28,6 +28,15 @@ struct SportDashView: View {
     @ObservedObject var bms = AntBmsManager.shared
     @ObservedObject var trip = TripMeter.shared
     @ObservedObject var rpmStore = RpmDisplayStore.shared
+
+    /// 平滑后的转速（用于显示，60Hz 逐步追向目标值）
+    ///
+    /// OBD 转速通常 2~10Hz 才来一个点，直接显示就会「一格一格跳」。
+    /// 这里用一个 60Hz 定时器让显示值连续逼近目标，
+    /// 数字和刻度条都跟这个走，看起来就顺了。
+    @State private var smoothRpm: Double = 0
+    /// 平滑定时器
+    @State private var rpmSmoothTimer: Timer?
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
     /// 报警阈值：改完设置立刻反映到故障灯
@@ -295,6 +304,8 @@ struct SportDashView: View {
             .background(sportBackground)
             .onAppear {
                 weather.refreshIfNeeded()
+                // 转速平滑：60Hz 让数字和刻度条连续变化
+                startRpmSmoothing()
                 // 已经在横屏就直接播，否则等尺寸就绪
                 if ready { scheduleBoot(after: 0.15) }
             }
@@ -302,9 +313,12 @@ struct SportDashView: View {
                 if isReady { scheduleBoot(after: 0.25) }
             }
             .onDisappear {
+                stopRpmSmoothing()
                 bootTimer?.invalidate()
                 bootTimer = nil
                 bootAnimating = false
+                // 自检结束：平滑值直接对齐真实转速，避免从满量程慢慢滑下来
+                smoothRpm = targetRpm
             }
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
@@ -359,11 +373,56 @@ struct SportDashView: View {
     }
 
     /// 自检动画期间显示的转速值（已乘倍率）
+    /// 目标转速（未平滑）
+    private var targetRpm: Double {
+        let raw: Double = isObd ? (obd.reading.rpm ?? 0) : mgr.data.rpm
+        return raw * rpmStore.current.multiplier
+    }
+
     private var displayRpmValue: Double {
         if bootAnimating {
             return rpmStore.current.scaleMax * bootProgress
         }
-        return displayRpm
+        return smoothRpm
+    }
+
+    /// 启动 60Hz 平滑：让 smoothRpm 连续追向 targetRpm
+    ///
+    /// 追法：每帧走剩余差值的 28%
+    ///   · 60Hz 下约 0.12 秒追到 90%，看着「跟脚」但不抽搐
+    ///   · 差值小于 1 rpm 直接吸附，避免永远追不到
+    private func startRpmSmoothing() {
+        guard rpmSmoothTimer == nil else { return }
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+            // 自检动画期间由动画自己驱动，不做平滑
+            if bootAnimating { return }
+
+            let target = targetRpm
+            let cur = smoothRpm
+            let diff = target - cur
+
+            if abs(diff) < 1 {
+                // 追上就吸附，但只在真的不同时才写，避免无意义重绘
+                if cur != target { smoothRpm = target }
+                return
+            }
+
+            // 大跳变（比如从 0 猛踩）时追快点，小变化柔和些
+            let factor: Double = abs(diff) > 3000 ? 0.45 : 0.28
+            let next = cur + diff * factor
+            // 变化太小就不刷，省重绘
+            if abs(next - cur) > 0.5 {
+                smoothRpm = next
+            }
+        }
+        t.tolerance = 0.002
+        RunLoop.main.add(t, forMode: .common)
+        rpmSmoothTimer = t
+    }
+
+    private func stopRpmSmoothing() {
+        rpmSmoothTimer?.invalidate()
+        rpmSmoothTimer = nil
     }
 
     // MARK: - 背景
@@ -644,7 +703,8 @@ struct SportDashView: View {
                     }
                 }
                 .frame(height: 12)
-                .animation(.easeOut(duration: 0.12), value: rpmRatio)
+                // 不在这里加 .animation：rpmRatio 由 60Hz 平滑定时器驱动，
+                // 再叠一层 SwiftUI 动画会和它抢，看起来反而是「弹一下」。
 
                 HStack(spacing: 0) {
                     ForEach(scaleLabels, id: \.self) { n in
