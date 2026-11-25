@@ -29,14 +29,21 @@ struct SportDashView: View {
     @ObservedObject var trip = TripMeter.shared
     @ObservedObject var rpmStore = RpmDisplayStore.shared
 
-    /// 平滑后的转速（用于显示，60Hz 逐步追向目标值）
+    /// 转速平滑器（独立 ObservableObject，避免整个仪表重绘）
     ///
-    /// OBD 转速通常 2~10Hz 才来一个点，直接显示就会「一格一格跳」。
-    /// 这里用一个 60Hz 定时器让显示值连续逼近目标，
-    /// 数字和刻度条都跟这个走，看起来就顺了。
-    @State private var smoothRpm: Double = 0
-    /// 平滑定时器
-    @State private var rpmSmoothTimer: Timer?
+    /// 之前 smoothRpm 是 @State，每帧变化会让整个 SportDashView.body 重绘，
+    /// body 里有几十个视图，60Hz 下就会掉帧、看起来一顿一顿。
+    /// 现在拆成独立对象，只有引用它的那几个视图会刷新。
+    @StateObject private var rpmSmoother = RpmSmoother()
+
+    /// 便捷读取当前平滑值
+    private var smoothRpm: Double { rpmSmoother.value }
+
+    /// 平滑定时器（挂在 smoother 上）
+    private var rpmSmoothTimer: Timer? {
+        get { rpmSmoother.timer }
+        nonmutating set { rpmSmoother.timer = newValue }
+    }
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
     /// 报警阈值：改完设置立刻反映到故障灯
@@ -318,7 +325,7 @@ struct SportDashView: View {
                 bootTimer = nil
                 bootAnimating = false
                 // 自检结束：平滑值直接对齐真实转速，避免从满量程慢慢滑下来
-                smoothRpm = targetRpm
+                rpmSmoother.snap(to: targetRpm)
             }
         }
         // 自检模式下让灯呼吸闪，用时间线驱动
@@ -393,29 +400,14 @@ struct SportDashView: View {
     ///   · 差值小于 1 rpm 直接吸附，避免永远追不到
     private func startRpmSmoothing() {
         guard rpmSmoothTimer == nil else { return }
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
+        // 30Hz 足够：肉眼分辨不出 30 和 60 的差别，
+        // 但 body 重绘次数减半，转速条就不会一顿一顿了
+        let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { _ in
             // 自检动画期间由动画自己驱动，不做平滑
             if bootAnimating { return }
-
-            let target = targetRpm
-            let cur = smoothRpm
-            let diff = target - cur
-
-            if abs(diff) < 1 {
-                // 追上就吸附，但只在真的不同时才写，避免无意义重绘
-                if cur != target { smoothRpm = target }
-                return
-            }
-
-            // 大跳变（比如从 0 猛踩）时追快点，小变化柔和些
-            let factor: Double = abs(diff) > 3000 ? 0.45 : 0.28
-            let next = cur + diff * factor
-            // 变化太小就不刷，省重绘
-            if abs(next - cur) > 0.5 {
-                smoothRpm = next
-            }
+            rpmSmoother.tick(target: targetRpm)
         }
-        t.tolerance = 0.002
+        t.tolerance = 0.003
         RunLoop.main.add(t, forMode: .common)
         rpmSmoothTimer = t
     }
@@ -683,23 +675,40 @@ struct SportDashView: View {
                             .frame(width: 2, height: i % 2 == 0 ? 5 : 3)
                     }
                 }
-                GeometryReader { g in
-                    ZStack(alignment: .leading) {
-                        Rectangle()
-                            .fill(amber.opacity(0.12))
-                        Rectangle()
-                            .fill(red.opacity(0.22))
-                            .frame(width: g.size.width * 0.25)
-                            .offset(x: g.size.width * 0.75)
-                        Rectangle()
-                            .fill(rpmRatio > 0.85 ? red : amber)
-                            .frame(width: max(0, g.size.width * rpmRatio))
-                        HStack(spacing: 0) {
-                            ForEach(0..<20, id: \.self) { _ in
-                                Rectangle().fill(.clear)
-                                Rectangle().fill(Color.black.opacity(0.85)).frame(width: 2)
-                            }
-                        }
+                // 转速条：用 Canvas 一次画完
+                //
+                // 之前是 ZStack + 3 个 Rectangle + 20 个分隔条的 HStack，
+                // 每帧都要重排布局（frame width 变化触发 layout pass），
+                // 所以看起来一顿一顿。
+                //
+                // Canvas 是「立即绘制」，不进布局系统，60Hz 改动也不卡。
+                Canvas { ctx, size in
+                    let w = size.width
+                    let h = size.height
+                    let ratio = min(max(rpmRatio, 0), 1)
+                    let fillW = w * ratio
+
+                    // ① 底色
+                    ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: h)),
+                             with: .color(amber.opacity(0.12)))
+
+                    // ② 红区（右侧 25%）
+                    ctx.fill(Path(CGRect(x: w * 0.75, y: 0, width: w * 0.25, height: h)),
+                             with: .color(red.opacity(0.22)))
+
+                    // ③ 已填部分
+                    if fillW > 0 {
+                        ctx.fill(Path(CGRect(x: 0, y: 0, width: fillW, height: h)),
+                                 with: .color(ratio > 0.85 ? red : amber))
+                    }
+
+                    // ④ 分隔条（20 段，一次画完）
+                    let segCount = 20
+                    let segW = w / CGFloat(segCount)
+                    for i in 1..<segCount {
+                        let x = segW * CGFloat(i)
+                        ctx.fill(Path(CGRect(x: x - 1, y: 0, width: 2, height: h)),
+                                 with: .color(Color.black.opacity(0.85)))
                     }
                 }
                 .frame(height: 12)
