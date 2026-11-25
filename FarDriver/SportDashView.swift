@@ -40,6 +40,11 @@ struct SportDashView: View {
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
     /// 变速箱类型（自动挡 / 手动挡）：决定档位框长什么样
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
+    /// 是否显示档位框
+    ///
+    /// 大多数车读不到真实档位（PID A4 不支持），档位框会一直停在同一个值，
+    /// 与其占地方不如留个开关关掉。
+    @AppStorage("dashShowGear") private var showGear: Bool = true
     /// OBD2 模式是否显示右侧油表
     @AppStorage("obdShowFuelGauge") private var obdShowFuelGaugePref: Bool = true
 
@@ -678,10 +683,12 @@ struct SportDashView: View {
             //   档位框只受外层 frame 控制，位置恒定不动。
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
-                if !isObd {
-                    gearBoxes
-                } else {
-                    obdGearBoxes
+                if showGear {
+                    if !isObd {
+                        gearBoxes
+                    } else {
+                        obdGearBoxes
+                    }
                 }
                 Spacer(minLength: 0)
             }

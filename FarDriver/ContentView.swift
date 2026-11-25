@@ -853,6 +853,8 @@ struct SettingsView: View {
     @AppStorage(AlarmThreshold.batteryLowKey) private var batteryLow: Double = 11.8
     /// 档位显示方式
     @AppStorage("gearDisplayMode") private var gearDisplayMode: GearDisplayMode = .auto
+    /// 是否显示档位框
+    @AppStorage("dashShowGear") private var showGear: Bool = true
     /// 变速箱类型（自动挡 / 手动挡）
     @AppStorage("gearboxMode") private var gearboxMode: GearboxMode = .auto
     /// OBD2 调试面板
@@ -1402,7 +1404,10 @@ struct SettingsView: View {
 
                     // 档位显示方式（车读不到 A4 时手动指定）
                     Section {
-                        ForEach(GearboxMode.allCases) { m in
+                        Toggle("显示档位框", isOn: $showGear)
+
+                        if showGear {
+                            ForEach(GearboxMode.allCases) { m in
                             Button {
                                 gearboxMode = m
                             } label: {
@@ -1431,10 +1436,11 @@ struct SettingsView: View {
                             }
                             .buttonStyle(.plain)
                         }
+                        }
                     } header: {
                         Text("变速箱类型")
                     } footer: {
-                        Text("决定仪表上档位框的样式。\n\n自动挡（手自一体）：横排显示 P R N D，挂手动挡时额外显示 M 和档位数字。\n手动挡：只显示当前一个字符，左侧带 Gear 小字。")
+                        Text("决定仪表上档位框的样式。\n\n自动挡：显示 «Gear: P/R/N/D»，挂手动挡时显示 M1~M6。\n手动挡：只显示当前档位字符。\n\n关掉「显示档位框」可以隐藏——大多数车读不到真实档位（PID A4），档位会一直停在同一个值。")
                     }
 
                     Section {
