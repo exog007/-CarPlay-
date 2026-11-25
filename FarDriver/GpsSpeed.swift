@@ -36,12 +36,8 @@ final class GpsSpeed: NSObject, ObservableObject {
     private let manager = CLLocationManager()
     /// 60Hz 平滑定时器：每帧朝目标速度靠一点，把 1 秒一次的数字跳变变成连续变化
     private var smoothTimer: Timer?
-    /// 平滑系数：每帧追 42%
-    ///
-    /// 之前是 0.18（约 0.25 秒追到 90%），看起来「拖」。
-    /// 现在提到 0.42，约 0.1 秒追到 90%，跟随更紧。
-    /// 再高就会让 GPS 的抖动直接透出来。
-    private let smoothFactor: Double = 0.42
+    /// 平滑系数（从设置里读，切换档位立即生效）
+    private var smoothFactor: Double { GpsRefreshRate.current.smoothFactor }
     /// 最后一次 GPS 读到「在动」的时间
     private var lastMovingAt: Date = .distantPast
     /// 最后一次收到定位回调的时间（用来判断 GPS 是否还在喂数据）
@@ -97,6 +93,18 @@ final class GpsSpeed: NSObject, ObservableObject {
         smoothTimer = nil
     }
 
+    /// 刷新率档位改了，重建平滑定时器
+    ///
+    /// 定时器的频率在创建时就固定了，改档位必须重建才生效。
+    func applyRefreshRate() {
+        smoothTimer?.invalidate()
+        smoothTimer = nil
+        guard enabled else { return }
+        let st = manager.authorizationStatus
+        guard st == .authorizedWhenInUse || st == .authorizedAlways else { return }
+        startSmoothTimer()
+    }
+
     /// 恢复平滑（离开设置页时调用）
     func resumeSmoothing() {
         guard enabled, manager.authorizationStatus == .authorizedWhenInUse
@@ -116,7 +124,8 @@ final class GpsSpeed: NSObject, ObservableObject {
     ///   · 变化量 < 0.01 → 不提交
     private func startSmoothTimer() {
         guard smoothTimer == nil else { return }
-        let t = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
+        let rate = GpsRefreshRate.current
+        let t = Timer(timeInterval: 1.0 / rate.timerHz, repeats: true) { [weak self] _ in
             guard let self = self else { return }
 
             let target = self.speedKmh
@@ -128,14 +137,14 @@ final class GpsSpeed: NSObject, ObservableObject {
             if abs(diff) < 0.02, abs(self.lastPublishedSmooth - next) < 0.001 {
                 return
             }
-            // 变化太小就不提交（阈值从 0.01 收到 0.005，肉眼几乎无感的抖动才跳过）
-            if abs(next - self.lastPublishedSmooth) < 0.005 { return }
+            // 变化太小就不提交（阈值随档位变）
+            if abs(next - self.lastPublishedSmooth) < rate.publishThreshold { return }
 
             self.lastPublishedSmooth = next
             self.smoothSpeed = next
         }
-        // 容差给 0：宁可贵一点也要准时，速度表最怕「跟不上脚」
-        t.tolerance = 0
+        // 容差随档位变：省电档允许合并唤醒，极速档必须准时
+        t.tolerance = rate.tolerance
         RunLoop.main.add(t, forMode: .common)
         smoothTimer = t
     }

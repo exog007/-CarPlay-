@@ -860,6 +860,19 @@ struct SettingsView: View {
     @AppStorage("speedSource.ym") private var speedSourceYm: SpeedSource = .obd
     @AppStorage("speedSource.moto") private var speedSourceMoto: SpeedSource = .obd
 
+    /// GPS 刷新率档位（全局设置，不分数据源）
+    @AppStorage("gpsRefreshRate") private var gpsRefreshRateStorage: String = "fast"
+
+    /// 当前 GPS 刷新率（读写都转成枚举）
+    private var gpsRefreshRate: GpsRefreshRate {
+        get { GpsRefreshRate(rawValue: gpsRefreshRateStorage) ?? .fast }
+        nonmutating set {
+            gpsRefreshRateStorage = newValue.rawValue
+            // 立刻重建定时器让新频率生效
+            GpsSpeed.shared.applyRefreshRate()
+        }
+    }
+
     /// 当前数据源对应的速度来源（读写自动路由）
     private var speedSource: SpeedSource {
         get {
@@ -1367,6 +1380,34 @@ struct SettingsView: View {
                         Text("速度来源")
                     } footer: {
                         Text("仪表上的车速取哪个：\n· OBD 车速：读车辆 ECU 的 PID 010D，不受手机信号影响\n· GPS 速度：用手机定位，刷新更快、起步更灵敏，但进隧道/地下室会丢\n\n选 GPS 需要开定位权限。这一项每个数据源单独记。")
+                    }
+
+                    // GPS 刷新率（只在速度来源选了 GPS 时才显示）
+                    if speedSource == .gps {
+                        Section {
+                            Picker("刷新率", selection: $gpsRefreshRate) {
+                                ForEach(GpsRefreshRate.allCases) { r in
+                                    Text(r.title).tag(r)
+                                }
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+
+                            HStack {
+                                Text("当前")
+                                    .foregroundStyle(themeMgr.foreground)
+                                Spacer()
+                                Text(String(format: "%.0f Hz · 追 %.0f%%",
+                                            gpsRefreshRate.timerHz,
+                                            gpsRefreshRate.smoothFactor * 100))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(themeMgr.color(.ok))
+                            }
+                        } header: {
+                            Text("GPS 刷新率")
+                        } footer: {
+                            Text("iOS 不允许 App 直接指定 GPS 定位频率，系统会自己决定给点节奏。\n这里调的是「拿到定位点之后数字更新的速度」：\n\n· 省电：30 Hz 平滑，数字变化柔和，最省电\n· 标准：60 Hz，平衡\n· 快速：120 Hz，跟脚（默认）\n· 极速：120 Hz + 追赶 70%，最跟脚但 GPS 抖动会透出来\n\n跑高速建议用「快速」或「极速」；市区走走停停用「标准」即可。")
+                        }
                     }
 
                     Section {
