@@ -28,6 +28,7 @@ struct SportDashView: View {
     @ObservedObject var bms = AntBmsManager.shared
     @ObservedObject var trip = TripMeter.shared
     @ObservedObject var rpmStore = RpmDisplayStore.shared
+    @ObservedObject var redlineStore = RedlineStore.shared
 
     /// 转速平滑器（独立 ObservableObject，避免整个仪表重绘）
     ///
@@ -52,8 +53,8 @@ struct SportDashView: View {
     @State private var redlineFlash: Double = 0
     /// 爆闪定时器
     @State private var redlineTimer: Timer?
-    /// 触发爆闪的转速比例（0.97 = 满量程的 97%）
-    private let redlineThreshold: Double = 0.97
+    /// 触发爆闪的转速比例（从设置读）
+    private var redlineThreshold: Double { redlineStore.config.threshold }
     /// OBD2 数据（汽车/摩托模式）
     @ObservedObject var obd = ObdManager.shared
     /// 报警阈值：改完设置立刻反映到故障灯
@@ -476,15 +477,23 @@ struct SportDashView: View {
     /// 够刺眼但不至于癫痫。
     private func startRedlineFlash() {
         guard redlineTimer == nil else { return }
-        let t = Timer(timeInterval: 0.04, repeats: true) { _ in
-            // 只有顶满时才推相位，否则复位
-            let ratio = rpmRatio
-            guard ratio >= redlineThreshold, !bootAnimating else {
+        // 25Hz 推进相位；每次前进多少由「闪烁周期」决定
+        let tick = 0.04
+        let t = Timer(timeInterval: tick, repeats: true) { _ in
+            let cfg = redlineStore.config
+            guard cfg.enabled else {
                 if redlineFlash != 0 { redlineFlash = 0 }
                 return
             }
-            // 0 → 1 → 0 三角波，周期 4 步
-            let ph = redlineFlash + 0.25
+            // 只有顶满时才推相位，否则复位
+            let ratio = rpmRatio
+            guard ratio >= cfg.threshold, !bootAnimating else {
+                if redlineFlash != 0 { redlineFlash = 0 }
+                return
+            }
+            // 三角波：一个来回 = 2 个 period，每 tick 走 tick/(period) 相位
+            let step = max(0.01, min(0.5, tick / max(cfg.period, 0.02)))
+            let ph = redlineFlash + step
             redlineFlash = ph >= 1.0 ? 0 : ph
         }
         t.tolerance = 0.01
@@ -774,18 +783,20 @@ struct SportDashView: View {
                     let ratio = min(max(rpmRatio, 0), 1)
                     let fillW = w * ratio
 
-                    // 是否顶满在爆闪（>=97% 才算，留一点抖动余量）
-                    let flashing = ratio >= redlineThreshold
-                    let flash = redlineFlash      // 0~1 三角波
+                    // 是否顶满在爆闪
+                    let rcfg = redlineStore.config
+                    let flashing = rcfg.enabled && ratio >= rcfg.threshold
+                    let flash = redlineFlash          // 0~1 三角波
+                    let k = rcfg.intensity            // 强度系数 0~1
 
                     // ① 底色（爆闪时整体泛红）
-                    let baseAlpha: Double = flashing ? 0.12 + flash * 0.30 : 0.12
+                    let baseAlpha: Double = flashing ? 0.12 + flash * 0.30 * k : 0.12
                     let baseColor: Color = flashing ? red : amber
                     ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: h)),
                              with: .color(baseColor.opacity(baseAlpha)))
 
                     // ② 红区（右侧 25%，爆闪时更亮）
-                    let zoneAlpha: Double = flashing ? 0.22 + flash * 0.35 : 0.22
+                    let zoneAlpha: Double = flashing ? 0.22 + flash * 0.35 * k : 0.22
                     ctx.fill(Path(CGRect(x: w * 0.75, y: 0, width: w * 0.25, height: h)),
                              with: .color(red.opacity(zoneAlpha)))
 
@@ -793,10 +804,16 @@ struct SportDashView: View {
                     if fillW > 0 {
                         let fillColor: Color
                         if flashing {
-                            // 白热闪：亮度在红色和近白之间来回
-                            fillColor = flash > 0.55
-                                ? Color(red: 1.0, green: 0.85, blue: 0.85)
-                                : red
+                            // 白热：强度越高越白
+                            let white = flash > 0.55
+                            if white {
+                                // 从纯红到近白，按强度插值
+                                fillColor = Color(red: 1.0,
+                                                  green: 1.0 - 0.15 * (1 - k),
+                                                  blue: 1.0 - 0.15 * (1 - k))
+                            } else {
+                                fillColor = red
+                            }
                         } else {
                             fillColor = ratio > 0.85 ? red : amber
                         }
@@ -815,11 +832,11 @@ struct SportDashView: View {
 
                     // ⑤ 爆闪时加一圈外发光描边
                     if flashing {
-                        let glowW = 1.0 + flash * 2.5
+                        let glowW = 1.0 + flash * 2.5 * k
                         ctx.stroke(
                             Path(CGRect(x: glowW / 2, y: glowW / 2,
                                         width: w - glowW, height: h - glowW)),
-                            with: .color(red.opacity(0.35 + flash * 0.55)),
+                            with: .color(red.opacity((0.35 + flash * 0.55) * k)),
                             lineWidth: glowW
                         )
                     }

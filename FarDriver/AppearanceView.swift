@@ -9,6 +9,9 @@ import PhotosUI
 struct AppearanceView: View {
     @ObservedObject var themeMgr: ThemeManager
     @ObservedObject var rpmStore = RpmDisplayStore.shared
+    @ObservedObject var redlineStore = RedlineStore.shared
+    /// 爆闪设置页
+    @State private var showRedline = false
     @Environment(\.dismiss) private var dismiss
 
     /// 相册选图
@@ -49,6 +52,9 @@ struct AppearanceView: View {
             } message: {
                 Text("这个图片可能损坏或格式不支持，换一张试试。")
             }
+        }
+        .sheet(isPresented: $showRedline) {
+            RedlineSettingsView(themeMgr: themeMgr)
         }
         .preferredColorScheme(themeMgr.isLight ? .light : .dark)
     }
@@ -122,10 +128,37 @@ struct AppearanceView: View {
             ForEach(DataSource.allCases) { src in
                 rpmBlock(for: src)
             }
+            // 顶满爆闪设置入口
+            Button {
+                showRedline = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(redlineStore.config.enabled
+                                         ? themeMgr.color(.warn)
+                                         : themeMgr.secondary)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("顶满爆闪")
+                            .font(.subheadline)
+                            .foregroundStyle(themeMgr.foreground)
+                        Text(redlineStore.config.enabled
+                             ? "\(redlineStore.config.thresholdText) 起闪 · \(redlineStore.config.hzText)"
+                             : "已关闭")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(themeMgr.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } header: {
             Text("转速显示（每个数据源独立）")
         } footer: {
-            Text("竞技仪表上的转速 = 原始转速 × 倍率。\n\n· 远驱：原厂报 100 这类小数值，倍率 10 显示 1000\n· OBD / 摩托：报的是真实转速，倍率保持 1 即可\n\n满量程决定刻度条跑满对应多少 rpm。每个数据源各记各的。")
+            Text("竞技仪表上的转速 = 原始转速 × 倍率。\n\n· 远驱：原厂报 100 这类小数值，倍率 10 显示 1000\n· OBD / 摩托：报的是真实转速，倍率保持 1 即可\n\n满量程决定刻度条跑满对应多少 rpm。每个数据源各记各的。\n\n点「顶满爆闪」可以调触发阈值、闪烁速度，并且带实时预览。")
                 .font(.caption2)
         }
     }
