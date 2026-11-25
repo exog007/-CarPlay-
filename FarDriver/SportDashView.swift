@@ -771,57 +771,72 @@ struct SportDashView: View {
         }
     }
 
-    /// 自动挡（手自一体）：P R N D [+ M n]
+    /// 自动挡（手自一体）：单行显示 «Gear: P»
+    ///
+    /// 之前是 P R N D 四个格子，占地方也看不清；
+    /// 现在统一成 «Gear: 当前值»，左边小字标签，右边大字档位。
+    /// 点一下可以在 P → R → N → D → M1…M6 之间循环切换，
+    /// 车读不到 PID A4 时靠这个手动指定。
     private func autoGearBox(_ active: ObdGear) -> some View {
-        HStack(spacing: 4) {
-            ForEach([ObdGear.park, .reverse, .neutral, .drive], id: \.self) { g in
-                // 点一下把档位锁到这个值（车读不到 A4 时靠这个手动切）
-                Button {
-                    setGearManually(g)
-                } label: {
-                    gearCell(g.label, active: active == g)
-                }
-                .buttonStyle(.plain)
+        // 自动挡下显示：P / R / N / D / M1~M6
+        let text: String = {
+            switch active {
+            case .park:    return "P"
+            case .reverse: return "R"
+            case .neutral: return "N"
+            case .drive:   return "D"
+            case .manual(let n): return "M\(n)"
+            case .unknown: return "–"
             }
-            if active.isManual {
-                gearCell("M", active: true)
-                if let n = active.manualNumber {
-                    Button {
-                        setGearManually(.manual(n))
-                    } label: {
-                        gearCell("\(n)", active: true, isNumber: true)
-                    }
-                    .buttonStyle(.plain)
-                }
+        }()
+
+        return Button {
+            // 循环切换：P → R → N → D → M1 → … → M6 → P
+            advanceGear()
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("Gear:")
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(amber.opacity(0.55))
+
+                Text(text)
+                    .font(.system(size: 20, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(amber)
+                    .monospacedDigit()
+                    .frame(minWidth: 16)
+                    .shadow(color: amber.opacity(dashTheme.glow * 0.6), radius: 4)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(width: 120, height: 32)
+            .overlay {
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(amber.opacity(0.25), lineWidth: 1)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-        .frame(width: 120, height: 32)
-        .overlay {
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(amber.opacity(0.25), lineWidth: 1)
-        }
+        .buttonStyle(.plain)
     }
 
-    /// 手动点档位：写入设置，之后一直显示这个档
-    private func setGearManually(_ g: ObdGear) {
-        switch g {
-        case .park:    gearDisplayMode = .park
-        case .reverse: gearDisplayMode = .reverse
-        case .neutral: gearDisplayMode = .neutral
-        case .drive:   gearDisplayMode = .drive
+    /// 档位循环切换：P → R → N → D → M1 → M2 … M6 → P
+    private func advanceGear() {
+        switch obdGear {
+        case .park:    gearDisplayMode = .reverse
+        case .reverse: gearDisplayMode = .neutral
+        case .neutral: gearDisplayMode = .drive
+        case .drive:   gearDisplayMode = .m1
         case .manual(let n):
-            switch n {
-            case 1: gearDisplayMode = .m1
-            case 2: gearDisplayMode = .m2
-            case 3: gearDisplayMode = .m3
-            case 4: gearDisplayMode = .m4
-            case 5: gearDisplayMode = .m5
-            default: gearDisplayMode = .m6
+            if n >= 6 {
+                gearDisplayMode = .park
+            } else {
+                switch n {
+                case 1: gearDisplayMode = .m2
+                case 2: gearDisplayMode = .m3
+                case 3: gearDisplayMode = .m4
+                case 4: gearDisplayMode = .m5
+                default: gearDisplayMode = .m6
+                }
             }
-        case .unknown:
-            break
+        case .unknown: gearDisplayMode = .park
         }
     }
 
@@ -844,7 +859,7 @@ struct SportDashView: View {
         }()
 
         return HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text("Gear")
+            Text("Gear:")
                 .font(.system(size: 8, weight: .semibold, design: .rounded))
                 .foregroundStyle(amber.opacity(0.55))
 
@@ -862,20 +877,6 @@ struct SportDashView: View {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(amber.opacity(0.25), lineWidth: 1)
         }
-    }
-
-    /// 单个档位格子
-    private func gearCell(_ text: String, active: Bool, isNumber: Bool = false) -> some View {
-        Text(text)
-            .font(.system(size: isNumber ? 14 : 13, weight: .heavy, design: .monospaced))
-            .foregroundStyle(active ? Color.black : amber.opacity(0.35))
-            .frame(width: isNumber ? 18 : 20, height: 20)
-            .background(active ? amber : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .overlay {
-                RoundedRectangle(cornerRadius: 3)
-                    .stroke(amber.opacity(active ? 0 : 0.3), lineWidth: 1)
-            }
     }
 
     /// BMS 温度块什么时候显示
