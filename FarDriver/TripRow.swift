@@ -170,23 +170,45 @@ struct TripRow: View {
                 Spacer()
             }
 
-            // 排量
+            // 排量：下拉选预设，或直接输入
             HStack(spacing: 6) {
                 Text("排量")
                     .font(.caption2)
                     .foregroundStyle(themeMgr.foreground)
                     .frame(width: 40, alignment: .leading)
+
+                // 预设下拉（摩托 50cc~1300cc + 汽车 1.0~6.2L 全覆盖）
                 Picker("", selection: Binding(
                     get: { spec.displacement },
                     set: { v in spec.displacement = v; saveSpec() }
                 )) {
-                    ForEach(displacementOptions, id: \.self) { d in
-                        Text(String(format: "%.1f L", d)).tag(d)
+                    ForEach(EngineSpec.displacementPresets, id: \.self) { d in
+                        Text(EngineSpec.displacementLabel(d)).tag(d)
                     }
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
+
                 Spacer()
+
+                // 自定义输入（预设里没有的排量直接填，如 0.457）
+                TextField("自定义", value: Binding(
+                    get: { spec.displacement },
+                    set: { v in
+                        if v > 0 && v < 20 {
+                            spec.displacement = v
+                            saveSpec()
+                        }
+                    }
+                ), format: .number.precision(.fractionLength(3)))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: 70)
+                .keyboardType(.decimalPad)
+
+                Text("L")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.secondary)
             }
 
             // 涡轮
@@ -209,10 +231,6 @@ struct TripRow: View {
     }
 
     /// 排量可选项（0.1L ~ 8.0L）
-    private var displacementOptions: [Double] {
-        stride(from: 0.1, through: 8.0, by: 0.1).map { ($0 * 10).rounded() / 10 }
-    }
-
     private func saveSpec() {
         EngineSpec.save(spec, for: ledger)
     }
