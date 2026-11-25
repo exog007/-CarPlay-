@@ -24,7 +24,14 @@ extension ObdManager {
         "010F",   // 进气温度
         "0111",   // 节气门
         "015E",   // 怠速油耗
+        "010E",   // 点火提前角（摩托车用这个替代负荷）
     ]
+
+    /// 摩托车仪表要用的（负荷换成点火提前角）
+    static var motorcycleDashCodes: [String] {
+        // 摩托不要负荷，加上点火提前角
+        dashCodes.filter { $0 != "0104" }
+    }
 
     /// 全部可读 PID 的 code 列表（按优先级排序）
     ///

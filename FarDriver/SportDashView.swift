@@ -1306,7 +1306,12 @@ struct SportDashView: View {
                 divider
                 bottomCell("节气门", obdThrottleText, "%", themeMgr.color(.rpm))
                 divider
-                bottomCell("负荷", obdLoadText, "%", amber)
+                // 摩托车不显示负荷（很多摩托 ECU 不上报 0104），改用点火提前角
+                if dataSource == .motorcycle {
+                    bottomCell("点火", obdTimingText, "°", amber)
+                } else {
+                    bottomCell("负荷", obdLoadText, "%", amber)
+                }
                 divider
                 bottomCell("怠速油耗", obdIdleFuelText, "L/h", themeMgr.color(.ok))
             } else {
@@ -1358,6 +1363,17 @@ struct SportDashView: View {
     private var obdLoadText: String {
         guard let l = obd.reading.engineLoad else { return "—" }
         return String(format: "%.0f", l)
+    }
+
+    /// 点火提前角（PID 0E，单位「度」）
+    ///
+    /// 摩托车用这个替代「负荷」：
+    /// 很多摩托 ECU 不上报 0104（发动机负荷），但普遍支持 010E。
+    /// 值 = (A / 2) - 64，正常范围 -64° ~ +63.5°，
+    /// 怠速通常 5~15°，急加速会退到 0 甚至负值（防爆震）。
+    private var obdTimingText: String {
+        guard let t = obd.reading.timingAdvance else { return "—" }
+        return String(format: "%.1f", t)
     }
 
     /// 燃油液位百分比（PID 2F）
