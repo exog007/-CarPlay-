@@ -67,6 +67,7 @@ final class GpsSpeed: NSObject, ObservableObject {
         case .authorizedWhenInUse, .authorizedAlways:
             authorized = true
             manager.startUpdatingLocation()
+            startLocationKick()
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
         default:
@@ -74,8 +75,35 @@ final class GpsSpeed: NSObject, ObservableObject {
         }
     }
 
+    /// 强制刷新定位回调用
+    ///
+    /// iOS 的 startUpdatingLocation 有时会降频（检测到静止或近似位置）。
+    /// 每隔 0.5 秒补一次 requestLocation()，能让系统早点把新点送上来。
+    /// 只在有授权时跑，App 进后台后系统会自动节流。
+    private var kickTimer: Timer?
+
+    private func startLocationKick() {
+        guard kickTimer == nil else { return }
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let st = self.manager.authorizationStatus
+            guard st == .authorizedWhenInUse || st == .authorizedAlways else { return }
+            // 只在最近 2 秒没收到新点时补一次，避免打断正常的连续更新
+            if Date().timeIntervalSince(self.lastLocationAt) > 1.5 {
+                self.manager.requestLocation()
+            }
+        }
+        t.tolerance = 0.1
+        RunLoop.main.add(t, forMode: .common)
+        kickTimer = t
+    }
+
     func stop() {
         manager.stopUpdatingLocation()
+        kickTimer?.invalidate()
+        kickTimer = nil
+        lastPoint = nil
+        speedTrend = 0
         speedKmh = 0
         smoothSpeed = 0
         hasFix = false
@@ -115,6 +143,11 @@ final class GpsSpeed: NSObject, ObservableObject {
     /// 上次真正发布出去的平滑值（用来跳过无意义的重绘）
     private var lastPublishedSmooth: Double = -1
 
+    /// 上一次收到的 GPS 速度点（速度 + 时间）
+    private var lastPoint: (speed: Double, time: Date)?
+    /// 速度变化率（km/h 每秒），用来在两点之间做线性预测
+    private var speedTrend: Double = 0
+
     /// 启动平滑定时器：每 16ms 让 smoothSpeed 朝 speedKmh 追一步
     ///
     /// ⚠️ 性能：这个定时器每秒跑 60 次，如果每次都写 @Published，
@@ -128,7 +161,25 @@ final class GpsSpeed: NSObject, ObservableObject {
         let t = Timer(timeInterval: 1.0 / rate.timerHz, repeats: true) { [weak self] _ in
             guard let self = self else { return }
 
-            let target = self.speedKmh
+            // ── 预测插值 ──
+            //
+            // GPS 每秒只给 1~2 个点，两点之间原本是「等」，看起来就卡。
+            // 这里用上一次算出的速度变化率（speedTrend）外推：
+            //   预测速度 = 上个点 + 变化率 × 已经过去的秒数
+            //
+            // 距离上个点越远，外推越多，但最多外推 1.5 秒（再多就不可信了）。
+            let base = self.speedKmh
+            var target = base
+            if let lp = self.lastPoint {
+                let elapsed = Date().timeIntervalSince(lp.time)
+                if elapsed > 0, elapsed < 1.5, abs(self.speedTrend) > 0.1 {
+                    let predicted = lp.speed + self.speedTrend * elapsed
+                    // 预测值不偏离实际值太远，避免飞出去
+                    target = max(min(predicted, base + 8), base - 8)
+                    target = max(0, target)
+                }
+            }
+
             let cur = self.smoothSpeed
             let diff = target - cur
             let next = abs(diff) < 0.02 ? target : cur + diff * self.smoothFactor
@@ -198,14 +249,33 @@ extension GpsSpeed: CLLocationManagerDelegate {
         lastLocationAt = Date()
 
         let kmh = loc.speed * 3.6
+        let now = Date()
+
+        // 计算速度变化率，供插值预测用
+        if let lp = lastPoint {
+            let dt = now.timeIntervalSince(lp.time)
+            // 只在不正常跳变范围内用（>3 秒或 >30 km/h 的变化当作噪声丢弃）
+            if dt > 0.1, dt < 3.0, abs(kmh - lp.speed) < 30 {
+                let raw = (kmh - lp.speed) / dt
+                // 平滑一下趋势，避免单次噪声放大
+                speedTrend = speedTrend * 0.4 + raw * 0.6
+                // 限制趋势范围，防止插值飞出去
+                speedTrend = max(-25, min(25, speedTrend))
+            } else {
+                speedTrend = 0
+            }
+        }
+        lastPoint = (kmh, now)
+
         // 低于 2 km/h 一律当静止（GPS 静止噪声约 1~3 km/h，取 2 兼顾灵敏和稳定）
         if kmh > 2.0 {
-            lastMovingAt = Date()
+            lastMovingAt = now
             speedKmh = kmh
         } else {
             // 停下超过 2 秒才归零，避免正常抖动让数字跳 0
-            if Date().timeIntervalSince(lastMovingAt) > 2.0 {
+            if now.timeIntervalSince(lastMovingAt) > 2.0 {
                 speedKmh = 0
+                speedTrend = 0
             }
         }
     }

@@ -1399,14 +1399,14 @@ final class ObdManager: NSObject, ObservableObject {
             DataSource.current == .motorcycle ? 0.8 : 0.4
         }
 
-        /// 其它仪表项（电压/水温/进气/节气门/怠速油耗）
+        /// 其它仪表项（电压/水温/进气/节气门/点火/怠速油耗）
         ///
-        /// 汽车 2 秒，摩托 3 秒（摩托响应慢，给足带宽给转速）。
-        static var dashInterval: TimeInterval {
-            DataSource.current == .motorcycle ? 3.0 : 2.0
-        }
+        /// 仪表页只要求「转速实时」，其余数据变了也不影响驾驶判断，
+        /// 统一 10 秒一刷，把几乎全部时间片让给转速。
+        /// （进 OBD2 数据页时 fullPolling=true，会改成高频读取）
+        static let dashInterval: TimeInterval = 10.0
 
-        /// 全量模式下的后台数据
+        /// 全量模式下后台数据的间隔（数据页里才用）
         static var extraInterval: TimeInterval {
             DataSource.current == .motorcycle ? 8.0 : 5.0
         }
@@ -1444,18 +1444,22 @@ final class ObdManager: NSObject, ObservableObject {
             batch.append(PidPriority.speedCode)
         }
 
-        // ③ 其它仪表项：2 秒一刷
+        // ③ 其它仪表项
+        //    仪表页 10 秒一刷（把时间片全留给转速）
+        //    数据页（fullPolling）2 秒一刷，方便盯着看
+        let dashGap = fullPolling ? 2.0 : PidPriority.dashInterval
         for c in Self.dashCodes {
             guard c != PidPriority.rpmCode else { continue }
             // 摩托车不问车速
             if !PidPriority.needsObdSpeed, c == PidPriority.speedCode { continue }
             guard alive(c) else { continue }
-            if due(c, PidPriority.dashInterval) {
+            if due(c, dashGap) {
                 batch.append(c)
             }
         }
 
-        // ④ 全量模式：后台数据，5 秒一刷，每次最多 2 条（不抢转速的时间片）
+        // ④ 全量模式：后台数据
+        //    数据页一次多取几条，尽快把网格填满
         if fullPolling {
             let pool: [String]
             if supportedCodes.count >= 8 {
@@ -1468,7 +1472,7 @@ final class ObdManager: NSObject, ObservableObject {
 
             var picked = 0
             for c in extras {
-                guard picked < 2 else { break }
+                guard picked < 3 else { break }
                 if due(c, PidPriority.extraInterval) {
                     batch.append(c)
                     picked += 1

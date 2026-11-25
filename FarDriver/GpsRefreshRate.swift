@@ -22,6 +22,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
     case standard = "standard"
     case fast = "fast"
     case ultra = "ultra"
+    case extreme = "extreme"
 
     var id: String { rawValue }
 
@@ -34,6 +35,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
         case .standard: return "标准（60 Hz）"
         case .fast:     return "快速（120 Hz）"
         case .ultra:    return "极速（120 Hz+）"
+        case .extreme:  return "狂暴（预测外推）"
         }
     }
 
@@ -43,6 +45,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
         case .standard: return "默认，性能和续航平衡"
         case .fast:     return "跟随更紧，速度数字更跟脚"
         case .ultra:    return "最跟脚，但 GPS 抖动会透出来"
+        case .extreme:  return "用速度变化率预测，信号差时也能感到流畅"
         }
     }
 
@@ -53,6 +56,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
         case .standard: return 60
         case .fast:     return 120
         case .ultra:    return 120
+        case .extreme:  return 120
         }
     }
 
@@ -68,6 +72,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
         case .standard: return 0.30
         case .fast:     return 0.42
         case .ultra:    return 0.70
+        case .extreme:  return 0.85
         }
     }
 
@@ -76,7 +81,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
         switch self {
         case .battery:  return 0.01
         case .standard: return 0.005
-        case .fast, .ultra: return 0
+        case .fast, .ultra, .extreme: return 0
         }
     }
 
@@ -87,6 +92,7 @@ enum GpsRefreshRate: String, CaseIterable, Identifiable {
         case .standard: return 0.01
         case .fast:     return 0.005
         case .ultra:    return 0.002
+        case .extreme:  return 0.001
         }
     }
 
