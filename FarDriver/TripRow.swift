@@ -211,6 +211,24 @@ struct TripRow: View {
                     .foregroundStyle(themeMgr.secondary)
             }
 
+            // 车型
+            HStack(spacing: 6) {
+                Text("车型")
+                    .font(.caption2)
+                    .foregroundStyle(themeMgr.foreground)
+                    .frame(width: 40, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { spec.vehicle },
+                    set: { v in spec.vehicle = v; saveSpec() }
+                )) {
+                    ForEach(EngineSpec.VehicleKind.allCases) { k in
+                        Text(k.title).tag(k)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
             // 涡轮
             HStack(spacing: 6) {
                 Text("进气")

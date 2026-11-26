@@ -1216,9 +1216,16 @@ struct SportDashView: View {
                     .foregroundStyle(amber.opacity(0.5))
             }
 
-            // 右边一格：电摩显示电耗（kWh/100km），OBD 显示油耗（L/100km）
+            // 右边一格：里程 ÷ 累计能量 算出来的平均能耗
+            //
+            //   · 电摩：平均电耗 kWh/100km（行程累计电量 ÷ 里程）
+            //   · OBD ：平均油耗 L/100km（用转速+车速+排量推算后累计）
+            //
+            // 之前 OBD 用的是 obdFuelConsumptionText（瞬时油耗，靠 PID 5E），
+            // 很多车不报 5E，所以永远显示 —。现在统一用 trip 的累计值，
+            // 只要车动起来、里程攒够了就会有数。
             HStack(spacing: 2) {
-                Text(isObd ? obdFuelConsumptionText : trip.consumptionText)
+                Text(trip.consumptionText)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(amber)

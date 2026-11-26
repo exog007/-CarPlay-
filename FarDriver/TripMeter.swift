@@ -97,13 +97,14 @@ final class TripMeter: ObservableObject {
 
     /// 百公里能耗（电耗 kWh/100km 或油耗 L/100km）
     var consumptionPer100km: Double {
-        guard distanceKm > 0.05 else { return 0 }
+        // 门槛从 50 米降到 20 米：短途也能尽快出数
+        guard distanceKm > 0.02 else { return 0 }
         return energy / distanceKm * 100.0
     }
 
     /// 有没有足够数据算出能耗
     var hasEnoughData: Bool {
-        distanceKm > 0.05
+        distanceKm > 0.02
     }
 
     // MARK: - 内部
@@ -273,7 +274,7 @@ final class TripMeter: ObservableObject {
     /// 某账本的百公里能耗
     func consumption(_ l: TripLedger) -> Double {
         let b = books[l] ?? Book()
-        guard b.distance > 0.05 else { return 0 }
+        guard b.distance > 0.02 else { return 0 }
         return b.energy / b.distance * 100.0
     }
 
