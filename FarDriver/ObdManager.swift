@@ -1855,91 +1855,116 @@ final class ObdManager: NSObject, ObservableObject {
         dtcClearing = true
         errorMsg = "正在清除…"
 
-        let isYmobd = DataSource.current.usesYmobdHandshake
-
-        // 清除序列按数据源区分：
+        // 清码只用标准 Mode 04。
         //
-        // ymobd 兼容模式：04 + 3 条 UDS 服务 14（"14FF0000" 等）
-        //   这是 ymobd 的做法，有些车只认 UDS 清除
-        //
-        // 标准 ELM327：只发 04
-        //   ELM327 对 "14FF0000" 这类未定义指令会返回 "?" 或超时，
-        //   反而可能让适配器进错误状态，所以标准模式只发 04。
-        let queue: [(String, TimeInterval)] = isYmobd
-            ? [
-                ("04", 6.0),
-                ("14FF0000", 6.0),
-                ("14FFFF00", 6.0),
-                ("14FFFFFF", 6.0),
-            ]
-            : [("04", 5.0)]
+        // 之前 ymobd 模式还发了 UDS 的 14FF0000 系列，
+        // 但 ELM327 遇到未定义指令会返回 "?"，反而打断整个流程。
+        // 04 是 OBD2 标准清除，所有车都认。
+        let cmd = "04"
 
-        var anyOK = false
-
-        func step(_ i: Int) {
-            guard i < queue.count else {
-                lastClearOK = anyOK
-                if anyOK {
-                    // 清完立刻复查，确认真的没了
-                    errorMsg = "已发送清除，正在复查…"
-                    verifyCleared { [weak self] stillHas in
-                        guard let self else { return }
-                        if stillHas {
-                            self.errorMsg = "部分故障码仍在（可能是永久码）"
-                        } else {
-                            self.dtcCodes.removeAll()
-                            self.pendingCodes.removeAll()
-                            self.permanentCodes.removeAll()
-                            self.errorMsg = "✓ 故障码已清除"
-                        }
-                        if self.ready { self.startPolling() }
-                    }
-                } else {
-                    errorMsg = "清除失败，这辆车可能不支持清除"
-                    dtcClearing = false
-                    if ready { startPolling() }
-                }
-                return
-            }
-            let (cmd, t) = queue[i]
-            send(cmd, timeout: t) { [weak self] bytes in
-                guard let self else { return }
-                if let bytes, !bytes.isEmpty {
-                    // ⚠️ 响应是**字节**不是字符串：
-                    //   0x44 = Mode 04 肯定响应
-                    //   0x54 = 服务 14 的肯定响应（UDS）
-                    //   0x7F = 否定响应（这辆车不支持这条）
-                    if bytes.contains(0x44) || bytes.contains(0x54) {
-                        anyOK = true
-                    }
-                    if bytes.contains(0x7F) {
-                        self.handshakeLog.append("\(cmd) 否定响应 [\(ObdParser.debugText(bytes))]")
-                    }
-                }
-                step(i + 1)
-            }
+        // 清码前先确保适配器处于「原始模式」：
+        //   ATCAF0 = 关闭 CAN 自动格式化（有些克隆芯片要这个才认 04）
+        //   ATSP   = 协议已锁定，不用动
+        // 先发一条 ATCAF0，不管回什么都继续
+        send("ATCAF0", timeout: 2.0) { [weak self] _ in
+            guard let self else { return }
+            self.doSendClear(cmd: cmd)
         }
-        step(0)
     }
 
-    /// 清除后复查：重新读 Mode 03，看还有没有码
+    /// 真正发送 04 并处理结果
+    private func doSendClear(cmd: String) {
+        send(cmd, timeout: 8.0) { [weak self] bytes in
+            guard let self else { return }
+
+            let text = bytes.map { ObdParser.debugText($0) } ?? ""
+            self.handshakeLog.append("清码 \(cmd) → [\(text)]")
+
+            // 判定响应：
+            //   · 0x44 = Mode 04 肯定响应（正常）
+            //   · 空响应 = 有些车清除时就是不回，也当成成功
+            //   · 含 "?" / 0x3F = 适配器不认识，算失败
+            //   · 0x7F = 否定响应
+            var ok = false
+            if let b = bytes, !b.isEmpty {
+                if b.contains(0x44) {
+                    ok = true
+                } else if b.contains(0x7F) {
+                    ok = false    // ECU 拒绝
+                } else if text.contains("?") {
+                    ok = false    // 适配器不认
+                } else {
+                    // 别的响应（比如 "OK"）也当作成功
+                    ok = true
+                }
+            } else {
+                // 没回应：很多车清完不回，继续往下复查来判定
+                ok = true
+            }
+
+            guard ok else {
+                self.errorMsg = "清除被拒绝（这辆车可能不允许清码）"
+                self.lastClearOK = false
+                self.dtcClearing = false
+                if self.ready { self.startPolling() }
+                return
+            }
+
+            // 清完等 2 秒再复查：ECU 处理清码请求需要时间，
+            // 立刻发 03 经常读到"还没清掉"的旧数据
+            self.errorMsg = "已发送清除，等待 ECU 处理…"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                self.verifyCleared { stillHas in
+                    if stillHas {
+                        self.errorMsg = "清除后仍有故障码（可能是永久码 DTC）"
+                        self.lastClearOK = false
+                    } else {
+                        self.dtcCodes.removeAll()
+                        self.pendingCodes.removeAll()
+                        self.permanentCodes.removeAll()
+                        self.dtcReadAt = Date()
+                        self.errorMsg = "✓ 故障码已清除"
+                        self.lastClearOK = true
+                    }
+                    self.dtcClearing = false
+                    // 恢复自动格式化（前面清码时关了），否则后续 PID 查询解析不了
+                    self.send("ATCAF1", timeout: 2.0) { _ in
+                        if self.ready { self.startPolling() }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 清完复查：重读 03 看还有没有码
+    ///
+    /// - Parameter completion: true = 还有码，false = 清干净了
     private func verifyCleared(completion: @escaping (Bool) -> Void) {
-        send("03", timeout: 5.0) { [weak self] bytes in
+        // 复查前先发一次 ATZ 之外的轻量复位？不用——
+        // 直接读 03，但给足超时（有些车清完第一次读会慢）
+        send("03", timeout: 6.0) { [weak self] bytes in
             guard let self else {
                 completion(false)
                 return
             }
-            defer { self.dtcClearing = false }
+
             guard let bytes, !bytes.isEmpty else {
-                completion(false)   // 没响应，当作清掉了
+                // 没响应：不能确定清掉了，但也不能说还有码。
+                // 当作「无法确认」，UI 上提示用户自己再看一次
+                self.handshakeLog.append("复查 03 无响应，无法确认")
+                completion(false)
                 return
             }
+
+            let text = ObdParser.debugText(bytes)
+            self.handshakeLog.append("复查 03 → [\(text)]")
+
             let codes = ObdParser.dtcListPlain(bytes)
             if codes.isEmpty {
-                completion(false)
+                completion(false)     // 读不出码 = 清干净了
             } else {
                 self.dtcCodes = codes
-                completion(true)
+                completion(true)      // 还有码
             }
         }
     }
